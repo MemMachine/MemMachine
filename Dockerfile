@@ -4,10 +4,10 @@
 FROM python:3.12-slim-trixie AS builder
 
 # Update OS and Python/PIP Packages
-# Install curl
+# Install curl, and g++ to build optional dependencies published only as source
 RUN apt-get update && \
     apt-get upgrade -y && \
-    apt-get install -y curl && \
+    apt-get install -y curl g++ && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
@@ -21,7 +21,8 @@ WORKDIR /app
 # Copy dependency files
 COPY pyproject.toml uv.lock ./
 
-# Determine whether to include GPU dependencies
+# Install every extra, so each provider the configuration accepts works in
+# the image. The gpu extra is installed only when GPU is true.
 ARG GPU="false"
 ARG SCM_VERSION="0.0.0"
 ENV SETUPTOOLS_SCM_PRETEND_VERSION=${SCM_VERSION}
@@ -29,9 +30,9 @@ ENV SETUPTOOLS_SCM_PRETEND_VERSION=${SCM_VERSION}
 # Install dependencies into a virtual environment, but NOT the project itself
 RUN --mount=type=cache,target=/root/.cache/uv \
     if [ "$GPU" = "true" ]; then \
-        uv sync --frozen --package memmachine-server --no-install-workspace --no-editable --no-dev --extra qdrant --extra gpu; \
+        uv sync --frozen --package memmachine-server --no-install-workspace --no-editable --no-dev --all-extras; \
     else \
-        uv sync --frozen --package memmachine-server --no-install-workspace --no-editable --no-dev --extra qdrant; \
+        uv sync --frozen --package memmachine-server --no-install-workspace --no-editable --no-dev --all-extras --no-extra gpu; \
     fi
 
 # Copy the application source code
@@ -40,9 +41,9 @@ COPY . /app
 # Install the project itself from the local source
 RUN --mount=type=cache,target=/root/.cache/uv \
     if [ "$GPU" = "true" ]; then \
-        uv sync --frozen --package memmachine-server --no-editable --no-dev --extra qdrant --extra gpu; \
+        uv sync --frozen --package memmachine-server --no-editable --no-dev --all-extras; \
     else \
-        uv sync --frozen --package memmachine-server --no-editable --no-dev --extra qdrant; \
+        uv sync --frozen --package memmachine-server --no-editable --no-dev --all-extras --no-extra gpu; \
     fi
 
 #
