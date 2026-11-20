@@ -13,11 +13,9 @@ Check the [issues page](https://github.com/MemMachine/MemMachine/issues) to see
 whether your bug or idea has already been reported. For a feature or a
 substantial change, open an issue or a discussion first, so the design is agreed
 before you write the code. Bug fixes and small changes can go straight to a pull
-request with a clear description. To take an existing issue, leave a comment on
-it.
-
-Report a security vulnerability privately, as [SECURITY.md](SECURITY.md)
-describes, not in an issue or a pull request.
+request with a clear description. A security vulnerability is the exception:
+report it privately, as [SECURITY.md](SECURITY.md) describes, not in an issue or
+a pull request. To take an existing issue, leave a comment on it.
 
 ## Setup
 
