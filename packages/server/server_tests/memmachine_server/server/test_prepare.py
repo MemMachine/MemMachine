@@ -9,6 +9,7 @@ import pytest
 from sqlalchemy import Engine, event
 
 from memmachine_server.common.configuration.log_conf import LogConf
+from memmachine_server.common.errors import SchemaMismatchError
 from memmachine_server.common.resource_manager.resource_manager import (
     ResourceManagerImpl,
 )
@@ -146,3 +147,20 @@ async def test_stores_start_on_what_prepare_created_without_ddl(configuration_pa
         for statement in statements
         if re.match(r"\s*(CREATE|ALTER|DROP)\b", statement, re.IGNORECASE)
     ] == []
+
+
+@pytest.mark.asyncio
+async def test_stores_refuse_to_start_before_prepare(configuration_path):
+    resource_manager = ResourceManagerImpl(load_configuration())
+    try:
+        starts = [
+            resource_manager.get_session_data_manager,
+            resource_manager.get_sql_lock_service,
+            resource_manager.get_episode_storage,
+            lambda: resource_manager.get_segment_store("local_sql"),
+        ]
+        for start in starts:
+            with pytest.raises(SchemaMismatchError, match="memmachine-server prepare"):
+                await start()
+    finally:
+        await resource_manager.close()

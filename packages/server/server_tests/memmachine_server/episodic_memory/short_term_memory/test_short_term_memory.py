@@ -55,6 +55,9 @@ class MockShortTermMemoryDataManager(SessionDataManager):
     async def prepare(self):
         pass
 
+    async def startup(self):
+        pass
+
     async def create_tables(self):
         self.tables_created = True
 

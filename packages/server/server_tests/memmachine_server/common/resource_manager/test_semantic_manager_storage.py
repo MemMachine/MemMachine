@@ -74,6 +74,9 @@ async def test_storage_builds_while_disabled_without_models(sqlalchemy_sqlite_en
     resources = _resources_without_models(sqlalchemy_sqlite_engine)
     manager = _manager(_DISABLED_VECTOR_STORE_CONF, resources)
 
+    # The tables `prepare` creates.
+    await VectorStoreSemanticStorage(sqlalchemy_sqlite_engine, MagicMock()).prepare()
+
     storage = await manager.get_semantic_storage()
 
     assert isinstance(storage, VectorStoreSemanticStorage)
@@ -85,6 +88,9 @@ async def test_storage_builds_while_disabled_without_models(sqlalchemy_sqlite_en
 async def test_storage_is_built_once(sqlalchemy_sqlite_engine):
     resources = _resources_without_models(sqlalchemy_sqlite_engine)
     manager = _manager(_DISABLED_VECTOR_STORE_CONF, resources)
+
+    # The tables `prepare` creates.
+    await VectorStoreSemanticStorage(sqlalchemy_sqlite_engine, MagicMock()).prepare()
 
     first, second = await asyncio.gather(
         manager.get_semantic_storage(), manager.get_semantic_storage()

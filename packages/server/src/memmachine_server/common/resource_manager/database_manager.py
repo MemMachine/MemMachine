@@ -32,6 +32,7 @@ from memmachine_server.common.errors import (
     MilvusConfigurationError,
     Neo4JConfigurationError,
     QdrantConfigurationError,
+    SchemaMismatchError,
     SQLConfigurationError,
     VectorStoreConfigurationError,
 )
@@ -1000,6 +1001,8 @@ class DatabaseManager:
             )
             await store.startup()
         except Exception as e:
+            if isinstance(e, SchemaMismatchError):
+                raise
             raise VectorStoreConfigurationError(
                 f"Vector store {vector_store_name!r} on '{vector_store_id}' failed to start: {e}",
             ) from e

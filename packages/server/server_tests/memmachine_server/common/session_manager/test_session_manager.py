@@ -14,6 +14,7 @@ from memmachine_server.common.configuration.episodic_config import (
     ShortTermMemoryConf,
 )
 from memmachine_server.common.errors import (
+    SchemaMismatchError,
     SessionAlreadyExistsError,
     SessionNotFoundError,
 )
@@ -93,10 +94,14 @@ async def session_manager(sqlalchemy_engine: AsyncEngine):
 
 
 @pytest.mark.asyncio
-async def test_prepare(sqlalchemy_engine: AsyncEngine):
-    """Test that prepare creates the expected tables."""
+async def test_startup_refuses_an_unprepared_database(sqlalchemy_engine: AsyncEngine):
     manager = SessionDataManagerSQL(engine=sqlalchemy_engine)
+
+    with pytest.raises(SchemaMismatchError, match="memmachine-server prepare"):
+        await manager.startup()
+
     await manager.prepare()
+    await manager.startup()
 
 
 @pytest.mark.asyncio

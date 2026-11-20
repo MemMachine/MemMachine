@@ -21,7 +21,11 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
-from memmachine_server.common.schema_migration import Lineage, upgrade_lineage
+from memmachine_server.common.schema_migration import (
+    Lineage,
+    check_lineage,
+    upgrade_lineage,
+)
 from memmachine_server.common.sql import write_connection
 
 _metadata = MetaData()
@@ -71,7 +75,8 @@ class SQLLeaseStore:
         await upgrade_lineage(self._engine, LEASE_LOCK_LINEAGE)
 
     async def startup(self) -> None:
-        pass
+        """Check that the lock and fencing counter tables are migrated."""
+        await check_lineage(self._engine, LEASE_LOCK_LINEAGE)
 
     async def _lock_resource(
         self, conn: AsyncConnection, key: str, *, create: bool = False

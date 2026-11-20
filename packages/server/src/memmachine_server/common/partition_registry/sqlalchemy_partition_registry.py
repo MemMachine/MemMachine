@@ -46,7 +46,11 @@ from sqlalchemy.orm import (
     mapped_column,
 )
 
-from memmachine_server.common.schema_migration import Lineage, upgrade_lineage
+from memmachine_server.common.schema_migration import (
+    Lineage,
+    check_lineage,
+    upgrade_lineage,
+)
 from memmachine_server.common.sql import validate_engine_connections, write_connection
 from memmachine_server.common.utils import ensure_tz_aware
 
@@ -280,7 +284,7 @@ class SQLAlchemyPartitionRegistry(PartitionRegistry):
 
     @override
     async def startup(self) -> None:
-        pass
+        await check_lineage(self._engine, PARTITION_REGISTRY_LINEAGE)
 
     @override
     async def _reserve(self, partition_name: str) -> Reservation:

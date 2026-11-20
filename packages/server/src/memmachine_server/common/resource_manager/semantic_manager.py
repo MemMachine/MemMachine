@@ -12,7 +12,7 @@ from memmachine_server.common.configuration import (
 )
 from memmachine_server.common.embedder import Embedder
 from memmachine_server.common.episode_store import EpisodeStorage
-from memmachine_server.common.errors import ResourceNotReadyError
+from memmachine_server.common.errors import ResourceNotReadyError, SchemaMismatchError
 from memmachine_server.common.language_model import LanguageModel
 from memmachine_server.common.metrics_factory import OperationTracker
 from memmachine_server.common.partition_registry import (
@@ -233,25 +233,33 @@ class SemanticResourceManager:
             store_schema=store_schema,
         )
 
-        # Semantic memory owns this partition and creates it when the storage
-        # is built, through a registry in the database the storage uses.
+        # Semantic memory owns this partition, which `prepare` creates, through
+        # a registry in the database the storage uses.
         partition_registry = await self._resource_manager.get_partition_registry(
             feature_store_name,
             partition_namespace=_PARTITION_NAMESPACE,
             tombstone_retention_seconds=_TOMBSTONE_RETENTION_SECONDS,
             partitioned_stores=[vector_store],
         )
-        partition = await SemanticResourceManager._get_or_create_partition(
-            PartitionManager(
-                partition_registry,
-                [vector_store],
-                tracker=OperationTracker(
-                    await self._resource_manager.get_metrics_factory("prometheus"),
-                    prefix=_PARTITION_NAMESPACE,
-                ),
+        partition_manager = PartitionManager(
+            partition_registry,
+            [vector_store],
+            tracker=OperationTracker(
+                await self._resource_manager.get_metrics_factory("prometheus"),
+                prefix=_PARTITION_NAMESPACE,
             ),
-            vector_store,
         )
+        registration = await partition_manager.resolve_partition(_PARTITION_NAME)
+        partition = (
+            None
+            if registration is None
+            else await vector_store.get_partition(registration.partition_uuid)
+        )
+        if partition is None:
+            raise SchemaMismatchError(
+                f"Semantic memory's vector store partition on '{vector_store_id}' "
+                "is missing. Run `memmachine-server prepare`."
+            )
         storage = VectorStoreSemanticStorage(sql_engine, partition)
         await storage.startup()
         return storage

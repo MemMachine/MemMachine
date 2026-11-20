@@ -918,6 +918,7 @@ async def test_a_sqlite_vec_vector_store_engine_loads_sqlite_vec(tmp_path):
     )
     builder = DatabaseManager(conf)
     try:
+        await builder.prepare_vector_store("vec1", **_STORE)
         await builder.get_vector_store("vec1", **_STORE)
         engine = builder.vector_store_sql_engines["vec1"]
         async with engine.connect() as connection:

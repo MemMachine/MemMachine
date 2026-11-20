@@ -41,7 +41,11 @@ from memmachine_server.common.metrics_factory import (
     OperationTracker,
     timed,
 )
-from memmachine_server.common.schema_migration import Lineage, upgrade_lineage
+from memmachine_server.common.schema_migration import (
+    Lineage,
+    check_lineage,
+    upgrade_lineage,
+)
 from memmachine_server.common.session_manager.session_data_manager import (
     SessionDataManager,
 )
@@ -128,6 +132,10 @@ class SessionDataManagerSQL(SessionDataManager):
     async def prepare(self) -> None:
         """Create the session tables, or bring them up to date."""
         await upgrade_lineage(self._engine, SESSION_LINEAGE)
+
+    async def startup(self) -> None:
+        """Check that the session tables are migrated."""
+        await check_lineage(self._engine, SESSION_LINEAGE)
 
     async def drop_tables(self) -> None:
         """Drop all tables from the database."""

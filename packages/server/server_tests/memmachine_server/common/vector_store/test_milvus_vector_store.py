@@ -20,6 +20,9 @@ from server_tests.memmachine_server.common.vector_store.in_memory_vector_store_p
 from server_tests.memmachine_server.common.vector_store.partition_lifecycle_contract import (
     PartitionLifecycleContract,
 )
+from server_tests.memmachine_server.common.vector_store.store_schema_check_contract import (
+    StoreSchemaCheckContract,
+)
 
 pymilvus = pytest.importorskip("pymilvus")
 DataType = pymilvus.DataType
@@ -1604,6 +1607,18 @@ async def test_a_purge_round_milvus_does_not_accept_in_full_raises():
     client.has_collection = AsyncMock(return_value=True)
     client.list_indexes = AsyncMock(return_value=["vector"])
     client.load_collection = AsyncMock(return_value=None)
+    client.describe_collection = AsyncMock(
+        return_value={
+            "fields": [
+                {
+                    "name": "vector",
+                    "type": DataType.FLOAT_VECTOR,
+                    "params": {"dim": VECTOR_DIM},
+                }
+            ]
+        }
+    )
+    client.describe_index = AsyncMock(return_value={"metric_type": "COSINE"})
     client.query = AsyncMock(return_value=[{"id": "listed_a"}, {"id": "listed_b"}])
     client.delete = AsyncMock(return_value={"delete_count": 1})
     store = await _started_store(client, store_schema=_schema(indexed_properties={}))
@@ -1874,3 +1889,19 @@ class TestLifecycleContract(PartitionLifecycleContract):
             consistency_level="Strong",
         )
         return {UUID(row["record_uuid"]) for row in rows}
+
+
+class TestStoreSchemaCheck(StoreSchemaCheckContract):
+    """The schema check, against this store."""
+
+    vector_store_name = VECTOR_STORE_NAME
+
+    @staticmethod
+    async def build(store, vector_store_name, **schema_changes):
+        return MilvusVectorStore(
+            _params(
+                store._client,
+                vector_store_name=vector_store_name,
+                store_schema=_schema(**schema_changes),
+            )
+        )
