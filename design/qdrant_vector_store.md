@@ -33,7 +33,9 @@ registry](partition_registry.md),
   refuse it for the field's index.
 - **Preparation converges:** `prepare` creates the collection and each payload
   index under separate already-exists guards, so a preparation that failed
-  between them is completed by the next. `startup` creates nothing.
+  between them is completed by the next. `startup` creates nothing: it
+  checks that the collection exists with the store's dimensions and metric,
+  and indexes exactly the declared properties, by type.
 - **Client:** `AsyncQdrantClient`, with `request_timeout_seconds` as its
   timeout.
 - **Oversized upserts are halved.** Qdrant's REST API refuses a request over
