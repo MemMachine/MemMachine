@@ -1333,22 +1333,21 @@ async def test_overlapping_segment_deletes_do_not_deadlock(
     """
     partition = await _created(store, uuid4())
 
-    async def round_trip(rng: random.Random) -> None:
-        segments = [_seg(index=index) for index in range(24)]
+    async def round_trip() -> None:
+        segments = [_seg(index=index) for index in range(96)]
         await partition.add_segments(_links(*segments))
         uuids = [segment.uuid for segment in segments]
-        forward = uuids[:16]
-        backward = [*reversed(uuids[8:])]
+        # One call deletes every segment and the other a few of them: calls
+        # of unequal size deadlock far more often than calls of equal size
+        # when they lock in different orders.
         await asyncio.gather(
-            partition.delete_segments(forward),
-            partition.delete_segments(backward),
+            partition.delete_segments(uuids),
+            partition.delete_segments(uuids[80:]),
         )
-        await partition.delete_segments(rng.sample(uuids, len(uuids)))
         assert await _row_counts(partition, partition._partition_uuid) == (0, 0)
 
-    rng = random.Random(7)
     for _ in range(10):
-        await asyncio.wait_for(round_trip(rng), 30)
+        await asyncio.wait_for(round_trip(), 30)
 
 
 # ===================================================================
