@@ -737,11 +737,11 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
             # One statement per segment, in UUID order. Each locks the row
             # it deletes, so concurrent deletions of overlapping segments
             # take their locks in one order and cannot deadlock. Each also
-            # names one key, which the planner prices as `_restrict_to_keys`
-            # describes for one key.
-            # CASCADE deletes derivatives via FK. Run on the connection: a
-            # session does not execute a DELETE with a list of parameter
-            # sets.
+            # names one key, so the planner chooses its plan for that key
+            # alone.
+            # CASCADE deletes derivatives via FK. The statements run on the
+            # session's connection, which executes a DELETE once per
+            # parameter set.
             await (await session.connection()).execute(
                 delete(SegmentRow).where(
                     SegmentRow.partition_uuid == self._partition_uuid,
@@ -767,19 +767,15 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
         each key once.
 
         On PostgreSQL the statement joins each key to a subquery of that
-        key's rows, so the planner prices one key at a time. Given the keys
-        as one list, the planner weighs an index lookup per key against one
-        scan of all the partition's rows, by the number of rows it
-        estimates the partition to hold. It has that number only for the
-        partitions its statistics list as most common, and a generic plan
-        has it for none, so for any other partition it uses the average
-        partition's. A partition far larger than the average then gets the
-        scan, which reads all of its rows. For one key, the planner prices
-        the lookup below the scan, so the statement searches the index once
-        per key and its cost follows the number of keys alone, unless the
-        planner estimates the partition to hold one row, in which case it
-        prices the two the same and may scan all the partition's rows for
-        each key.
+        key's rows, so the planner chooses a plan for one key at a time.
+        Given the keys as one `IN` list, the planner would choose one plan
+        for the whole list, and where it estimates the partition to hold
+        few rows, that plan would scan all the partition's rows, however
+        many the partition holds. For one key, the planner estimates the
+        lookup to cost less than the scan, so the statement's cost follows
+        the number of keys, unless the planner estimates the partition to
+        hold one row, in which case it estimates the same cost for both and
+        may scan all the partition's rows for each key.
         """
         if self._is_sqlite:
             return rows.where(key_column.in_(keys))
@@ -789,8 +785,9 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
             .render_derived(name="keys")
         )
         # The OFFSET keeps the planner from merging the subquery into the
-        # statement, where it would again weigh the keys as one list. It is
-        # a constant zero, which PostgreSQL plans no node for.
+        # statement, where it would choose one plan for all the keys. Its
+        # zero is a literal: PostgreSQL plans a Limit node for an OFFSET
+        # given as a parameter.
         rows_of_key = (
             rows.where(key_column == key_table.c.key)
             .offset(literal_column("0"))

@@ -1326,12 +1326,10 @@ async def test_unsupported_dialect_engine_is_rejected(
 async def test_overlapping_segment_deletes_do_not_deadlock(
     store: SQLAlchemySegmentStore,
 ) -> None:
-    """Overlapping concurrent `delete_segments` stay deadlock-free.
+    """Concurrent `delete_segments` calls with segments in common both complete.
 
-    A deletion runs one statement per segment, so it takes its row locks in
-    the order of its statements, and deleting in UUID order makes that one
-    order for every deletion. Without that order this test can deadlock on
-    PostgreSQL.
+    Calls that locked their common segments in different orders could each
+    wait for the other, and PostgreSQL would fail one of them.
     """
     partition = await _created(store, uuid4())
 
