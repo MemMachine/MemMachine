@@ -104,7 +104,6 @@ class ClusterStateStorageSqlAlchemy(ClusterStateStorage):
             await conn.run_sync(BaseClusterStore.metadata.create_all)
 
     async def startup(self) -> None:
-        # migrate created the tables, and there is nothing else to start.
         pass
 
     async def delete_all(self) -> None:

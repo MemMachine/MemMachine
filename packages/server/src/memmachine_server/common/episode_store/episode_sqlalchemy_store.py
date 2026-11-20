@@ -182,7 +182,6 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
             ) from err
 
     async def startup(self) -> None:
-        # migrate created the tables, and there is nothing else to start.
         pass
 
     async def delete_all(self) -> None:

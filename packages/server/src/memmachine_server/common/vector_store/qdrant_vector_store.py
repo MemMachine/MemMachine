@@ -529,7 +529,6 @@ class QdrantVectorStore(VectorStore):
 
     @override
     async def startup(self) -> None:
-        # migrate prepared the collection, and there is nothing else to start.
         pass
 
     async def _prepare_storage(self) -> None:

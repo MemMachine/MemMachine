@@ -212,7 +212,6 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
         await apply_alembic_migrations(self._engine)
 
     async def startup(self) -> None:
-        # migrate created the tables, and there is nothing else to start.
         pass
 
     async def cleanup(self) -> None:

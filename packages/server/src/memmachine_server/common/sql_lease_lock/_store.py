@@ -71,7 +71,7 @@ class SQLLeaseStore:
             await conn.execute(statement.on_conflict_do_nothing(index_elements=["id"]))
 
     async def startup(self) -> None:
-        """Start the store on the tables migrate created."""
+        pass
 
     async def _lock_resource(
         self, conn: AsyncConnection, key: str, *, create: bool = False

@@ -883,7 +883,6 @@ class SQLAlchemySegmentStore(SegmentStore):
 
     @override
     async def startup(self) -> None:
-        # migrate created the tables, and there is nothing else to start.
         pass
 
     @override
