@@ -1330,7 +1330,7 @@ async def test_overlapping_segment_deletes_do_not_deadlock(
 
     A deletion runs one statement per segment, so it takes its row locks in
     the order of its statements, and deleting in UUID order makes that one
-    order for every deletion. Without that order this test deadlocks on
+    order for every deletion. Without that order this test can deadlock on
     PostgreSQL.
     """
     partition = await _created(store, uuid4())
