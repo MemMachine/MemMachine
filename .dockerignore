@@ -81,7 +81,6 @@ temp/
 # Sample and example files
 sample/
 examples/
-maintainers/
 
 # Lock files (keep uv.lock for reproducible builds)
 # uv.lock

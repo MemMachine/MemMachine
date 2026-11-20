@@ -181,4 +181,22 @@ explains how to preview and check it locally.
    in the template. CI's pull request checks skip drafts and run once you mark
    a draft ready for review.
 
+## Releases
+
+Creating a release takes write access to the repository. Publishing one runs
+the workflows that upload the Python packages to PyPI, the TypeScript client and
+the OpenClaw plugin to npm, and the images to Docker Hub.
+
+- **Breaking changes:** while the major version is 0, changing the minor
+  version, such as `0.4.1` to `0.5.0`, marks a breaking release. Breaking
+  changes go only into such a release; a patch release stays compatible.
+- **Versions:** every package's version comes from the release's tag, a
+  three-part version with an optional `v` prefix and an optional pre-release
+  suffix, such as `v0.4.0` or `v0.5.0-rc1`. The npm publish workflows reject
+  other forms, and PyPI and npm get a pre-release only when the tag has a
+  pre-release suffix, whatever GitHub's pre-release box says.
+- **Mistakes:** deleting a release and its tag doesn't remove what its workflows
+  uploaded, and PyPI and npm won't accept the same version again, so a corrected
+  release needs a new version number.
+
 We look forward to your contributions!
