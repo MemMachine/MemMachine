@@ -96,6 +96,7 @@ class TestMemMachineLongMemEval:
         session_data,
     ) -> None:
         memmachine = MemMachine(memmachine_config)
+        await memmachine.resource_manager.migrate()
         await memmachine.start()
 
         try:
