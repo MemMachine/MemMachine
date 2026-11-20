@@ -28,6 +28,11 @@ from memmachine_server.common.metrics_factory import (
     MetricsFactory,
     OperationTracker,
 )
+from memmachine_server.common.partition_registry import (
+    PartitionManager,
+    PartitionRegistry,
+    Registration,
+)
 from memmachine_server.common.property_keys import (
     is_reserved_property_key,
     reserved_property_key,
@@ -54,11 +59,7 @@ from .data_types import (
 )
 from .deriver import Deriver
 from .formatting import format_timestamp
-from .segment_store import (
-    SegmentStore,
-    SegmentStorePartition,
-    SegmentStorePartitionConfig,
-)
+from .segment_store import SegmentStore, SegmentStorePartition
 from .segmenter import Segmenter
 
 logger = logging.getLogger(__name__)
@@ -82,6 +83,10 @@ class EventMemoryParams(BaseModel):
             Segment store holding the events' segments.
         vector_store (VectorStore):
             Vector store holding the derivatives' vectors.
+        partition_registry (PartitionRegistry):
+            Registry of the partition namespace holding event memory's
+            partitions, shared by every process that serves them; already
+            started.
         segmenter (Segmenter):
             Segmenter that segments events into segments.
         deriver (Deriver):
@@ -104,6 +109,14 @@ class EventMemoryParams(BaseModel):
     vector_store: InstanceOf[VectorStore] = Field(
         ...,
         description="Vector store holding the derivatives' vectors",
+    )
+    partition_registry: InstanceOf[PartitionRegistry] = Field(
+        ...,
+        description=(
+            "Registry of the partition namespace holding event memory's "
+            "partitions, shared by every process that serves them; already "
+            "started"
+        ),
     )
     segmenter: InstanceOf[Segmenter] = Field(
         ...,
@@ -132,8 +145,13 @@ class EventMemory:
     """
     Event memory over a segment store and a vector store.
 
-    A partition key names one partition in each store, and must be valid
-    in both. Handles on a partition read and write that pair only.
+    The registry registers each partition under a name and mints the
+    partition's UUID, and each store holds a partition's records under the
+    UUID. A name deleted and created again names a new partition. A
+    partition manager over both stores creates, purges, and drops each
+    partition in both. Getting a partition answers None when either store
+    finds nothing under its UUID: a purge round drops a deleted partition
+    from both stores, and one store's drop may land before the other's.
     """
 
     @classmethod
@@ -163,6 +181,11 @@ class EventMemory:
                 EventMemory.
         """
         self._params = params
+        self._partition_manager = PartitionManager(
+            params.partition_registry,
+            [params.segment_store, params.vector_store],
+            tracker=OperationTracker(params.metrics_factory, prefix="event_memory"),
+        )
         store_schema = params.vector_store.store_schema
         self._schema_fields = frozenset(store_schema.indexed_properties)
 
@@ -175,50 +198,96 @@ class EventMemory:
 
         self._similarity_metric = store_schema.similarity_metric
 
-    async def open_or_create_partition(
-        self, partition_key: str
-    ) -> "EventMemoryPartition":
+    async def create_partition(self, partition_name: str) -> None:
         """
-        Open the partition if it exists, or create it if it does not.
-
-        The vector store's partition is created before the segment store's,
-        so a segment store partition always has its vector store partition.
+        Create a partition under a name, in both stores.
 
         Args:
-            partition_key (str):
-                The key of the partition.
+            partition_name (str):
+                The name of the partition.
+
+        Raises:
+            ValueError:
+                If the partition name is invalid.
+            PartitionAlreadyExistsError:
+                If the name is taken, by a live or a pending partition.
+            PartitionCreateAttemptsExhaustedError:
+                If the registry gave up after repeated attempts to reserve
+                the free name failed.
+            PartitionDeletedError:
+                If the partition was deleted while the stores created it.
+            Exception:
+                Whatever a store raised while creating the partition.
+        """
+        await self._partition_manager.create_partition(partition_name)
+
+    async def get_partition(self, partition_name: str) -> "EventMemoryPartition | None":
+        """
+        Get the live partition registered under a name.
+
+        One read of the registry decides which partition the name resolves
+        to. A store finds nothing under that partition's UUID only if the
+        partition was deleted after the read and dropped from the store; the
+        call then answers None, as no partition held the name when the
+        deletion committed.
+
+        Args:
+            partition_name (str):
+                The name of the partition.
 
         Returns:
-            EventMemoryPartition:
-                A handle on the partition.
+            EventMemoryPartition | None:
+                A handle bound to the live partition, or None when no
+                partition holds the name.
+
+        Raises:
+            ValueError:
+                If the partition name is invalid.
+            PartitionPendingError:
+                If the partition registered under the name is pending.
         """
-        vector_store_partition = (
-            await self._params.vector_store.open_or_create_partition(partition_key)
+        registration = await self._partition_manager.resolve_partition(partition_name)
+        if registration is None:
+            return None
+        segment_store_partition = await self._params.segment_store.get_partition(
+            registration.partition_uuid
         )
-        segment_store_partition = (
-            await self._params.segment_store.open_or_create_partition(
-                partition_key,
-                SegmentStorePartitionConfig(),
-            )
+        if segment_store_partition is None:
+            return None
+        vector_store_partition = await self._params.vector_store.get_partition(
+            registration.partition_uuid
         )
+        if vector_store_partition is None:
+            return None
         return EventMemoryPartition(
-            self._params,
+            registration=registration,
             segment_store_partition=segment_store_partition,
             vector_store_partition=vector_store_partition,
+            segmenter=self._params.segmenter,
+            deriver=self._params.deriver,
+            embedder=self._params.embedder,
+            reranker=self._params.reranker,
+            metrics_factory=self._params.metrics_factory,
             schema_fields=self._schema_fields,
             similarity_metric=self._similarity_metric,
         )
 
-    async def delete_partition(self, partition_key: str) -> None:
+    async def delete_partition(self, partition_name: str) -> None:
         """
-        Delete the partition from both stores. Idempotent.
+        Delete the partition registered under a name, pending or live. Idempotent.
+
+        The partition is unreachable when this returns, and purge rounds
+        reclaim its records from both stores later.
 
         Args:
-            partition_key (str):
-                The key of the partition to delete.
+            partition_name (str):
+                The name of the partition to delete.
+
+        Raises:
+            ValueError:
+                If the partition name is invalid.
         """
-        await self._params.vector_store.delete_partition(partition_key)
-        await self._params.segment_store.delete_partition(partition_key)
+        await self._partition_manager.delete_partition(partition_name)
 
     @staticmethod
     def string_from_segment_context(
@@ -444,16 +513,24 @@ class EventMemoryPartition:
     """
     A handle on one partition of an EventMemory.
 
-    Reads and writes only its partition in each store. Obtained from
-    `EventMemory.open_or_create_partition`.
+    Reads and writes only its partition in each store, and fences each
+    operation by the partition's registration: an operation on valid arguments
+    begun after the partition was deleted raises PartitionDeletedError,
+    whether or not a partition was created again under the name since.
+    Obtained from `EventMemory.get_partition`.
     """
 
     def __init__(
         self,
-        params: EventMemoryParams,
         *,
+        registration: Registration,
         segment_store_partition: SegmentStorePartition,
         vector_store_partition: VectorStorePartition,
+        segmenter: Segmenter,
+        deriver: Deriver,
+        embedder: Embedder,
+        reranker: Reranker | None,
+        metrics_factory: MetricsFactory | None,
         schema_fields: frozenset[str],
         similarity_metric: SimilarityMetric,
     ) -> None:
@@ -461,26 +538,38 @@ class EventMemoryPartition:
         Initialize a handle on one partition of an EventMemory.
 
         Args:
-            params (EventMemoryParams):
-                Parameters of the EventMemory.
+            registration (Registration):
+                The partition's registration.
             segment_store_partition (SegmentStorePartition):
                 The partition's segment store partition.
             vector_store_partition (VectorStorePartition):
                 The partition's vector store partition.
+            segmenter (Segmenter):
+                Segmenter that segments events into segments.
+            deriver (Deriver):
+                Deriver that derives derivatives from segments.
+            embedder (Embedder):
+                Embedder for creating embeddings.
+            reranker (Reranker | None):
+                Reranker for scoring search results, or None to score by
+                embedding similarity.
+            metrics_factory (MetricsFactory | None):
+                Factory for usage metrics, or None to collect none.
             schema_fields (frozenset[str]):
                 The properties the vector store declares.
             similarity_metric (SimilarityMetric):
                 The metric the vector store scores matches by.
         """
+        self._registration = registration
         self._segment_store_partition = segment_store_partition
         self._vector_store_partition = vector_store_partition
-        self._segmenter = params.segmenter
-        self._deriver = params.deriver
-        self._embedder = params.embedder
-        self._reranker = params.reranker
+        self._segmenter = segmenter
+        self._deriver = deriver
+        self._embedder = embedder
+        self._reranker = reranker
 
         self._tracker = OperationTracker(
-            params.metrics_factory,
+            metrics_factory,
             prefix="event_memory",
         )
 
@@ -489,13 +578,13 @@ class EventMemoryPartition:
 
         self._encode_events_phase_seconds: MetricsFactory.Histogram | None = None
         self._query_phase_seconds: MetricsFactory.Histogram | None = None
-        if params.metrics_factory is not None:
-            self._encode_events_phase_seconds = params.metrics_factory.get_histogram(
+        if metrics_factory is not None:
+            self._encode_events_phase_seconds = metrics_factory.get_histogram(
                 "event_memory_encode_events_phase_seconds",
                 "Time spent in each phase of encode_events",
                 label_names=("phase",),
             )
-            self._query_phase_seconds = params.metrics_factory.get_histogram(
+            self._query_phase_seconds = metrics_factory.get_histogram(
                 "event_memory_query_phase_seconds",
                 "Time spent in each phase of query",
                 label_names=("phase",),
@@ -546,20 +635,27 @@ class EventMemoryPartition:
             ValueError:
                 If any event supplies an illegal property key, or one of
                 the memory's own reserved keys.
+            PartitionDeletedError:
+                If the partition was deleted before or while the events were
+                stored.
         """
         async with self._tracker("encode_events"):
+            events = list(events)
+            self._validate_events(events)
+            # Checked before and after the writes: when the partition is
+            # deleted meanwhile, the call raises instead of reporting success,
+            # and the purge reclaims the writes.
+            await self._registration.require_current()
             await self._encode_events(events, format_options=format_options)
+            await self._registration.require_current()
 
     async def _encode_events(
         self,
-        events: Iterable[Event],
+        events: list[Event],
         *,
         format_options: FormatOptions | None,
     ) -> None:
         t_start = time.monotonic()
-
-        events = list(events)
-        self._validate_events(events)
 
         segment_lists = await asyncio.gather(
             *(
@@ -728,8 +824,15 @@ class EventMemoryPartition:
             QueryResult:
                 The query result.
 
+        Raises:
+            PartitionDeletedError:
+                If the partition was deleted before the query began.
         """
         async with self._tracker("query"):
+            # Checked before the read only: the purge waits out a retention
+            # after the deletion, so a read in flight when the deletion
+            # commits still finds the partition's records.
+            await self._registration.require_current()
             return await self._query(
                 query,
                 vector_search_limit=vector_search_limit,
@@ -895,13 +998,21 @@ class EventMemoryPartition:
         return await self._reranker.score(query, context_strings)
 
     async def forget_events(self, event_uuids: Iterable[UUID]) -> None:
-        """Forget events by their UUIDs."""
-        event_uuids = set(event_uuids)
-        if not event_uuids:
-            return
+        """
+        Forget events by their UUIDs.
 
+        Raises:
+            PartitionDeletedError:
+                If the partition was deleted before or while the events were
+                forgotten.
+        """
+        event_uuids = set(event_uuids)
         async with self._tracker("forget_events"):
-            await self._forget_events(event_uuids)
+            # Checked after the deletes only: a delete adds nothing a purge
+            # must reclaim, and reaches only this partition's records.
+            if event_uuids:
+                await self._forget_events(event_uuids)
+            await self._registration.require_current()
 
     async def _forget_events(self, event_uuids: set[UUID]) -> None:
 

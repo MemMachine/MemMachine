@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, create_autospec
+from uuid import uuid4
 
 import numpy as np
 import pytest
@@ -21,6 +22,7 @@ from memmachine_server.common.filter.filter_parser import In
 from memmachine_server.common.resource_manager.semantic_manager import (
     SemanticResourceManager,
 )
+from memmachine_server.common.vector_store import VectorStore
 from memmachine_server.semantic_memory.storage import sqlalchemy_pgvector_semantic
 from memmachine_server.semantic_memory.storage.vector_store_semantic_storage import (
     VectorStoreSemanticStorage,
@@ -39,11 +41,16 @@ def _manager(conf: SemanticMemoryConf, resources: MagicMock) -> SemanticResource
 
 
 def _resources_without_models(engine: AsyncEngine) -> MagicMock:
-    vector_store = MagicMock()
-    vector_store.open_or_create_partition = AsyncMock(return_value=MagicMock())
+    vector_store = create_autospec(VectorStore, instance=True)
+    registration = MagicMock()
+    registration.partition_uuid = uuid4()
+    partition_registry = MagicMock()
+    partition_registry.resolve = AsyncMock(return_value=registration)
     resources = MagicMock()
     resources.get_sql_engine = AsyncMock(return_value=engine)
     resources.get_vector_store = AsyncMock(return_value=vector_store)
+    resources.get_partition_registry = AsyncMock(return_value=partition_registry)
+    resources.get_metrics_factory = AsyncMock(return_value=None)
     resources.get_embedder = AsyncMock(
         side_effect=AssertionError("storage must not resolve an embedder")
     )
