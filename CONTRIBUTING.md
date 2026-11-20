@@ -165,7 +165,7 @@ explains how to preview and check it locally.
 1. Create a branch:
 
    ```bash
-   git checkout -b feat/your-feature-name
+   git checkout -b your-branch-name
    ```
 
 2. Sign every commit with `-sS`, which adds a `Signed-off-by` line and a
