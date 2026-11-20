@@ -52,6 +52,7 @@ from memmachine_server.common.partition_registry import (
     PartitionManager,
 )
 from memmachine_server.common.partition_registry.sqlalchemy_partition_registry import (
+    PARTITION_REGISTRY_LINEAGE,
     SQLAlchemyPartitionRegistry,
 )
 from memmachine_server.common.resource_manager import CommonResourceManager
@@ -61,6 +62,7 @@ from memmachine_server.common.resource_manager import (
 from memmachine_server.common.resource_manager.resource_manager import (
     ResourceManagerImpl,
 )
+from memmachine_server.common.schema_migration import upgrade_lineage
 from memmachine_server.common.session_manager.session_data_manager import (
     SessionDataManager,
 )
@@ -321,8 +323,7 @@ async def test_get_partition_registry_starts_each_namespace_once_with_its_purge_
     monkeypatch.setattr(
         resource_manager_module, "_PARTITION_REGISTRY_PURGE_PAUSE_SECONDS", 3600
     )
-    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'registry.db'}")
-    enable_sqlite_explicit_begin(engine)
+    engine = await _registry_engine(tmp_path / "registry.db")
     monkeypatch.setattr(
         invalid_resource_manager, "get_sql_engine", AsyncMock(return_value=engine)
     )
@@ -393,7 +394,7 @@ async def test_concurrent_first_gets_of_a_namespace_start_its_registry_and_purge
 ):
     """Gets that all find the namespace unstarted before the first startup
     ends start its registry and its purge rounds once."""
-    engine = _sqlite_engine(tmp_path / "registry.db")
+    engine = await _registry_engine(tmp_path / "registry.db")
     gets = 3
     gets_begun = 0
     all_gets_begun = asyncio.Event()
@@ -451,7 +452,7 @@ async def test_concurrent_first_gets_of_a_namespace_start_its_registry_and_purge
 async def test_a_get_whose_registry_startup_fails_starts_no_purge_rounds_and_the_next_get_starts_them(
     invalid_resource_manager, monkeypatch, tmp_path
 ):
-    engine = _sqlite_engine(tmp_path / "registry.db")
+    engine = await _registry_engine(tmp_path / "registry.db")
     monkeypatch.setattr(
         invalid_resource_manager, "get_sql_engine", AsyncMock(return_value=engine)
     )
@@ -503,7 +504,7 @@ async def test_one_namespace_in_two_databases_starts_a_registry_and_purge_rounds
     invalid_resource_manager, monkeypatch, tmp_path
 ):
     engines = {
-        database: _sqlite_engine(tmp_path / f"{database}.db")
+        database: await _registry_engine(tmp_path / f"{database}.db")
         for database in ("db1", "db2")
     }
 
@@ -559,7 +560,7 @@ async def test_one_namespace_in_two_databases_starts_a_registry_and_purge_rounds
 async def test_purge_rounds_are_timed_under_their_namespace_with_the_prometheus_metrics_factory(
     invalid_resource_manager, monkeypatch, tmp_path
 ):
-    engine = _sqlite_engine(tmp_path / "registry.db")
+    engine = await _registry_engine(tmp_path / "registry.db")
     monkeypatch.setattr(
         invalid_resource_manager, "get_sql_engine", AsyncMock(return_value=engine)
     )
@@ -571,10 +572,6 @@ async def test_purge_rounds_are_timed_under_their_namespace_with_the_prometheus_
     monkeypatch.setattr(ResourceManagerImpl, "get_metrics_factory", get_metrics_factory)
     purge_rounds = _record_purge_rounds(monkeypatch)
 
-    registry = await invalid_resource_manager.build_partition_registry(
-        "db", partition_namespace="a", tombstone_retention_seconds=1
-    )
-    await registry.prepare()
     await invalid_resource_manager.get_partition_registry(
         "db",
         partition_namespace="a",
@@ -610,9 +607,11 @@ async def test_get_partition_registry_refuses_a_database_the_configuration_does_
         )
 
 
-def _sqlite_engine(path: Path) -> AsyncEngine:
+async def _registry_engine(path: Path) -> AsyncEngine:
+    """A SQLite engine whose database holds the prepared registry tables."""
     engine = create_async_engine(f"sqlite+aiosqlite:///{path}")
     enable_sqlite_explicit_begin(engine)
+    await upgrade_lineage(engine, PARTITION_REGISTRY_LINEAGE)
     return engine
 
 

@@ -45,7 +45,11 @@ from memmachine_server.common.data_types import (
     SimilarityMetric,
 )
 from memmachine_server.common.filter.filter_parser import FilterExpr
-from memmachine_server.common.schema_migration import Lineage, upgrade_lineage
+from memmachine_server.common.schema_migration import (
+    Lineage,
+    check_lineage,
+    upgrade_lineage,
+)
 from memmachine_server.common.sql import (
     validate_engine_connections,
     write_connection,
@@ -59,7 +63,11 @@ from .data_types import (
     Record,
     VectorStoreSchema,
 )
-from .sql_store_schema import record_store_schema, store_schema_tables
+from .sql_store_schema import (
+    check_store_schema,
+    record_store_schema,
+    store_schema_tables,
+)
 from .sqlite_properties import (
     compile_property_filter,
     property_column_values,
@@ -701,12 +709,25 @@ class SQLiteVectorStore(VectorStore):
                 self._vector_store_name,
                 self._store_schema,
             )
+        await check_store_schema(
+            self._sqlalchemy_engine,
+            _STORE_SCHEMA_TABLES,
+            self._vector_store_name,
+            self._store_schema,
+        )
 
     @override
     async def startup(self) -> None:
         if self._started:
             return
 
+        await check_lineage(self._sqlalchemy_engine, SQLITE_VECTOR_STORE_LINEAGE)
+        await check_store_schema(
+            self._sqlalchemy_engine,
+            _STORE_SCHEMA_TABLES,
+            self._vector_store_name,
+            self._store_schema,
+        )
         await self._replay_pending_operations()
 
         self._started = True

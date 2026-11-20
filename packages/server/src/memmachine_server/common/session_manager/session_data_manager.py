@@ -22,8 +22,19 @@ class SessionDataManager(ABC):
         """
         Create the manager's missing durable resources.
 
-        The caller runs it before the manager serves, while no other process
-        uses the manager. Running it again changes nothing.
+        The caller runs it before `startup`, while no other process uses the
+        manager. Running it again changes nothing.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def startup(self) -> None:
+        """
+        Start the manager on the durable resources `prepare` created.
+
+        Raises:
+            SchemaMismatchError:
+                If `prepare` has not created them or brought them up to date.
         """
         raise NotImplementedError
 

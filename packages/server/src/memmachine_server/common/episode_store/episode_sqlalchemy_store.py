@@ -1,6 +1,7 @@
 """SQLAlchemy implementation of the episode storage layer."""
 
 import logging
+import socket
 from collections.abc import Iterable
 from datetime import UTC
 from pathlib import Path
@@ -26,6 +27,7 @@ from sqlalchemy import (
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy.dialects import postgresql as pg_dialect
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase, mapped_column
 from sqlalchemy.sql import Select
@@ -40,6 +42,7 @@ from memmachine_server.common.episode_store.episode_storage import (
     EpisodeStorage,
 )
 from memmachine_server.common.errors import (
+    ConfigurationError,
     InvalidArgumentError,
 )
 from memmachine_server.common.filter.filter_parser import (
@@ -56,7 +59,11 @@ from memmachine_server.common.metrics_factory import (
     OperationTracker,
     timed,
 )
-from memmachine_server.common.schema_migration import Lineage, upgrade_lineage
+from memmachine_server.common.schema_migration import (
+    Lineage,
+    check_lineage,
+    upgrade_lineage,
+)
 from memmachine_server.common.sql import write_session
 from memmachine_server.common.utils import ensure_tz_aware
 
@@ -169,7 +176,12 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
         await upgrade_lineage(self._engine, EPISODE_STORE_LINEAGE)
 
     async def startup(self) -> None:
-        pass
+        try:
+            await check_lineage(self._engine, EPISODE_STORE_LINEAGE)
+        except (OperationalError, socket.gaierror) as err:
+            raise ConfigurationError(
+                "Failed to connect to the database during startup, please check your configuration."
+            ) from err
 
     async def delete_all(self) -> None:
         async with write_session(self._session_factory) as session:
