@@ -149,6 +149,21 @@ transaction of the store takes the database's write lock at BEGIN
 (`BEGIN IMMEDIATE`, through the `enable_sqlite_explicit_begin` setup the
 store requires of its engine), which stands in for the row locks.
 
+The order of `delete_segments`'s row locks is the order in which its
+statements reach PostgreSQL. PostgreSQL documents its part: it runs a
+session's statements in the order received, each to completion, and a
+`DELETE` locks the row it deletes. The client's part has no documented
+guarantee. The store hands SQLAlchemy the statement once with the
+parameter sets in key order, SQLAlchemy hands them to the driver, and each
+keeps the list's order without stating that it does. A client that sent
+them in another order would let two deletions of overlapping segments
+deadlock, which PostgreSQL ends by failing one of them, and the store's
+test of concurrent overlapping deletions fails on such a client. Sending
+each statement in its own round trip would rest on documented behavior
+alone, and was not chosen for its cost: 19 ms against 2.5 for 100 segments
+and 166 against 10 for 1,000, measured on a local PostgreSQL 18.6 with a
+0.34 ms round trip.
+
 ### Lookups by key
 
 A statement that reads a partition's rows for a list of keys (seed segments
@@ -250,6 +265,20 @@ to the unnested array) leave the planner the same choice, and it chose the
 scan for large tenants there too. SQLite chooses the index on both columns
 for an `IN` list of any length measured, with and without statistics, so it
 keeps the list.
+
+The statement's cost rests on three planner behaviors that no documentation
+guarantees. None of them changes what the statement returns.
+
+- An `OFFSET` keeps a subquery from being merged into its statement.
+  PostgreSQL's manual names "`OFFSET 0` as an optimization fence" in a
+  workaround on the `postgres_fdw` page and promises nothing about it.
+- A constant zero `OFFSET` gets no plan node.
+- The planner estimates the lookup of one key to cost less than a scan of
+  the partition, with the exception above. That is its cost model, measured
+  here on PostgreSQL 16 and 18.
+
+Were any of them to change, a read by a list of keys could again cost in
+proportion to the partition.
 
 ## Alternatives considered
 
