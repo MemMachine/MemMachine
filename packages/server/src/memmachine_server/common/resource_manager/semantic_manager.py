@@ -111,7 +111,7 @@ class SemanticResourceManager:
 
     async def prepare(self) -> None:
         """
-        Create semantic memory's missing durable resources.
+        Create semantic memory's durable resources, or bring them up to date.
 
         Its storage and its config store are each prepared when configured,
         whether or not semantic memory is enabled. Run it with no server

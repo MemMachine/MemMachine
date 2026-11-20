@@ -178,7 +178,7 @@ class SQLLeaseLockService:
         self._store = SQLLeaseStore(engine)
 
     async def prepare(self) -> None:
-        """Create the service's missing SQL tables and fencing counter, before `startup`."""
+        """Create the service's SQL tables, or bring them up to date, before `startup`."""
         await self._store.prepare()
 
     async def startup(self) -> None:

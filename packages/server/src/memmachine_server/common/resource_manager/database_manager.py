@@ -966,7 +966,7 @@ class DatabaseManager:
         vector_store_name: str,
         store_schema: VectorStoreSchema,
     ) -> None:
-        """Create the missing durable resources of the store of one name on a configured vector store, without starting it."""
+        """Create the durable resources of the store of one name on a configured vector store, or bring them up to date, without starting it."""
         store = await self._construct_vector_store(
             vector_store_id,
             self._vector_store_conf(vector_store_id),

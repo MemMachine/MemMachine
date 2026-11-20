@@ -4,8 +4,9 @@ Each site that changes schema is found with the function it is written in,
 and that function must be listed below: a store's `prepare`, a helper
 listed with it, or a request-path function that creates or drops what one
 partition, session, or semantic set needs. A new site fails this test until
-it is listed. The test checks where each site is written, not which
-functions call it.
+it is listed. Alembic revisions and the runner that applies them are not
+scanned. The test checks where each site is written, not which functions
+call it.
 """
 
 import ast
