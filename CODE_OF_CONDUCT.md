@@ -24,15 +24,9 @@ Examples of unacceptable behavior include:
 - Publishing others' private information, such as physical or email addresses, without their explicit permission.
 - Other conduct which could reasonably be considered inappropriate in a professional setting.
 
-## Reporting Guidelines
+## Following This Code
 
-Instances of abusive, harassing, or otherwise unacceptable behavior may be reported to the project team. All complaints will be reviewed and investigated promptly and fairly.
-
-All project leaders are obligated to respect the privacy and security of the reporter of any incident.
-
-## Enforcement
-
-Project leaders will follow the enforcement guidelines from the Contributor Covenant to address each incident. A project leader who does not follow the Code of Conduct will face the same consequences as any other member of the community.
+This code is an honor code: everyone in the community is expected to follow it, and the project has no dedicated contact for reports or process for enforcing it. GitHub's [Community Guidelines](https://docs.github.com/en/site-policy/github-terms/github-community-guidelines) apply to everything on GitHub, and content or users that violate them can be reported to GitHub, as [Reporting abuse or spam](https://docs.github.com/en/communities/maintaining-your-safety-on-github/reporting-abuse-or-spam) describes.
 
 ## Attribution
 
