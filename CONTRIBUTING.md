@@ -10,11 +10,11 @@ Please read our [Code of Conduct](CODE_OF_CONDUCT.md) and
 ## Issues
 
 Check the [issues page](https://github.com/MemMachine/MemMachine/issues) to see
-whether your bug or idea has already been reported. For a new bug, a feature,
-or a major documentation change, open an issue with the matching template
-first, so the change can be discussed before work starts. To take an existing
-issue, leave a comment on it. Small fixes, such as typos and broken links, can
-go straight to a pull request.
+whether your bug or idea has already been reported. For a feature or a
+substantial change, open an issue or a discussion first, so the design is agreed
+before you write the code. Bug fixes and small changes can go straight to a pull
+request with a clear description. To take an existing issue, leave a comment on
+it.
 
 Report a security vulnerability privately, as [SECURITY.md](SECURITY.md)
 describes, not in an issue or a pull request.
