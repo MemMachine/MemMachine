@@ -33,6 +33,7 @@ from memmachine_server.common.vector_store.sqlite_properties import (
     property_column_name,
 )
 from memmachine_server.common.vector_store.sqlite_vector_store import (
+    _STORE_SCHEMA_TABLES,
     IndexLoadError,
     SQLiteVectorStore,
     SQLiteVectorStoreParams,
@@ -176,6 +177,24 @@ async def _purge_and_drop(store: SQLiteVectorStore, partition_uuid: UUID) -> Non
 @pytest_asyncio.fixture
 async def partition(store):
     return await _created(store)
+
+
+# ── Store schema record ──
+
+
+@pytest.mark.asyncio
+async def test_prepare_records_the_store_schema(store):
+    store_table, declared_property_table = _STORE_SCHEMA_TABLES
+    async with store._sqlalchemy_engine.connect() as connection:
+        stores = (await connection.execute(select(store_table))).all()
+        keys = (
+            await connection.scalars(select(declared_property_table.c.property_key))
+        ).all()
+
+    assert [tuple(row) for row in stores] == [
+        (VECTOR_STORE_NAME, VECTOR_DIM, SimilarityMetric.COSINE.value)
+    ]
+    assert set(keys) == set(INDEXED_PROPERTIES)
 
 
 # ── Partition lifecycle ──

@@ -17,6 +17,9 @@ from memmachine_server.common.session_manager.session_data_manager_sql_impl impo
     SESSION_LINEAGE,
 )
 from memmachine_server.common.sql_lease_lock._store import LEASE_LOCK_LINEAGE
+from memmachine_server.common.vector_store.sqlite_vec_vector_store import (
+    SQLITE_VEC_VECTOR_STORE_LINEAGE,
+)
 from memmachine_server.common.vector_store.sqlite_vector_store import (
     SQLITE_VECTOR_STORE_LINEAGE,
 )
@@ -31,6 +34,7 @@ LINEAGES = [
     SEGMENT_STORE_LINEAGE,
     PARTITION_REGISTRY_LINEAGE,
     SQLITE_VECTOR_STORE_LINEAGE,
+    SQLITE_VEC_VECTOR_STORE_LINEAGE,
 ]
 
 
