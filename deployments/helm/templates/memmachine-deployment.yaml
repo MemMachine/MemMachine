@@ -1,7 +1,8 @@
 # memmachine-deployment.yaml
 # Deploys the MemMachine application server (1 replica).
-# Uses two init containers to block startup until both PostgreSQL (5432)
-# and Neo4j (7687) are accepting connections. The main container mounts:
+# Init containers block startup until PostgreSQL and the long-term memory
+# store accept connections, then run `memmachine-server migrate`. The main
+# container mounts:
 #   - memmachine-config ConfigMap → /app/configuration.yml  (app config)
 #   - memmachine-env-config ConfigMap → /app/.env           (env vars)
 #   - memmachine-pvc PVC → /app/data                        (persistent logs/data)
@@ -14,6 +15,10 @@ metadata:
   namespace: {{ .Release.Namespace }}
 spec:
   replicas: 1
+  # The migrate init container runs while no server does: Recreate stops
+  # the old pod before the new one starts.
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: memmachine
@@ -38,6 +43,17 @@ spec:
           image: busybox:1.36
           command: ['sh', '-c', 'until nc -zv {{ .Values.qdrant.host }} {{ .Values.qdrant.port }}; do echo waiting for qdrant; sleep 2; done']
 {{- end }}
+
+        # Creates or updates every configured store's schema before the
+        # server starts.
+        - name: migrate
+          image: {{ .Values.memmachine.image }}:{{ .Values.memmachine.tag }}
+          imagePullPolicy: {{ .Values.memmachine.pullPolicy }}
+          command: ["memmachine-server", "migrate"]
+          env:
+            {{- include "memmachine.appEnv" . | nindent 12 }}
+          volumeMounts:
+            {{- include "memmachine.appVolumeMounts" . | nindent 12 }}
 
       containers:
         - name: memmachine
@@ -64,46 +80,9 @@ spec:
             timeoutSeconds: 10
             failureThreshold: 3
           env:
-            - name: OPENAI_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: memmachine-secrets
-                  key: OPENAI_API_KEY
-            - name: POSTGRES_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: postgres-secret
-                  key: POSTGRES_PASSWORD
-            - name: NEO4J_USER
-              valueFrom:
-                secretKeyRef:
-                  name: neo4j-secret
-                  key: NEO4J_USER
-            - name: NEO4J_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: neo4j-secret
-                  key: NEO4J_PASSWORD
-            {{- with include "memmachine.qdrantApiKeySecret" . }}
-            - name: QDRANT_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: {{ . }}
-                  key: QDRANT_API_KEY
-            {{- end }}
-            - name: LOG_FILE
-              value: "/app/data/memmachine.log"
-            - name: MEMORY_CONFIG
-              value: {{ .Values.memmachine.config.memoryConfigPath }}
+            {{- include "memmachine.appEnv" . | nindent 12 }}
           volumeMounts:
-            - name: config-volume
-              mountPath: /app/configuration.yml
-              subPath: configuration.yml
-            - name: env-volume
-              mountPath: /app/.env
-              subPath: .env
-            - name: data-volume
-              mountPath: /app/data
+            {{- include "memmachine.appVolumeMounts" . | nindent 12 }}
       volumes:
         - name: config-volume
           configMap:

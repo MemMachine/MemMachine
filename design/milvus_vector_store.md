@@ -52,9 +52,9 @@ registry](partition_registry.md),
   with, so a changed `max_varchar_length` applies to native collections
   created afterward. A declared property's field name is its key, at most 32
   bytes, under `_p_`, within `proxy.maxNameLength` (255 unless configured).
-- **Startup converges:** the collection and its indexes (named by their
-  fields) are created at startup only when missing, and the collection is
-  loaded, a no-op when it is loaded already.
+- **Migration converges:** `migrate` creates the collection and its indexes
+  (named by their fields) only when missing. `startup` loads the collection,
+  a no-op when it is loaded already.
 - **A delete raises unless Milvus accepted every key sent.** Milvus counts the
   primary keys a delete accepts, present or not (milvus-io/milvus#51566), and
   pymilvus's async client returns that count for a delete Milvus rejected, so

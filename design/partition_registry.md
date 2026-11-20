@@ -424,8 +424,8 @@ afterwards.
   once the reservation is canceled or the partition is deleted. Every
   creation makes a new partition under a new UUID, so nothing deletes and
   creates storage in place. The storage a store's partitions share is
-  prepared at startup, each step idempotent, so a startup that failed part
-  way is completed by the next (the
+  prepared by `migrate`, each step idempotent, so a migration that failed
+  part way is completed by the next (the
   [Qdrant](qdrant_vector_store.md) and [Milvus](milvus_vector_store.md)
   documents say how).
 - A partition deleted while the stores create it is not marked live, since
@@ -644,8 +644,9 @@ differs where a store is remote:
   caller that gets or creates waits for it. A creation that stopped part way
   stays pending until its caller deletes the name: the registry offers the
   deletion and holds no policy on when to give up.
-- **`startup` creates the registry's tables when missing**, as every store's
-  startup creates its own durable resources idempotently.
+- **`migrate` creates the registry's tables when missing**, as every store's
+  `migrate` creates its own durable resources idempotently; `startup`
+  creates nothing.
 
 ## Alternatives considered
 
@@ -725,7 +726,7 @@ differs where a store is remote:
 - **Storage first, registry last**, with no pending state. Storage named by a
   partition's UUID cannot be made before the registry mints the UUID, so a
   partition's own storage is created after its reservation, and the storage
-  a store's partitions share is prepared at startup. The cost is a pending
+  a store's partitions share is prepared by `migrate`. The cost is a pending
   row a crash leaves, deleted like any other.
 - **One registry class addressing partitions by name and by UUID**, with
   `mark_live(partition_uuid)`, `unregister_partition(partition_uuid)`, and a
