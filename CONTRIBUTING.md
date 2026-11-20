@@ -103,8 +103,8 @@ the repository root before you push.
     plus `MEMMACHINE_TEST_AWS_SESSION_TOKEN` for temporary credentials
   - Cohere: `MEMMACHINE_TEST_COHERE_API_KEY`
 
-  [Running PyTest Unit Tests](maintainers/running-unit-tests.md) shows more ways
-  to select tests.
+  pytest's documentation describes
+  [how to select tests](https://docs.pytest.org/en/stable/how-to/usage.html#specifying-which-tests-to-run).
 
 - After changing dependencies in any `pyproject.toml`, update the lockfile and
   commit `uv.lock` with your change:
