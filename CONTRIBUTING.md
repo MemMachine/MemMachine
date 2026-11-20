@@ -16,6 +16,9 @@ first, so the change can be discussed before work starts. To take an existing
 issue, leave a comment on it. Small fixes, such as typos and broken links, can
 go straight to a pull request.
 
+Report a security vulnerability privately, as [SECURITY.md](SECURITY.md)
+describes, not in an issue or a pull request.
+
 ## Setup
 
 1. Fork the repository on GitHub, clone your fork, and add the original
