@@ -19,8 +19,10 @@ class EpisodeStorage(ABC):
     @abstractmethod
     async def prepare(self) -> None:
         """
-        Create the storage's durable resources, starting from none.
+        Create the storage's durable resources, or bring them up to date.
 
+        Starting from none, it creates what the storage needs; on what an earlier
+        `prepare` created, it brings that up to date through the storage's lineage.
         The caller runs it before `startup`, while no other process uses the
         storage. Run again on what it created, it changes nothing.
         """

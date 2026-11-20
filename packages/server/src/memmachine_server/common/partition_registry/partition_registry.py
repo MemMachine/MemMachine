@@ -237,8 +237,10 @@ class PartitionRegistry(ABC):
     @abstractmethod
     async def prepare(self) -> None:
         """
-        Create the registry's durable resources, starting from none.
+        Create the registry's durable resources, or bring them up to date.
 
+        Starting from none, it creates what the registry needs; on what an earlier
+        `prepare` created, it brings that up to date through the registry's lineage.
         The caller runs it before `startup`, while no other process uses the
         registry. Run again on what it created, it changes nothing. One call
         serves every registry object over the same resources.

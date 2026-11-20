@@ -20,8 +20,10 @@ class SessionDataManager(ABC):
     @abstractmethod
     async def prepare(self) -> None:
         """
-        Create the manager's durable resources, starting from none.
+        Create the manager's durable resources, or bring them up to date.
 
+        Starting from none, it creates what the manager needs; on what an earlier
+        `prepare` created, it brings that up to date through the manager's lineage.
         The caller runs it before `startup`, while no other process uses the
         manager. Run again on what it created, it changes nothing.
         """
