@@ -13,6 +13,11 @@ calls `migrate()` on every store the configuration names, and exits. It is
 the same executable as the server and runs from the same image, so the setup
 step and the servers share one code version and one configuration.
 
+The step is named for its role: a release's schema changes reach existing
+databases only through it. No schema precedes the one this code expects, so
+`migrate` creates what is missing, and a database an earlier release created
+another way is recreated rather than migrated.
+
 The setup step relies on assumptions a serving process cannot make:
 
 - **One process runs it at a time.** Nothing arbitrates between concurrent
