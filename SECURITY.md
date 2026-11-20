@@ -15,7 +15,14 @@ vulnerability may put the community at risk.
 
 To report a vulnerability, please visit the
 [Security tab](https://github.com/MemMachine/MemMachine/security) of our
-repository and click on "Report a vulnerability".
+repository and click on "Report a vulnerability". From the command line, such
+as from a coding agent, file the same private report through GitHub's API:
+
+```bash
+gh api -X POST repos/MemMachine/MemMachine/security-advisories/reports \
+  -f summary="A short summary" \
+  -f description="The details listed under Guidelines for Reporting"
+```
 
 ## Guidelines for Reporting
 
