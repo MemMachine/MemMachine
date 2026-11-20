@@ -9,6 +9,9 @@ covers creating and deleting a release.
 - **Tag:** a three-part version, `MAJOR.MINOR.PATCH`, with an optional `v`
   prefix and an optional pre-release suffix, such as `v0.4.0` or `v0.5.0-rc1`.
   The npm publish workflows reject other forms.
+- **Version number:** while the major version is 0, changing the minor version,
+  such as `0.4.1` to `0.5.0`, marks a breaking release. Breaking changes go only
+  into such a release; a patch release stays compatible.
 - **Pre-releases:** package versions come from the tag, so PyPI and npm get a
   pre-release only when the tag has a pre-release suffix. GitHub's "Set as a
   pre-release" box only labels the release on GitHub.
