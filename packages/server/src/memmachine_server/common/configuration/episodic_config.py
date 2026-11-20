@@ -202,7 +202,8 @@ class EventLongTermMemoryConf(BaseModel):
     """
     A session's event-backend long-term memory (VectorStore + SegmentStore).
 
-    Its vector store, segment store, and embedder are the deployment's.
+    Its vector store, segment store, partition registry, and embedder are the
+    deployment's.
     """
 
     backend: Literal["event"] = "event"
@@ -274,6 +275,22 @@ class LongTermMemoryConfPartial(BaseModel):
     segment_store: str | None = Field(
         default=None,
         description="ID of the SQL engine resource for the segment store (event backend only)",
+    )
+    partition_registry: str | None = Field(
+        default=None,
+        description=(
+            "ID of the SQL engine resource that holds the registry of event "
+            "memory's partitions (event backend only)"
+        ),
+    )
+    tombstone_retention_seconds: int = Field(
+        default=86400,
+        gt=0,
+        description=(
+            "Seconds a deleted partition's records are kept before its purge "
+            "starts, so every write in flight at the deletion has landed and is "
+            "reclaimed (event backend only)"
+        ),
     )
     segmenter: SegmenterConf | None = Field(
         default=None,

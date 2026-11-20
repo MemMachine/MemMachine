@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 import yaml
-from pydantic import SecretStr
+from pydantic import SecretStr, ValidationError
 
 from memmachine_server.common.configuration import (
     Configuration,
@@ -467,3 +467,65 @@ def test_empty_openai_key_disables_semantic_memory_but_keeps_its_storage():
 
     assert conf.semantic_memory.enabled is False
     assert conf.semantic_memory.storage_configured() is True
+
+
+@pytest.mark.parametrize("tombstone_retention_seconds", [0, 1.5])
+def test_a_tombstone_retention_that_is_not_a_positive_whole_number_of_seconds_is_refused(
+    tombstone_retention_seconds: float,
+):
+    with pytest.raises(ValidationError, match="tombstone_retention_seconds"):
+        LongTermMemoryConfPartial.model_validate(
+            {"tombstone_retention_seconds": tombstone_retention_seconds}
+        )
+
+
+@pytest.mark.parametrize("provider", ["qdrant", "milvus"])
+@pytest.mark.parametrize("request_timeout_seconds", [30, 90])
+@pytest.mark.parametrize("accepted", [True, False], ids=["at_floor", "below_floor"])
+def test_event_memory_retention_has_a_floor_set_by_its_remote_vector_stores_timeout(
+    provider: str, request_timeout_seconds: int, accepted: bool
+):
+    """The floor is 10 x the request timeout + 300 seconds."""
+    floor = 10 * request_timeout_seconds + 300
+    data = _event_memory_config_data(
+        {
+            "provider": provider,
+            "config": {"request_timeout_seconds": request_timeout_seconds},
+        },
+        floor if accepted else floor - 1,
+    )
+
+    if accepted:
+        Configuration(**data)
+    else:
+        with pytest.raises(ValueError, match="tombstone_retention_seconds"):
+            Configuration(**data)
+
+
+def test_event_memory_retention_below_the_remote_floor_is_accepted_on_a_sqlite_vector_store():
+    """A SQLite vector store sets no floor."""
+    data = _event_memory_config_data(
+        {"provider": "sqlite_vector_store", "config": {"path": "event_vectors.db"}}, 1
+    )
+
+    conf = Configuration(**data)
+
+    assert conf.episodic_memory.long_term_memory is not None
+    assert conf.episodic_memory.long_term_memory.tombstone_retention_seconds == 1
+
+
+def _event_memory_config_data(
+    vector_store: dict, tombstone_retention_seconds: int
+) -> dict:
+    """The sample configuration with event memory on `vector_store`, keeping deleted partitions for `tombstone_retention_seconds`."""
+    data = _sample_config_data()
+    data["resources"]["databases"]["event_vector_store"] = vector_store
+    data["episodic_memory"]["long_term_memory"] = {
+        "backend": "event",
+        "embedder": "openai_embedder",
+        "vector_store": "event_vector_store",
+        "segment_store": "profile_storage",
+        "partition_registry": "profile_storage",
+        "tombstone_retention_seconds": tombstone_retention_seconds,
+    }
+    return data

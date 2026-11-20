@@ -1,5 +1,6 @@
 """Protocols for accessing shared MemMachine resources."""
 
+from collections.abc import Iterable
 from typing import Protocol, runtime_checkable
 
 from neo4j import AsyncDriver
@@ -10,6 +11,10 @@ from memmachine_server.common.embedder import Embedder
 from memmachine_server.common.episode_store import EpisodeStorage
 from memmachine_server.common.language_model import LanguageModel
 from memmachine_server.common.metrics_factory import MetricsFactory
+from memmachine_server.common.partition_registry import (
+    PartitionedStore,
+    PartitionRegistry,
+)
 from memmachine_server.common.reranker import Reranker
 from memmachine_server.common.session_manager.session_data_manager import (
     SessionDataManager,
@@ -58,6 +63,24 @@ class CommonResourceManager(Protocol):
 
     async def get_segment_store(self, name: str) -> SegmentStore:
         """Return the segment store by name."""
+        raise NotImplementedError
+
+    async def get_partition_registry(
+        self,
+        database: str,
+        *,
+        partition_namespace: str,
+        tombstone_retention_seconds: int,
+        partitioned_stores: Iterable[PartitionedStore],
+    ) -> PartitionRegistry:
+        """
+        Return a started registry of a partition namespace in a database.
+
+        The first call for a namespace in a database starts its registry, and
+        runs the namespace's purge rounds over that call's `partitioned_stores`
+        in the background for as long as the resource manager is open, with the
+        namespace as their metrics prefix.
+        """
         raise NotImplementedError
 
     async def get_embedder(self, name: str, validate: bool = False) -> Embedder:

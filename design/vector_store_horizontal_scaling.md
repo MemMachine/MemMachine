@@ -2,23 +2,23 @@
 
 ## Problem
 
-The `VectorStore` contract said "a collection must be managed by at most one
-process; the consumer shards names across processes." No consumer sharded
-anything, and the Qdrant and Milvus stores relied on that sentence for
-correctness:
+A `VectorStore` contract under which at most one process manages a
+collection, with the consumer sharding names across processes, makes the
+stores' correctness depend on sharding that no consumer performs. Qdrant and
+Milvus stores built on that contract fail across processes:
 
-- their catalogs lived inside the backend, which cannot arbitrate a create, a
-  delete, or a purge between processes;
-- they serialized their own operations with process-local locks;
-- a collection's name was the tenant discriminator on its records, so deleting
-  and re-creating a name did not end the old life (#1563).
+- a catalog inside the backend cannot arbitrate a create, a delete, or a
+  purge between processes;
+- process-local locks serialize one process's operations only;
+- with a collection's name as the tenant discriminator on its records,
+  deleting and re-creating a name does not end the old partition (#1563).
 
 The goal is that any number of MemMachine server processes, on any hosts, can
 serve any partition of a Qdrant or Milvus store they share, with:
 
-- creation of a partition key arbitrated once;
+- creation of a partition name arbitrated once;
 - deletion final, not undone by a write in flight;
-- a re-created key starting empty;
+- a re-created name starting empty;
 - reclamation of deleted data bounded in cost and safe to run from every
   process;
 - reads whose relation to earlier writes the contract states;
@@ -34,8 +34,9 @@ similarity metric, and declared properties. Every record it holds has a vector
 of that dimensionality, and any declared property it carries has its declared
 type. The composition root builds the stores its services
 need, and the name keeps two stores over one backend apart. Within a store, a
-partition holds one tenant's records, addressed by a string key, and every
-search runs within one partition. Every partition of a store shares its
+partition holds one tenant's records, addressed by the UUID its owner's
+[partition registry](partition_registry.md) mints for it, and every search
+runs within one partition. Every partition of a store shares its
 dimensions, metric, and schema.
 
 ## Documents
@@ -44,8 +45,8 @@ Shared: contracts and choices made with every backend in mind.
 
 | Document | What it covers |
 |---|---|
-| [partition registry](vector_store_partition_registry.md) | The SQL catalog that arbitrates which partitions exist, incarnations, reservations and registrations, handles and their fencing, creation races. |
-| [purge](vector_store_purge.md) | Tombstones, the retention, the claim, backoff, dead-lettering, the sweeper. |
+| [partition registry](partition_registry.md) | The SQL catalog that arbitrates which partitions exist and their UUIDs, reservations and registrations, handles and their fencing, creation races, and the registry's creation and purge rounds over its store. |
+| [purge](vector_store_purge.md) | Tombstones, the retention, the claim, backoff, the sweeper. |
 | [consistency](vector_store_consistency.md) | What a query sees of earlier writes, as the contract states it; why the contract has no `get`; asynchronous clients; how tests observe state. |
 | [isolation](vector_store_isolation.md) | Isolation between partitions, record UUIDs and their reuse, and whether other vector databases can meet the guarantee. |
 
@@ -59,54 +60,60 @@ behind its choices.
 
 ## Lifecycle of a partition
 
-1. **Create.** The store reserves the key, inserting a pending registry row
-   under a freshly minted incarnation, prepares the storage the partition
-   needs of its own (on Qdrant and Milvus, none: its records go into the
-   store's one native collection, which startup prepared), and confirms the
-   reservation, which marks the row live. A racing creator loses at the
-   registry's primary key, and a pending partition is not opened.
-2. **Open.** The registry resolves the partition key to the live incarnation;
-   the handle is bound to that incarnation.
-3. **Use.** Every record a handle writes carries its incarnation, and every
-   read and delete is scoped to it. Before each upsert and query, and after
-   each upsert and delete, the handle checks that its incarnation is still
-   live.
+1. **Create.** The owner, such as event memory, creates the partition by
+   name through its partition manager. The manager reserves the name in the
+   registry, which inserts a pending row under a freshly minted UUID, then
+   creates the partition in each store and confirms the reservation, which
+   marks the row live. On Qdrant and Milvus, creating the partition does
+   nothing, since its records go into the store's one native collection,
+   which startup prepared. A racing creator loses at the registry's primary
+   key, and a pending partition is not answered.
+2. **Get.** The registry resolves the partition name to the live partition
+   and answers its registration, and the owner gets each store's handle on
+   the partition's UUID.
+3. **Use.** Every record a handle writes carries the partition's UUID, and
+   every read and delete is scoped to it. Before each of its writes and
+   reads, and after each of its writes and deletes, the owner checks that
+   the partition is still live.
 4. **Delete.** One registry transaction removes the partition's row and
-   queues a tombstone. Every handle of that life is stale from then on, in
-   every process.
+   queues a tombstone. Every operation the owner begins on that partition
+   afterwards raises, in every process.
 5. **Purge.** Once the retention (a day by default) has passed, sweepers in
-   every process claim tombstones oldest first and reclaim their records in
-   bounded rounds, until a round finds none and the tombstone goes.
+   every process claim tombstones oldest first and purge each partition's
+   records from the owner's stores, a round at a time; once no store finds
+   any, the round drops the partition from the stores, and the registry
+   deletes its tombstone.
 
 ## Guarantees by store
 
 | Store | Processes that may serve a partition | Queries reflect a write | Deletion reclaims |
 |---|---|---|---|
-| SQLite (engine-backed) | one | as soon as it returns | at once |
-| sqlite-vec | any on one node | as soon as it returns | at once |
-| Qdrant | any, sharing the store's registry | not stated; on one node as soon as it returns, since the store waits for each write; replicated, after an unbounded delay | by purge, after the retention |
-| Milvus | any, sharing the store's registry | within the server's `common.gracefulTime` (5 s by default) at Bounded | by purge, after the retention |
+| SQLite (engine-backed) | one | as soon as it returns | by purge, after the retention |
+| sqlite-vec | any on one node | as soon as it returns | by purge, after the retention |
+| Qdrant | any, sharing the owner's registry | not stated; on one node as soon as it returns, since the store waits for each write; replicated, after an unbounded delay | by purge, after the retention |
+| Milvus | any, sharing the owner's registry | within the server's `common.gracefulTime` (5 s by default) at Bounded | by purge, after the retention |
 
 ## Configuration
 
-`QdrantConf` and `MilvusConf` name the relational database that holds their
-stores' registries (`partition_registry`), the retention before a deleted
-partition's purge starts (`tombstone_retention_seconds`, a day by default),
-and the bound on every request to the backend (`request_timeout_seconds`,
-30 s by default). The retention must be at least 10 times the request timeout
-plus 300 seconds (see [purge](vector_store_purge.md)).
+Event memory's long-term memory configuration names the relational database
+that holds its partition registry (`partition_registry`) and the retention
+before a deleted partition's purge starts (`tombstone_retention_seconds`, a
+day by default). `QdrantConf` and `MilvusConf` bound every request to the
+backend (`request_timeout_seconds`, 30 s by default). On a Qdrant or Milvus
+vector store, event memory's retention must be at least 10 times the
+request timeout plus 300 seconds (see [purge](vector_store_purge.md)).
 
 ## Related work
 
-- The segment store's shared tables with incarnation-scoped keys ([its
-  design](segment_store_shared_tables.md)) are the model for the registry's
-  incarnation logic.
+- The segment store's shared tables ([its
+  design](segment_store_shared_tables.md)), like a vector store's partitions,
+  are keyed by the partition UUID its owner's registry mints.
 
 ## Deployment consequences
 
 - Existing Qdrant and Milvus data is not carried over. The stores name their
   native collections by vector store name, which no earlier release did, so
   an existing collection stays as it is, never read or purged, until it is
-  dropped, before or after upgrading. No migration; pre-GA.
+  dropped, before or after upgrading. No migration is provided.
 - Milvus Lite is not supported; the Milvus store needs a Milvus server.
-- Every Qdrant or Milvus store needs a relational database for its registry.
+- Event memory needs a relational database for its partition registry.
