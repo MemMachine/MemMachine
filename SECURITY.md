@@ -30,16 +30,6 @@ include the following information in your report:
 - **Expected Behavior:** A description of what you expected to happen without
   the vulnerability.
 
-### Supported Versions
-
-We are committed to providing security updates for the latest stable version of
-MemMachine.
-
-- **Latest Major Version (e.g., v1.x.y):** We will provide security patches and
-  fixes for any security vulnerabilities in this version.
-- **Previous Major Versions:** We will not provide security patches for older
-  versions. Please upgrade to the latest version to ensure you are protected.
-
 ## Public Disclosure
 
 We believe in coordinated, responsible disclosure. Once a vulnerability is
