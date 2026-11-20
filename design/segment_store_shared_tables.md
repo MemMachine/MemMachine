@@ -154,7 +154,8 @@ store requires of its engine), which stands in for the row locks.
 A statement that reads a partition's rows for a list of keys (seed segments
 by UUID, segments by event UUID, links by segment UUID or by derivative
 UUID) costs in proportion to the number of keys on PostgreSQL, whatever the
-partition's size. It is one statement: the keys are one array parameter,
+partition's size, with one exception given below. It is one statement: the
+keys are one array parameter,
 and each joins a `LATERAL` subquery selecting that key's rows, so the index
 is searched once per key, as an `IN` list searches it under a plan built
 for the partition. The subquery's `OFFSET 0` keeps the planner from merging
@@ -190,19 +191,51 @@ Measured on PostgreSQL 18.6 (0.6 to 6 million rows, statistics from
   tenant outside the most common values (4,973 blocks against 80 for 20
   events of a 5,000-segment tenant, at `random_page_cost` 1.1), so
   `plan_cache_mode = force_custom_plan` corrects only the listed tenants.
-- The cost of the scan grows in proportion to the tenant, and the cost of
-  the statement above with the number of keys alone: up to 3 µs of
-  execution per key.
+- In these distributions the cost of the scan grew in proportion to the
+  tenant, and the cost of the statement above with the number of keys
+  alone: up to 3 µs of execution per key.
 
 For one key, the index on the partition UUID and the key answers in one
 lookup at any estimate, and no scan of the partition's range is priced
-below it, so the plan depends on neither the tenant's size, the plan mode,
-nor the statistics. It held in every case measured on PostgreSQL 18: seven
-distributions of tenant sizes, 1 to 500 keys, plans built for the values
-and generic plans, with and without statistics, at `random_page_cost` 4 and
-1.1. It held for three of the distributions on PostgreSQL 16 as well. The
-statement's text is also the same for any number of keys, so one prepared
-statement serves them all.
+below it. Where the planner estimates the partition at two rows or more, it
+prices the scan above the lookup, so the plan depends on neither the
+partition's size nor the plan mode. It held in every case measured on
+PostgreSQL 18: seven distributions of tenant sizes, 1 to 500 keys, plans
+built for the values and generic plans, with and without statistics, at
+`random_page_cost` 4 and 1.1. It held for three of the distributions on
+PostgreSQL 16 as well. The statement's text is also the same for any number
+of keys, so one prepared statement serves them all.
+
+The exception is a partition that the planner estimates at one row. The
+planner counts rows in whole numbers, so an estimate below one and a half
+is one row, and a scan of the partition's range of any index led by the
+partition UUID is then priced the same as the lookup. The planner may
+choose the scan, which reads the partition's whole range for each key,
+where the `IN` list reads it once. A statement that names one key outright
+is priced the same way, and each `DELETE` of `delete_segments` is such a
+statement. The estimate is that low where almost every partition holds one
+row. Measured on PostgreSQL 18.6 under generic plans, with one
+10,000-segment partition among 1,000,000 partitions of one segment each (an
+estimate of 1.3 to 1.4 rows per partition):
+
+- The seed read of 20 segments read 202,060 blocks against 10,103 for the
+  `IN` list, the link read for 20 derivative UUIDs 199,720 against 9,986,
+  and the deletion of 20 segments 202,119. The reads by event UUID and by
+  segment UUID kept their lookups. PostgreSQL 16.15 read as many blocks in
+  the first three.
+- With the estimate set to 1.4 rows per partition, the lookup of one
+  segment was priced the same through each of the segment table's three
+  indexes. Set to 1.6, both scans were priced above the lookup.
+- With 600,000 partitions of one segment and 200,000 of two (an estimate of
+  1.7 to 1.8), every statement kept its lookup.
+- Setting the `n_distinct` of the partition UUID column for an estimate of
+  five rows per partition gave every statement its lookup in that table,
+  and gave the scan to plans built for the values in a table of 100
+  partitions of 9,000 segments and 60 of 5,000. Such a plan estimates a
+  partition outside the most common values from the rows the most common
+  ones leave, which came to one row, and the seed read of 20 segments of a
+  5,000-segment partition read 99,560 blocks against 80. The statistics
+  are left as `ANALYZE` computes them.
 
 Against an `IN` list under a plan built for the partition, the statement
 reads the same blocks up to 100 keys spread over a large tenant and about a

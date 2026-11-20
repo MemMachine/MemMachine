@@ -737,8 +737,8 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
             # One statement per segment, in UUID order. Each locks the row
             # it deletes, so concurrent deletions of overlapping segments
             # take their locks in one order and cannot deadlock. Each also
-            # names one key, which the planner looks up the same way in a
-            # partition of any size (see `_restrict_to_keys`).
+            # names one key, which the planner prices as `_restrict_to_keys`
+            # describes for one key.
             # CASCADE deletes derivatives via FK. Run on the connection: a
             # session does not execute a DELETE with a list of parameter
             # sets.
@@ -767,16 +767,19 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
         each key once.
 
         On PostgreSQL the statement joins each key to a subquery of that
-        key's rows, so it searches the index once per key and its cost
-        follows the number of keys alone. Given the keys as one list, the
-        planner weighs an index lookup per key against one scan of all the
-        partition's rows, by the number of rows it estimates the partition
-        to hold. It has that number only for the partitions its statistics
-        list as most common, and a generic plan has it for none, so for any
-        other partition it uses the average partition's. A partition far
-        larger than the average then gets the scan, which reads all of its
-        rows. For one key, the planner prices the lookup at or below the
-        scan whatever it estimates.
+        key's rows, so the planner prices one key at a time. Given the keys
+        as one list, the planner weighs an index lookup per key against one
+        scan of all the partition's rows, by the number of rows it
+        estimates the partition to hold. It has that number only for the
+        partitions its statistics list as most common, and a generic plan
+        has it for none, so for any other partition it uses the average
+        partition's. A partition far larger than the average then gets the
+        scan, which reads all of its rows. For one key, the planner prices
+        the lookup below the scan, so the statement searches the index once
+        per key and its cost follows the number of keys alone, unless the
+        planner estimates the partition to hold one row, in which case it
+        prices the two the same and may scan all the partition's rows for
+        each key.
         """
         if self._is_sqlite:
             return rows.where(key_column.in_(keys))
