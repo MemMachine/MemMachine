@@ -24,16 +24,20 @@ The setup step relies on assumptions a serving process cannot make:
   PostgreSQL extension.
 
 The operator runs it after every upgrade and after every configuration change
-that names a store or embedder no earlier run covered, and never changes an
-embedder's model under an existing name.
+that names a store or embedder no earlier run covered. Such changes are made
+in the configuration file with servers stopped, never through a running
+server's configuration API, and an embedder's model never changes under an
+existing name.
 
 ## The store contract
 
-Every storage interface has `migrate()`: it creates the store's durable
-resources or brings them up to date, runs before `startup`, while no other
-process uses the store, and changes nothing when run again. It runs the
-creation the store's startup used to run, so it adopts a database an earlier
-release created. `startup()` creates nothing: it opens the store on what
+Every storage interface has `migrate()`: it creates the store's missing
+durable resources, runs before `startup`, while no other process uses the
+store, and changes nothing when run again. It leaves what exists as it is,
+except that it converts session tables and Neo4j semantic memory data of an
+older shape and runs pgvector semantic storage's Alembic chain; a database
+whose other tables an earlier release created in another shape is not
+brought up to date. `startup()` creates nothing: it opens the store on what
 `migrate` created, and does what serving needs beyond schema, such as
 loading a Milvus collection or replaying a SQLite vector store's pending
 operations.

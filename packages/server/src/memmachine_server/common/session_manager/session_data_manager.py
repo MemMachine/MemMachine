@@ -20,7 +20,7 @@ class SessionDataManager(ABC):
     @abstractmethod
     async def migrate(self) -> None:
         """
-        Create the manager's durable resources, or bring them up to date.
+        Create the manager's missing durable resources.
 
         The caller runs it before the manager serves, while no other process
         uses the manager. Running it again changes nothing.

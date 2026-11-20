@@ -168,7 +168,7 @@ class SegmentStore(PartitionedStore):
     @abstractmethod
     async def migrate(self) -> None:
         """
-        Create the store's durable resources, or bring them up to date.
+        Create the store's missing durable resources.
 
         The caller runs it before `startup`, while no other process uses the
         store. Running it again changes nothing.

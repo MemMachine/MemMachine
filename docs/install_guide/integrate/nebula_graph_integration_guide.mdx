@@ -58,13 +58,13 @@ resources:
         username: root
         password: your_password_here
 
-        # Schema and Graph (Enterprise - automatic creation)
+        # Schema and Graph (Enterprise), created by `memmachine-server migrate`
         schema_name: "/default_schema"
         graph_type_name: "memmachine_type"
         graph_name: "memmachine"
 ```
 
-**Note**: MemMachine automatically creates the schema, graph type, and graph on startup - no manual database setup required!
+**Note**: `memmachine-server migrate` creates the schema, graph type, and graph. Run it before the first start, and again after every upgrade, with no server running.
 
 ### Step 2: Update Episodic Memory Configuration
 

@@ -287,7 +287,7 @@ class VectorGraphStore(ABC):
     @abstractmethod
     async def migrate(self) -> None:
         """
-        Create the store's durable resources, or bring them up to date.
+        Create the store's missing durable resources.
 
         The caller runs it before the store's first use, while no other process uses the
         store. Running it again changes nothing.

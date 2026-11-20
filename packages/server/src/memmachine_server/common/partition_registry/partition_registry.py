@@ -237,7 +237,7 @@ class PartitionRegistry(ABC):
     @abstractmethod
     async def migrate(self) -> None:
         """
-        Create the registry's durable resources, or bring them up to date.
+        Create the registry's missing durable resources.
 
         The caller runs it before `startup`, while no other process uses the
         registry. Running it again changes nothing, and one call serves every

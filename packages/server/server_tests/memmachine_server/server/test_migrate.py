@@ -69,7 +69,7 @@ resources:
 
 @pytest.fixture
 def configuration_path(tmp_path, monkeypatch) -> Path:
-    """A configuration of SQLite stores only, the shape the installer writes."""
+    """A configuration of SQLite stores only."""
     path = tmp_path / "cfg.yml"
     path.write_text(_CONFIGURATION.format(directory=tmp_path))
     monkeypatch.setenv("MEMORY_CONFIG", str(path))

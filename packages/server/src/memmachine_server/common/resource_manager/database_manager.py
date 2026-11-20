@@ -382,7 +382,7 @@ class DatabaseManager:
         )
 
     async def migrate_graph_stores(self) -> None:
-        """Create the durable resources of every configured graph store, or bring them up to date."""
+        """Create the missing durable resources of every configured graph store."""
         # A Neo4j graph store creates its indexes as its labels grow, so only
         # NebulaGraph stores have anything to create ahead of use.
         for name in self.conf.nebula_graph_confs:
@@ -965,7 +965,7 @@ class DatabaseManager:
         vector_store_name: str,
         store_schema: VectorStoreSchema,
     ) -> None:
-        """Create the durable resources of the store of one name on a configured vector store, or bring them up to date, without starting it."""
+        """Create the missing durable resources of the store of one name on a configured vector store, without starting it."""
         store = await self._construct_vector_store(
             vector_store_id,
             self._vector_store_conf(vector_store_id),

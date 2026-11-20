@@ -305,7 +305,7 @@ async def test_duplicate_enum_creation_raises(sqlalchemy_pg_engine):
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_migrate_idempotent_on_postgresql(sqlalchemy_pg_engine):
-    """The fixed migrate() must succeed when called twice against the same
+    """migrate() must succeed when called twice against the same
     database — the second call encounters the existing episode_type enum and
     episodestore table and handles both gracefully."""
     engine = sqlalchemy_pg_engine

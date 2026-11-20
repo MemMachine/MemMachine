@@ -1,9 +1,11 @@
 """Schema changes in the server's source happen only where they were placed on purpose.
 
-A store creates its durable resources in `migrate`, run by the setup step,
-and never in `startup`. The other sites create or drop what the request
-path needs per partition, per session, or per semantic set. A new site
-fails this test until it is placed in one of the groups below.
+Each site that changes schema is found with the function it is written in,
+and that function must be listed below: a store's `migrate`, a helper
+listed with it, or a request-path function that creates or drops what one
+partition, session, or semantic set needs. A new site fails this test until
+it is listed. The test checks where each site is written, not which
+functions call it.
 """
 
 import ast

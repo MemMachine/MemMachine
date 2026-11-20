@@ -229,7 +229,7 @@ def _prepare_multiproc_dir() -> None:
 
 async def migrate() -> None:
     """
-    Create or update the durable resources of every store the configuration can select.
+    Create the missing durable resources of every store the configuration can select.
 
     Run it with no server using the configured databases, before one starts.
     """
@@ -238,7 +238,7 @@ async def migrate() -> None:
         await resource_manager.migrate()
     finally:
         await resource_manager.close()
-    logger.info("Every configured store is migrated.")
+    logger.info("Every configured store's missing durable resources are created.")
 
 
 def main() -> None:
@@ -277,7 +277,7 @@ def main() -> None:
     subparsers.add_parser(
         "migrate",
         help=(
-            "Create or update the durable resources of every configured store, "
+            "Create the missing durable resources of every configured store, "
             "then exit; run it before starting servers"
         ),
     )

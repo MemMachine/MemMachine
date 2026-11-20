@@ -14,7 +14,7 @@ class ClusterStateStorage(Protocol):
 
     async def migrate(self) -> None:
         """
-        Create the storage's durable resources, or bring them up to date.
+        Create the storage's missing durable resources.
 
         The caller runs it before `startup`, while no other process uses the
         storage. Running it again changes nothing.

@@ -106,6 +106,12 @@ To ensure the MCP server communicates correctly with your environment, verify th
 **Reference Implementation**: This method follows the standard MCP stdio pattern. While it uses the same configuration files as the Docker method, ensure your local Python environment is correctly mapped.
 </Note>
 
+Claude Code starts the MCP server itself, so first create the schema of the databases your configuration names, before the first start and again after every upgrade, with no server running:
+
+```bash
+MEMORY_CONFIG=/absolute/path/to/config.yml memmachine-server migrate
+```
+
 If you have MemMachine installed locally, create or edit the `.mcp.json` file in your **project root**:
 
 ```json

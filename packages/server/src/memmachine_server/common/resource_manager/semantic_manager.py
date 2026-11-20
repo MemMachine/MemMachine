@@ -111,7 +111,7 @@ class SemanticResourceManager:
 
     async def migrate(self) -> None:
         """
-        Create semantic memory's durable resources, or bring them up to date.
+        Create semantic memory's missing durable resources.
 
         Its storage and its config store are each migrated when configured,
         whether or not semantic memory is enabled. Run it with no server
