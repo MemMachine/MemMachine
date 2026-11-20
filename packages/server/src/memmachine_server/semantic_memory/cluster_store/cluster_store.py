@@ -12,6 +12,15 @@ from memmachine_server.semantic_memory.semantic_model import SetIdT
 class ClusterStateStorage(Protocol):
     """Contract for persisting clustering state per semantic set."""
 
+    async def migrate(self) -> None:
+        """
+        Create the storage's durable resources, or bring them up to date.
+
+        The caller runs it before `startup`, while no other process uses the
+        storage. Running it again changes nothing.
+        """
+        ...
+
     async def startup(self) -> None: ...
 
     async def delete_all(self) -> None: ...

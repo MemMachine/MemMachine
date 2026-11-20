@@ -229,6 +229,7 @@ async def test_sql_lock_service_uses_session_database_and_is_shared(
     }
     resource_manager = ResourceManagerImpl(invalid_configure)
     try:
+        await (await resource_manager._build_sql_lock_service()).migrate()
         first, second = await asyncio.gather(
             resource_manager.get_sql_lock_service(),
             resource_manager.get_sql_lock_service(),
@@ -570,6 +571,10 @@ async def test_purge_rounds_are_timed_under_their_namespace_with_the_prometheus_
     monkeypatch.setattr(ResourceManagerImpl, "get_metrics_factory", get_metrics_factory)
     purge_rounds = _record_purge_rounds(monkeypatch)
 
+    registry = await invalid_resource_manager.build_partition_registry(
+        "db", partition_namespace="a", tombstone_retention_seconds=1
+    )
+    await registry.migrate()
     await invalid_resource_manager.get_partition_registry(
         "db",
         partition_namespace="a",

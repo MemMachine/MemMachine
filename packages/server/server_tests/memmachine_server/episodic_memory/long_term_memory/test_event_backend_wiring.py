@@ -80,6 +80,9 @@ class FakeEpisodeStorage(EpisodeStorage):
         self._episodes = dict(episodes)
 
     @override
+    async def migrate(self) -> None: ...
+
+    @override
     async def startup(self) -> None: ...
 
     @override

@@ -877,9 +877,14 @@ class SQLAlchemySegmentStore(SegmentStore):
     # Lifecycle
 
     @override
-    async def startup(self) -> None:
-        async with self._tracker("startup"), self._engine.begin() as connection:
+    async def migrate(self) -> None:
+        async with self._tracker("migrate"), self._engine.begin() as connection:
             await connection.run_sync(BaseSegmentStore.metadata.create_all)
+
+    @override
+    async def startup(self) -> None:
+        # migrate created the tables, and there is nothing else to start.
+        pass
 
     @override
     async def shutdown(self) -> None:

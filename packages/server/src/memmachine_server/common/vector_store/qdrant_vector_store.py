@@ -523,9 +523,14 @@ class QdrantVectorStore(VectorStore):
         return self._store_schema
 
     @override
-    async def startup(self) -> None:
-        async with self._tracker("startup"):
+    async def migrate(self) -> None:
+        async with self._tracker("migrate"):
             await self._prepare_storage()
+
+    @override
+    async def startup(self) -> None:
+        # migrate prepared the collection, and there is nothing else to start.
+        pass
 
     async def _prepare_storage(self) -> None:
         """Prepare the collection every partition lives in, and its payload indexes, each step idempotent."""
@@ -596,7 +601,7 @@ class QdrantVectorStore(VectorStore):
 
     @override
     async def create_partition(self, partition_uuid: UUID) -> None:
-        # Every partition lives in the collection startup prepared.
+        # Every partition lives in the collection migrate prepared.
         return
 
     @override
@@ -648,5 +653,5 @@ class QdrantVectorStore(VectorStore):
 
     @override
     async def drop_partition(self, partition_uuid: UUID) -> None:
-        # Every partition lives in the collection startup prepared.
+        # Every partition lives in the collection migrate prepared.
         return

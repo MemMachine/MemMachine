@@ -20,7 +20,7 @@ from typing import Any, LiteralString, cast
 from uuid import UUID
 
 import numpy as np
-from neo4j import AsyncDriver, Query
+from neo4j import AsyncDriver, Query, Record
 from neo4j.graph import Node as Neo4jNode
 from pydantic import InstanceOf
 
@@ -142,7 +142,7 @@ class Neo4jSemanticStorage(SemanticStorage):
         self._vector_global_lock = Lock()
         self._vector_index_creation_lock: MutableMapping[str, Lock] = {}
 
-    async def startup(self) -> None:
+    async def migrate(self) -> None:
         await self._driver.execute_query(
             _neo4j_query(
                 """
@@ -164,6 +164,10 @@ class Neo4jSemanticStorage(SemanticStorage):
         await self._backfill_embedding_dimensions()
         await self._load_set_embedding_dimensions()
         await self._ensure_existing_set_labels()
+        await self._drop_orphan_vector_indexes()
+
+    async def startup(self) -> None:
+        await self._load_set_embedding_dimensions()
         await self._hydrate_vector_index_state()
 
     async def cleanup(self) -> None:
@@ -1263,6 +1267,18 @@ class Neo4jSemanticStorage(SemanticStorage):
 
     async def _hydrate_vector_index_state(self) -> None:
         self._vector_index_by_set.clear()
+        for record in await self._vector_index_records():
+            set_id = self._set_id_from_record(record)
+            dimensions = self._dimensions_from_record(record)
+            if set_id is not None and dimensions is not None:
+                self._vector_index_by_set[set_id] = dimensions
+
+    async def _drop_orphan_vector_indexes(self) -> None:
+        for record in await self._vector_index_records():
+            if self._set_id_from_record(record) is None:
+                await self._drop_index_if_named(record.get("name"))
+
+    async def _vector_index_records(self) -> list[Record]:
         records, _, _ = await self._driver.execute_query(
             _neo4j_query(
                 """
@@ -1274,17 +1290,7 @@ class Neo4jSemanticStorage(SemanticStorage):
             ),
             prefix=self._VECTOR_INDEX_PREFIX,
         )
-        for record in records:
-            name = record.get("name")
-            set_id = self._set_id_from_record(record)
-            dimensions = self._dimensions_from_record(record)
-
-            if set_id is None:
-                await self._drop_index_if_named(name)
-                continue
-
-            if dimensions is not None:
-                self._vector_index_by_set[set_id] = dimensions
+        return records
 
     async def _drop_index_if_named(self, name: str | None) -> None:
         if not name:

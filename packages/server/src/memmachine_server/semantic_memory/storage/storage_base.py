@@ -24,6 +24,16 @@ class SemanticStorage(ABC):
     backend_name: str | None = None
 
     @abstractmethod
+    async def migrate(self) -> None:
+        """
+        Create the storage's durable resources, or bring them up to date.
+
+        The caller runs it before `startup`, while no other process uses the
+        storage. Running it again changes nothing.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
     async def startup(self) -> None:
         """Initialize the semantic storage connection."""
         raise NotImplementedError

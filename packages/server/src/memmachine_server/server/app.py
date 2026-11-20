@@ -29,6 +29,9 @@ from starlette.responses import JSONResponse
 from starlette.types import ExceptionHandler, Lifespan
 
 from memmachine_server.common.api.version import get_version
+from memmachine_server.common.resource_manager.resource_manager import (
+    ResourceManagerImpl,
+)
 from memmachine_server.server.api_v2.mcp import (
     initialize_resource,
     load_configuration,
@@ -224,6 +227,20 @@ def _prepare_multiproc_dir() -> None:
         )
 
 
+async def migrate() -> None:
+    """
+    Create or update the durable resources of every store the configuration can select.
+
+    Run it with no server using the configured databases, before one starts.
+    """
+    resource_manager = ResourceManagerImpl(load_configuration())
+    try:
+        await resource_manager.migrate()
+    finally:
+        await resource_manager.close()
+    logger.info("Every configured store is migrated.")
+
+
 def main() -> None:
     """Execute the CLI entry point for the application."""
     # Load environment variables from .env file
@@ -256,12 +273,24 @@ def main() -> None:
         action="store_true",
         help="Enable the configuration management API endpoints",
     )
+    subparsers = parser.add_subparsers(dest="command")
+    subparsers.add_parser(
+        "migrate",
+        help=(
+            "Create or update the durable resources of every configured store, "
+            "then exit; run it before starting servers"
+        ),
+    )
     args = parser.parse_args()
 
     # Handle --version early
     if args.version:
         sys.stdout.write(f"{get_version()}\n")
         sys.exit(0)
+
+    if args.command == "migrate":
+        asyncio.run(migrate())
+        return
 
     if args.with_config_api:
         os.environ["MEMMACHINE_CONFIG_API"] = "1"

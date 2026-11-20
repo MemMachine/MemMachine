@@ -71,6 +71,7 @@ async def partition_registry(
             tombstone_retention_seconds=0,
         ),
     )
+    await registry.migrate()
     await registry.startup()
     return registry
 
@@ -82,6 +83,7 @@ async def segment_store(
     store = SQLAlchemySegmentStore(
         SQLAlchemySegmentStoreParams(engine=sqlalchemy_sqlite_engine)
     )
+    await store.migrate()
     await store.startup()
     return store
 

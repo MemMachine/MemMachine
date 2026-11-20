@@ -1,4 +1,4 @@
-"""Tests for SqlAlchemyEpisodeStore.startup().
+"""Tests for SqlAlchemyEpisodeStore.migrate().
 
 Covers:
 - Connection-failure wrapping (OperationalError, socket.gaierror → ConfigurationError)
@@ -102,23 +102,23 @@ async def _cleanup(engine: AsyncEngine) -> None:
 
 
 @pytest.mark.asyncio
-async def test_startup_wraps_operational_error():
+async def test_migrate_wraps_operational_error():
     engine = _FakeAsyncEngine(OperationalError("select 1", {}, Exception("db down")))
     store = SqlAlchemyEpisodeStore(engine)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
 
     with pytest.raises(ConfigurationError) as exc_info:
-        await store.startup()
+        await store.migrate()
 
     assert isinstance(exc_info.value.__cause__, OperationalError)
 
 
 @pytest.mark.asyncio
-async def test_startup_wraps_socket_gaierror():
+async def test_migrate_wraps_socket_gaierror():
     engine = _FakeAsyncEngine(socket.gaierror(8, "dns lookup failed"))
     store = SqlAlchemyEpisodeStore(engine)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
 
     with pytest.raises(ConfigurationError) as exc_info:
-        await store.startup()
+        await store.migrate()
 
     assert isinstance(exc_info.value.__cause__, socket.gaierror)
 
@@ -136,8 +136,8 @@ def test_episode_primary_key_is_uuid_and_not_autoincremented():
 
 
 @pytest.mark.asyncio
-async def test_startup_creates_enum_with_checkfirst_on_postgresql():
-    """On PostgreSQL, startup() must explicitly create the episode_type enum
+async def test_migrate_creates_enum_with_checkfirst_on_postgresql():
+    """On PostgreSQL, migrate() must explicitly create the episode_type enum
     with checkfirst=True before calling metadata.create_all."""
     engine, _conn, _sync_conn = _make_pg_engine()
 
@@ -150,7 +150,7 @@ async def test_startup_creates_enum_with_checkfirst_on_postgresql():
         ),
     ):
         store = SqlAlchemyEpisodeStore(engine)
-        await store.startup()
+        await store.migrate()
 
     mock_enum_create.assert_called_once()
     _, kwargs = mock_enum_create.call_args
@@ -158,9 +158,9 @@ async def test_startup_creates_enum_with_checkfirst_on_postgresql():
 
 
 @pytest.mark.asyncio
-async def test_startup_handles_integrity_error_from_concurrent_enum_creation():
+async def test_migrate_handles_integrity_error_from_concurrent_enum_creation():
     """When a concurrent worker already created the enum type (TOCTOU race),
-    the IntegrityError must be caught and startup must still complete,
+    the IntegrityError must be caught and migrate must still complete,
     including the create_all step for tables."""
     engine, _conn, _sync_conn = _make_pg_engine()
 
@@ -184,13 +184,13 @@ async def test_startup_handles_integrity_error_from_concurrent_enum_creation():
         ),
     ):
         store = SqlAlchemyEpisodeStore(engine)
-        await store.startup()
+        await store.migrate()
 
     assert create_all_called, "create_all must still run after IntegrityError on enum"
 
 
 @pytest.mark.asyncio
-async def test_startup_handles_programming_error_from_concurrent_enum_creation():
+async def test_migrate_handles_programming_error_from_concurrent_enum_creation():
     """asyncpg maps DuplicateObjectError to ProgrammingError rather than
     IntegrityError.  Startup must handle both."""
     engine, _conn, _sync_conn = _make_pg_engine()
@@ -215,13 +215,13 @@ async def test_startup_handles_programming_error_from_concurrent_enum_creation()
         ),
     ):
         store = SqlAlchemyEpisodeStore(engine)
-        await store.startup()
+        await store.migrate()
 
     assert create_all_called, "create_all must still run after ProgrammingError on enum"
 
 
 @pytest.mark.asyncio
-async def test_startup_skips_enum_creation_on_non_postgresql():
+async def test_migrate_skips_enum_creation_on_non_postgresql():
     """On non-PostgreSQL dialects (e.g. SQLite), the explicit enum creation
     block must be skipped entirely."""
     engine = MagicMock()
@@ -245,13 +245,13 @@ async def test_startup_skips_enum_creation_on_non_postgresql():
         patch.object(BaseEpisodeStore.metadata, "create_all"),
     ):
         store = SqlAlchemyEpisodeStore(engine)
-        await store.startup()
+        await store.migrate()
 
     mock_enum_create.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_startup_uses_savepoint_for_enum_creation():
+async def test_migrate_uses_savepoint_for_enum_creation():
     """The enum creation must be wrapped in begin_nested() (SAVEPOINT) so that
     an IntegrityError only rolls back the savepoint, not the outer transaction."""
     engine, conn, _sync_conn = _make_pg_engine()
@@ -261,7 +261,7 @@ async def test_startup_uses_savepoint_for_enum_creation():
         patch.object(BaseEpisodeStore.metadata, "create_all"),
     ):
         store = SqlAlchemyEpisodeStore(engine)
-        await store.startup()
+        await store.migrate()
 
     conn.begin_nested.assert_called_once()
 
@@ -304,31 +304,31 @@ async def test_duplicate_enum_creation_raises(sqlalchemy_pg_engine):
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_startup_idempotent_on_postgresql(sqlalchemy_pg_engine):
-    """The fixed startup() must succeed when called twice against the same
+async def test_migrate_idempotent_on_postgresql(sqlalchemy_pg_engine):
+    """The fixed migrate() must succeed when called twice against the same
     database — the second call encounters the existing episode_type enum and
     episodestore table and handles both gracefully."""
     engine = sqlalchemy_pg_engine
     store = SqlAlchemyEpisodeStore(engine)
 
     try:
-        await store.startup()
-        await store.startup()
+        await store.migrate()
+        await store.migrate()
     finally:
         await _cleanup(engine)
 
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_startup_functional_after_double_init(sqlalchemy_pg_engine):
-    """After two startup() calls the store must be fully functional — able to
+async def test_migrate_functional_after_double_init(sqlalchemy_pg_engine):
+    """After two migrate() calls the store must be fully functional — able to
     insert and query episodes."""
     engine = sqlalchemy_pg_engine
     store = SqlAlchemyEpisodeStore(engine)
 
     try:
-        await store.startup()
-        await store.startup()
+        await store.migrate()
+        await store.migrate()
 
         episodes = await store.add_episodes(
             session_key="test-session",

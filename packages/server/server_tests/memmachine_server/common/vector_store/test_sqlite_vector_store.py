@@ -113,6 +113,7 @@ async def store(tmp_path):
     enable_sqlite_explicit_begin(engine)
     enable_sqlite_foreign_keys(engine)
     vector_store = SQLiteVectorStore(_params(engine))
+    await vector_store.migrate()
     await vector_store.startup()
     yield vector_store
     await vector_store.shutdown()
@@ -153,6 +154,7 @@ async def _store_with(store, vector_store_name: str, **overrides) -> SQLiteVecto
             store_schema=_schema(**overrides),
         )
     )
+    await other.migrate()
     await other.startup()
     return other
 
@@ -824,6 +826,7 @@ class TestPartitionIsolation:
                 save_threshold=1,
             )
         )
+        await other.migrate()
         await other.startup()
         partition_uuid = uuid4()
         await store.create_partition(partition_uuid)
@@ -1233,6 +1236,7 @@ async def _fresh_store(db_path, tmp_path, *, save_threshold=1000):
         save_threshold=save_threshold,
     )
     store = SQLiteVectorStore(params)
+    await store.migrate()
     await store.startup()
     return store, engine
 
@@ -1761,6 +1765,7 @@ class TestPartitionResources:
             )
         )
         stores.append(store)
+        await store.migrate()
         await store.startup()
         await store.create_partition(partition_uuid)
         partition = await store.get_partition(partition_uuid)

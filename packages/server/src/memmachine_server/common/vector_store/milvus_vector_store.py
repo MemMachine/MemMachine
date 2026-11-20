@@ -510,14 +510,24 @@ class MilvusVectorStore(VectorStore):
         return self._store_schema
 
     @override
-    async def startup(self) -> None:
-        async with self._tracker("startup"):
+    async def migrate(self) -> None:
+        async with self._tracker("migrate"):
             await self._prepare_storage()
 
+    @override
+    async def startup(self) -> None:
+        async with self._tracker("startup"):
+            # Searches need the collection in memory; loading one already
+            # loaded does nothing.
+            await self._client.load_collection(
+                self._collection_name,
+                timeout=self._request_timeout_seconds,
+            )
+
     async def _prepare_storage(self) -> None:
-        """Prepare and load the collection every partition lives in, with its indexes, each step idempotent."""
-        # Each step runs when it is missing, and the collection is loaded, so
-        # the next startup completes one that failed part way.
+        """Prepare the collection every partition lives in, with its indexes, each step idempotent."""
+        # Each step runs when it is missing, so the next migration completes
+        # one that failed part way.
         index_params = self._client.prepare_index_params()
         index_params.add_index(
             field_name=_VECTOR_FIELD,
@@ -614,11 +624,6 @@ class MilvusVectorStore(VectorStore):
                 missing,
                 timeout=self._request_timeout_seconds,
             )
-        # A no-op when the collection is already loaded.
-        await self._client.load_collection(
-            self._collection_name,
-            timeout=self._request_timeout_seconds,
-        )
 
     @override
     async def shutdown(self) -> None:
@@ -628,7 +633,7 @@ class MilvusVectorStore(VectorStore):
 
     @override
     async def create_partition(self, partition_uuid: UUID) -> None:
-        # Every partition lives in the collection startup prepared.
+        # Every partition lives in the collection migrate prepared.
         return
 
     @override
@@ -673,5 +678,5 @@ class MilvusVectorStore(VectorStore):
 
     @override
     async def drop_partition(self, partition_uuid: UUID) -> None:
-        # Every partition lives in the collection startup prepared.
+        # Every partition lives in the collection migrate prepared.
         return
