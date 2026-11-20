@@ -8,6 +8,8 @@ body:
     attributes:
       value: |
         Before submitting a bug, please make sure the issue hasn't been already addressed by searching through the [existing and past issues](https://github.com/MemMachine/MemMachine/issues).
+
+        Security vulnerabilities don't go in issues: report them privately, as [SECURITY.md](https://github.com/MemMachine/MemMachine/blob/main/SECURITY.md) describes.
   
   - type: textarea
     id: bug-description
