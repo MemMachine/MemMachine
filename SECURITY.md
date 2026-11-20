@@ -39,3 +39,11 @@ MemMachine.
   fixes for any security vulnerabilities in this version.
 - **Previous Major Versions:** We will not provide security patches for older
   versions. Please upgrade to the latest version to ensure you are protected.
+
+## Public Disclosure
+
+We believe in coordinated, responsible disclosure. Once a vulnerability is
+reported, we will work to validate and fix the issue. We will then announce the
+vulnerability and the fix in a public GitHub Security Advisory, giving credit to
+the reporter unless they wish to remain anonymous. We ask that reporters do not
+disclose the vulnerability publicly until we have released a fix.
