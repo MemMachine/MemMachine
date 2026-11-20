@@ -15,9 +15,7 @@ vulnerability may put the community at risk.
 
 To report a vulnerability, please visit the
 [Security tab](https://github.com/MemMachine/MemMachine/security) of our
-repository and click on "Report a vulnerability". We will
-acknowledge your report within 2 business days and work with you to understand
-the issue and coordinate a resolution.
+repository and click on "Report a vulnerability".
 
 ## Guidelines for Reporting
 
@@ -41,11 +39,3 @@ MemMachine.
   fixes for any security vulnerabilities in this version.
 - **Previous Major Versions:** We will not provide security patches for older
   versions. Please upgrade to the latest version to ensure you are protected.
-
-## Public Disclosure
-
-We believe in coordinated, responsible disclosure. Once a vulnerability is
-reported, we will work to validate and fix the issue. We will then announce the
-vulnerability and the fix in a public GitHub Security Advisory, giving credit to
-the reporter unless they wish to remain anonymous. We ask that reporters do not
-disclose the vulnerability publicly until we have released a fix.
