@@ -45,6 +45,7 @@ from memmachine_server.common.data_types import (
     SimilarityMetric,
 )
 from memmachine_server.common.filter.filter_parser import FilterExpr
+from memmachine_server.common.schema_migration import Lineage, upgrade_lineage
 from memmachine_server.common.sql import validate_engine_connections, write_session
 
 from .data_types import (
@@ -144,6 +145,13 @@ class _PendingOperationRow(BaseSQLiteVectorStore):
     )  # "upsert" or "delete"
     vector: MappedColumn[bytes | None] = mapped_column(LargeBinary, nullable=True)
     applied: MappedColumn[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+
+SQLITE_VECTOR_STORE_LINEAGE = Lineage(
+    name="sqlite_vector_store",
+    versions=Path(__file__).parent / "migrations" / "sqlite_vector_store",
+    metadata=BaseSQLiteVectorStore.metadata,
+)
 
 
 def _enable_sqlite_foreign_keys(
@@ -676,8 +684,7 @@ class SQLiteVectorStore(VectorStore):
     async def prepare(self) -> None:
         if self._index_directory is not None:
             self._index_directory.mkdir(parents=True, exist_ok=True)
-        async with self._sqlalchemy_engine.begin() as connection:
-            await connection.run_sync(BaseSQLiteVectorStore.metadata.create_all)
+        await upgrade_lineage(self._sqlalchemy_engine, SQLITE_VECTOR_STORE_LINEAGE)
 
     @override
     async def startup(self) -> None:
