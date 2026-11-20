@@ -23,11 +23,11 @@ The setup step relies on assumptions a serving process cannot make:
 - **It may hold privileges servers do not need**, such as creating a
   PostgreSQL extension.
 
-The operator runs it after every upgrade and after every configuration change
-that names a store or embedder no earlier run covered. Such changes are made
-in the configuration file with servers stopped, never through a running
-server's configuration API, and an embedder's model never changes under an
-existing name.
+The operator runs it before servers first start and after every configuration
+change that names a store or embedder no earlier run covered. Such changes
+are made in the configuration file with servers stopped, never through a
+running server's configuration API, and an embedder's model never changes
+under an existing name.
 
 ## The store contract
 

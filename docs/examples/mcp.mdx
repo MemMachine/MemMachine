@@ -19,8 +19,6 @@ MEMORY_CONFIG=config.yml uv run memmachine-server prepare
 MEMORY_CONFIG=config.yml uv run memmachine-mcp-http --host localhost --port 8080
 ```
 
-Run the first command before the first start, and again after every upgrade, with no server running.
-
 In which `config.yml` is your MemMachine configuration file.  `localhost` and `8080` are the host and port
 where the MCP server will listen for requests.
 
@@ -246,8 +244,7 @@ Replace `Your Name` with your desired user ID. The `memmachine-app` is the defau
 Here is an example of working in the development environment with `uv`.  In order to call the command,
 you need to have `uv` installed and issue `uv build` to build the project first.
 
-The desktop app starts the MCP server itself, so create the schema of the configured databases first, before
-the first start and again after every upgrade, with no server running:
+The desktop app starts the MCP server itself, so create the schema of the configured databases first:
 
 ```
 MEMORY_CONFIG=config.yml uv run memmachine-server prepare

@@ -60,8 +60,7 @@ After installation, users can run the server:
 # by MEMORY_CONFIG, or else ~/.config/memmachine/cfg.yml, or else cfg.yml in
 # the working directory.
 
-# Create the schema of the configured databases, before the first start and
-# again after every upgrade, with no server running.
+# Create the schema of the configured databases before starting the server.
 memmachine-server prepare
 
 # Start the server.
