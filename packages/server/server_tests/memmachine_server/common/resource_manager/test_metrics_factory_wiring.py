@@ -71,8 +71,11 @@ def test_get_segment_store_supplies_a_factory(monkeypatch, mock_metrics_factory)
         def __init__(self, params):
             captured["params"] = params
 
-        async def startup(self):
+        async def start(self):
             return None
+
+        async def stop(self) -> None:
+            pass
 
     monkeypatch.setattr(rm, "SQLAlchemySegmentStore", CapturingStore)
     monkeypatch.setattr(

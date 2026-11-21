@@ -271,7 +271,10 @@ class SQLAlchemyPartitionRegistry(PartitionRegistry):
             await connection.run_sync(BasePartitionRegistry.metadata.create_all)
 
     @override
-    async def startup(self) -> None:
+    async def start(self) -> None:
+        pass
+
+    async def stop(self) -> None:
         pass
 
     @override

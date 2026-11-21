@@ -20,6 +20,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
+from memmachine_server.common.lifecycle import Lifecycle
 from memmachine_server.common.sql import write_connection
 
 _metadata = MetaData()
@@ -49,7 +50,7 @@ class StoredLease:
     fencing_token: int
 
 
-class SQLLeaseStore:
+class SQLLeaseStore(Lifecycle):
     """Serialize exclusive lease changes through one row per resource."""
 
     def __init__(self, engine: AsyncEngine) -> None:
@@ -70,7 +71,10 @@ class SQLLeaseStore:
                 statement = pg_insert(_counter).values(**values)
             await conn.execute(statement.on_conflict_do_nothing(index_elements=["id"]))
 
-    async def startup(self) -> None:
+    async def start(self) -> None:
+        pass
+
+    async def stop(self) -> None:
         pass
 
     async def _lock_resource(

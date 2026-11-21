@@ -181,7 +181,10 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
                 "Failed to connect to the database while preparing, please check your configuration."
             ) from err
 
-    async def startup(self) -> None:
+    async def start(self) -> None:
+        pass
+
+    async def stop(self) -> None:
         pass
 
     async def delete_all(self) -> None:

@@ -90,11 +90,11 @@ class InMemorySemanticStorage(SemanticStorage):
     async def prepare(self):
         return None
 
-    async def startup(self):
+    async def start(self):
         return None
 
-    async def cleanup(self):
-        return None
+    async def stop(self) -> None:
+        pass
 
     async def delete_all(self):
         async with self._lock:

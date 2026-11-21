@@ -166,11 +166,11 @@ class Neo4jSemanticStorage(SemanticStorage):
         await self._ensure_existing_set_labels()
         await self._drop_orphan_vector_indexes()
 
-    async def startup(self) -> None:
+    async def start(self) -> None:
         await self._load_set_embedding_dimensions()
         await self._hydrate_vector_index_state()
 
-    async def cleanup(self) -> None:
+    async def stop(self) -> None:
         if self._owns_driver:
             await self._driver.close()
 

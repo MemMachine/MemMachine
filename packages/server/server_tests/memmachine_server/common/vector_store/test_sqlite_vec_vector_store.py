@@ -110,9 +110,9 @@ async def store(tmp_path):
     load_sqlite_vec_extension(engine)
     vector_store = SQLiteVecVectorStore(_params(engine))
     await vector_store.prepare()
-    await vector_store.startup()
+    await vector_store.start()
     yield vector_store
-    await vector_store.shutdown()
+    await vector_store.stop()
     await engine.dispose()
 
 
@@ -148,7 +148,7 @@ async def _store_with(
         )
     )
     await other.prepare()
-    await other.startup()
+    await other.start()
     return other
 
 
@@ -773,7 +773,7 @@ class TestPartitionIsolation:
 
         await _purge_and_drop(store, partition_a._partition_uuid)
         assert set(await _stored(partition_b)) == {r2.uuid}
-        await other.shutdown()
+        await other.stop()
 
     @pytest.mark.asyncio
     async def test_stores_of_two_names_keep_their_records_in_separate_storage(
@@ -803,7 +803,7 @@ class TestPartitionIsolation:
         assert set(await _stored(theirs)) == {their_record.uuid}
         [result] = await theirs.query(query_vectors=[vector], limit=10)
         assert [match.record_uuid for match in result.matches] == [their_record.uuid]
-        await other.shutdown()
+        await other.stop()
 
     @pytest.mark.asyncio
     async def test_dropping_a_partition_does_not_affect_sibling(self, store):
@@ -845,7 +845,7 @@ class TestEuclideanMetric:
         results = await partition.query(query_vectors=[[0.0, 0.0]], limit=2)
         assert results[0].matches[0].score < results[0].matches[1].score
 
-        await euclidean.shutdown()
+        await euclidean.stop()
 
 
 # ── No-properties store ──
@@ -864,7 +864,7 @@ class TestNoProperties:
         results = await partition.query(query_vectors=[[1.0, 0.0]], limit=1)
         assert len(results[0].matches) == 1
 
-        await bare.shutdown()
+        await bare.stop()
 
 
 # ── Input validation ──
@@ -985,7 +985,7 @@ class TestScoreSemantics:
         assert scores[0] == pytest.approx(0.0, abs=0.01)
         assert scores[1] == pytest.approx(5.0, abs=0.01)
 
-        await euclidean.shutdown()
+        await euclidean.stop()
 
 
 # A query, and vectors that each metric ranks in its own order, with no two
@@ -1039,7 +1039,7 @@ class TestScoreThreshold:
         assert [match.record_uuid for match in past_edge.matches] == [
             match.record_uuid for match in ranked.matches[:2]
         ]
-        await edged.shutdown()
+        await edged.stop()
 
 
 # ── Upsert behavior ──

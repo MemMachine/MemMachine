@@ -578,7 +578,7 @@ class QdrantVectorStore(VectorStore):
                         raise
 
     @override
-    async def startup(self) -> None:
+    async def start(self) -> None:
         pass
 
     @staticmethod
@@ -591,8 +591,8 @@ class QdrantVectorStore(VectorStore):
         return False
 
     @override
-    async def shutdown(self) -> None:
-        # Stores of different names may share the client, so shutdown leaves
+    async def stop(self) -> None:
+        # Stores of different names may share the client, so stop leaves
         # it open.
         pass
 

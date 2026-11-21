@@ -72,7 +72,7 @@ async def partition_registry(
         ),
     )
     await registry.prepare()
-    await registry.startup()
+    await registry.start()
     return registry
 
 
@@ -84,7 +84,7 @@ async def segment_store(
         SQLAlchemySegmentStoreParams(engine=sqlalchemy_sqlite_engine)
     )
     await store.prepare()
-    await store.startup()
+    await store.start()
     return store
 
 

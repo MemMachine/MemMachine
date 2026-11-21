@@ -237,7 +237,7 @@ async def prepare() -> None:
     try:
         await resource_manager.prepare()
     finally:
-        await resource_manager.close()
+        await resource_manager.stop()
     logger.info("Every configured store's missing durable resources are created.")
 
 

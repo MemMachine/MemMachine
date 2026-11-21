@@ -103,7 +103,10 @@ class ClusterStateStorageSqlAlchemy(ClusterStateStorage):
         async with self._engine.begin() as conn:
             await conn.run_sync(BaseClusterStore.metadata.create_all)
 
-    async def startup(self) -> None:
+    async def start(self) -> None:
+        pass
+
+    async def stop(self) -> None:
         pass
 
     async def delete_all(self) -> None:

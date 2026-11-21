@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
+from memmachine_server.common.lifecycle import Lifecycle
 from memmachine_server.semantic_memory.semantic_model import (
     CategoryIdT,
     SemanticCategory,
@@ -13,19 +14,17 @@ from memmachine_server.semantic_memory.semantic_model import (
 
 
 @runtime_checkable
-class SemanticConfigStorage(Protocol):
+class SemanticConfigStorage(Lifecycle, Protocol):
     """Contract for persisting and retrieving semantic memory configuration."""
 
     async def prepare(self) -> None:
         """
         Create the storage's missing durable resources.
 
-        The caller runs it before `startup`, while no other process uses the
+        The caller runs it before `start`, while no other process uses the
         storage. Running it again changes nothing.
         """
         ...
-
-    async def startup(self) -> None: ...
 
     async def delete_all(self) -> None: ...
 

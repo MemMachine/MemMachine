@@ -1,6 +1,6 @@
 """Abstract storage interface for episodic history."""
 
-from abc import ABC, abstractmethod
+from abc import abstractmethod
 from collections.abc import Iterable
 from uuid import UUID
 
@@ -11,9 +11,10 @@ from memmachine_server.common.episode_store.episode_model import (
     EpisodeEntry,
 )
 from memmachine_server.common.filter.filter_parser import FilterExpr
+from memmachine_server.common.lifecycle import Lifecycle
 
 
-class EpisodeStorage(ABC):
+class EpisodeStorage(Lifecycle):
     """Abstract interface for persisting and retrieving episodic history."""
 
     @abstractmethod
@@ -21,13 +22,9 @@ class EpisodeStorage(ABC):
         """
         Create the storage's missing durable resources.
 
-        The caller runs it before `startup`, while no other process uses the
+        The caller runs it before `start`, while no other process uses the
         storage. Running it again changes nothing.
         """
-        raise NotImplementedError
-
-    @abstractmethod
-    async def startup(self) -> None:
         raise NotImplementedError
 
     @abstractmethod

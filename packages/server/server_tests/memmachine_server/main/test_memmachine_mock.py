@@ -1656,7 +1656,7 @@ async def test_two_machines_share_sql_deletion_lease(
         first_lease = SQLLeaseLockService(first_engine)
         second_lease = SQLLeaseLockService(second_engine)
         await first_lease.prepare()
-        await first_lease.startup()
+        await first_lease.start()
 
         first_resources = AsyncMock()
         first_resources.get_sql_lock_service.return_value = first_lease
@@ -1860,7 +1860,7 @@ async def test_stop_cancels_active_deletion_without_processing_queued_deletion(
     assert canceled.is_set()
     assert processed == ["active"]
     await asyncio.wait_for(machine._deletion_queue.join(), 1)
-    patched_resource_manager.close.assert_awaited_once()
+    patched_resource_manager.stop.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -1895,7 +1895,7 @@ async def test_stop_finishes_when_idle_scan_finds_pending_deletion(
         assert not machine._started
         finish_scan.set()
         await asyncio.wait_for(stopping, 1)
-        patched_resource_manager.close.assert_awaited_once()
+        patched_resource_manager.stop.assert_awaited_once()
     finally:
         finish_scan.set()
 
@@ -1933,7 +1933,7 @@ async def test_stop_does_not_enqueue_delete_that_finishes_after_shutdown(
         await asyncio.wait_for(deleting, 2)
         await asyncio.wait_for(machine._deletion_queue.join(), 1)
         assert status_value == SessionDataManager.SessionStatus.Deleted
-        patched_resource_manager.close.assert_awaited_once()
+        patched_resource_manager.stop.assert_awaited_once()
     finally:
         finish_update.set()
 

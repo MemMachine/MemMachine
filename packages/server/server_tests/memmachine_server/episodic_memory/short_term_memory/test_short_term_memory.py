@@ -75,7 +75,10 @@ class MockShortTermMemoryDataManager(SessionDataManager):
             raise ValueError(f"No data for session key {session_key}")
         return self.data[session_key]
 
-    async def close(self):
+    async def start(self) -> None:
+        pass
+
+    async def stop(self):
         self.data = {}
         self.tables_created = False
 

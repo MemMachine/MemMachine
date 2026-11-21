@@ -166,8 +166,11 @@ class SessionDataManagerSQL(SessionDataManager):
         async with self._engine.begin() as conn:
             await conn.run_sync(Base.metadata.drop_all)
 
-    async def close(self) -> None:
-        """Close any underlying connections."""
+    async def start(self) -> None:
+        pass
+
+    async def stop(self) -> None:
+        pass
 
     async def _migrate_pickle_to_json(self) -> None:
         """Migrate param_data from pickle to JSON."""

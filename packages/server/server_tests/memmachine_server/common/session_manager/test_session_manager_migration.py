@@ -87,7 +87,7 @@ async def test_migrate_pickle_to_json(sqlalchemy_engine: AsyncEngine) -> None:
         await conn.run_sync(check_column)
 
     await manager.drop_tables()
-    await manager.close()
+    await manager.stop()
     await sqlalchemy_engine.dispose()
 
 
@@ -151,5 +151,5 @@ async def test_migrate_add_status_column(sqlalchemy_engine: AsyncEngine) -> None
         await conn.run_sync(check_column)
 
     await manager.drop_tables()
-    await manager.close()
+    await manager.stop()
     await sqlalchemy_engine.dispose()

@@ -35,8 +35,8 @@ class CommonResourceManager(Protocol):
         """Construct underlying resource instances."""
         raise NotImplementedError
 
-    async def close(self) -> None:
-        """Release resources and close connections."""
+    async def stop(self) -> None:
+        """Stop every component it built and started, and close its connections."""
         raise NotImplementedError
 
     async def get_sql_engine(self, name: str, validate: bool = False) -> AsyncEngine:

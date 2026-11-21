@@ -9,6 +9,7 @@ from random import uniform
 
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from memmachine_server.common.lifecycle import Lifecycle
 from memmachine_server.common.sql_lease_lock._store import (
     SQLLeaseStore,
     StoredLease,
@@ -158,7 +159,7 @@ async def _finish_lock_context(
         raise renewal_errors[0]
 
 
-class SQLLeaseLockService:
+class SQLLeaseLockService(Lifecycle):
     """Grant exclusive leases for distributed tasks that outlive SQL transactions.
 
     A key has one live holder, but waiting callers have no FIFO guarantee.
@@ -178,12 +179,15 @@ class SQLLeaseLockService:
         self._store = SQLLeaseStore(engine)
 
     async def prepare(self) -> None:
-        """Create the service's missing SQL tables and fencing counter, before `startup`."""
+        """Create the service's missing SQL tables and fencing counter, before `start`."""
         await self._store.prepare()
 
-    async def startup(self) -> None:
+    async def start(self) -> None:
         """Start the service on the tables `prepare` created."""
-        await self._store.startup()
+        await self._store.start()
+
+    async def stop(self) -> None:
+        await self._store.stop()
 
     async def try_acquire(self, key: str, *, lease_duration: timedelta) -> Lease | None:
         """Try once to acquire an exclusive lease; return None on contention."""

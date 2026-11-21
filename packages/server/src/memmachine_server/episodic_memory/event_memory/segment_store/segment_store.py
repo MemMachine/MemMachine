@@ -9,6 +9,7 @@ from collections.abc import Iterable, Mapping
 from uuid import UUID
 
 from memmachine_server.common.filter.filter_parser import FilterExpr
+from memmachine_server.common.lifecycle import Lifecycle
 from memmachine_server.common.partition_registry import PartitionedStore
 from memmachine_server.episodic_memory.event_memory.data_types import (
     Segment,
@@ -155,7 +156,7 @@ class SegmentStorePartition(ABC):
         raise NotImplementedError
 
 
-class SegmentStore(PartitionedStore):
+class SegmentStore(PartitionedStore, Lifecycle):
     """
     Abstract base class for a segment store.
 
@@ -170,19 +171,9 @@ class SegmentStore(PartitionedStore):
         """
         Create the store's missing durable resources.
 
-        The caller runs it before `startup`, while no other process uses the
+        The caller runs it before `start`, while no other process uses the
         store. Running it again changes nothing.
         """
-        raise NotImplementedError
-
-    @abstractmethod
-    async def startup(self) -> None:
-        """Startup."""
-        raise NotImplementedError
-
-    @abstractmethod
-    async def shutdown(self) -> None:
-        """Shutdown."""
         raise NotImplementedError
 
     @abstractmethod

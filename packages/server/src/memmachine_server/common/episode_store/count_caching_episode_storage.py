@@ -52,8 +52,11 @@ class CountCachingEpisodeStorage(EpisodeStorage):
     async def prepare(self) -> None:
         await self._wrapped.prepare()
 
-    async def startup(self) -> None:
-        await self._wrapped.startup()
+    async def start(self) -> None:
+        await self._wrapped.start()
+
+    async def stop(self) -> None:
+        await self._wrapped.stop()
 
     async def delete_all(self) -> None:
         await self._wrapped.delete_all()

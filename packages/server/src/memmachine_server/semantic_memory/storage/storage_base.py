@@ -1,6 +1,6 @@
 """Abstract interfaces for semantic storage implementations."""
 
-from abc import ABC, abstractmethod
+from abc import abstractmethod
 from collections.abc import AsyncIterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
@@ -11,6 +11,7 @@ import numpy as np
 from pydantic import InstanceOf
 
 from memmachine_server.common.filter.filter_parser import FilterExpr
+from memmachine_server.common.lifecycle import Lifecycle
 from memmachine_server.semantic_memory.semantic_model import (
     FeatureIdT,
     SemanticFeature,
@@ -18,7 +19,7 @@ from memmachine_server.semantic_memory.semantic_model import (
 )
 
 
-class SemanticStorage(ABC):
+class SemanticStorage(Lifecycle):
     """Base class for semantic storage backends."""
 
     backend_name: str | None = None
@@ -28,19 +29,9 @@ class SemanticStorage(ABC):
         """
         Create the storage's missing durable resources.
 
-        The caller runs it before `startup`, while no other process uses the
+        The caller runs it before `start`, while no other process uses the
         storage. Running it again changes nothing.
         """
-        raise NotImplementedError
-
-    @abstractmethod
-    async def startup(self) -> None:
-        """Initialize the semantic storage connection."""
-        raise NotImplementedError
-
-    @abstractmethod
-    async def cleanup(self) -> None:
-        """Clean up semantic storage resources."""
         raise NotImplementedError
 
     @abstractmethod

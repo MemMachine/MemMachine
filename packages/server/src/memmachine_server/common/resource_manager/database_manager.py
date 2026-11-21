@@ -232,9 +232,23 @@ class DatabaseManager:
 
         return self
 
-    async def close(self) -> None:
-        """Close all database connections."""
+    async def stop(self) -> None:
+        """Stop the stores it built and started, then close the connections they use."""
         async with self._lock:
+            stops = [
+                self._stop_vector_store(
+                    f"{vector_store_id}/{vector_store_name}", vector_store
+                )
+                for (
+                    vector_store_id,
+                    vector_store_name,
+                ), vector_store in self.vector_stores.items()
+            ]
+            stops.extend(
+                graph_store.stop() for graph_store in self.graph_stores.values()
+            )
+            await asyncio.gather(*stops)
+
             tasks = []
             for name, driver in self.neo4j_drivers.items():
                 tasks.append(self._close_async_driver(name, driver))
@@ -248,15 +262,6 @@ class DatabaseManager:
                 tasks.append(self._close_qdrant_client(name, client))
             for name, client in self.milvus_clients.items():
                 tasks.append(self._close_milvus_client(name, client))
-            for (
-                vector_store_id,
-                vector_store_name,
-            ), vector_store in self.vector_stores.items():
-                tasks.append(
-                    self._shutdown_vector_store(
-                        f"{vector_store_id}/{vector_store_name}", vector_store
-                    )
-                )
             await asyncio.gather(*tasks)
             self.graph_stores.clear()
             self.vector_stores.clear()
@@ -356,8 +361,11 @@ class DatabaseManager:
                     conf.vector_index_creation_threshold
                 )
 
-            params = Neo4jVectorGraphStoreParams(**params_kwargs)
-            self.graph_stores[name] = Neo4jVectorGraphStore(params)
+            graph_store = Neo4jVectorGraphStore(
+                Neo4jVectorGraphStoreParams(**params_kwargs)
+            )
+            await graph_store.start()
+            self.graph_stores[name] = graph_store
             return driver
 
     def get_neo4j_driver(self, name: str) -> AsyncDriver:
@@ -575,8 +583,11 @@ class DatabaseManager:
                     conf.vector_index_creation_threshold
                 )
 
-            params = NebulaGraphVectorGraphStoreParams(**params_kwargs)
-            self.graph_stores[name] = NebulaGraphVectorGraphStore(params)
+            graph_store = NebulaGraphVectorGraphStore(
+                NebulaGraphVectorGraphStoreParams(**params_kwargs)
+            )
+            await graph_store.start()
+            self.graph_stores[name] = graph_store
 
             return client
 
@@ -814,9 +825,9 @@ class DatabaseManager:
     # --- SQLite-backed VectorStores ---
 
     @staticmethod
-    async def _shutdown_vector_store(name: str, vector_store: VectorStore) -> None:
+    async def _stop_vector_store(name: str, vector_store: VectorStore) -> None:
         try:
-            await vector_store.shutdown()
+            await vector_store.stop()
         except Exception as ex:
             logger.warning("Error shutting down VectorStore '%s': %s", name, ex)
 
@@ -998,7 +1009,7 @@ class DatabaseManager:
             store = await self._construct_vector_store(
                 vector_store_id, conf, vector_store_name, store_schema
             )
-            await store.startup()
+            await store.start()
         except Exception as e:
             raise VectorStoreConfigurationError(
                 f"Vector store {vector_store_name!r} on '{vector_store_id}' failed to start: {e}",

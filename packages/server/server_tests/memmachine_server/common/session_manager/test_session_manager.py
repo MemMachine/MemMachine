@@ -89,7 +89,7 @@ async def session_manager(sqlalchemy_engine: AsyncEngine):
     await manager.prepare()
     yield manager
     await manager.drop_tables()
-    await manager.close()
+    await manager.stop()
 
 
 @pytest.mark.asyncio
