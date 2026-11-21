@@ -136,7 +136,7 @@ async def test_stores_start_on_what_prepare_created_without_ddl(configuration_pa
             await semantic_manager.get_semantic_storage()
             await semantic_manager.get_semantic_config_storage()
         finally:
-            await resource_manager.close()
+            await resource_manager.stop()
     finally:
         event.remove(Engine, "before_cursor_execute", record)
 

@@ -37,7 +37,7 @@ async def two_stores(
         first = SQLLeaseStore(first_engine)
         second = SQLLeaseStore(second_engine)
         await first.prepare()
-        await first.startup()
+        await first.start()
         yield first, second
     finally:
         await first_engine.dispose()
@@ -143,7 +143,7 @@ async def test_public_service_validates_key_and_duration(tmp_path: Path) -> None
     try:
         service = SQLLeaseLockService(engine)
         await service.prepare()
-        await service.startup()
+        await service.start()
         with pytest.raises(ValueError, match="resource key"):
             await service.try_acquire("", lease_duration=timedelta(seconds=1))
         with pytest.raises(ValueError, match="lease duration"):
@@ -176,7 +176,7 @@ async def test_public_lease_renewal_and_release(tmp_path: Path) -> None:
         first = SQLLeaseLockService(first_engine)
         second = SQLLeaseLockService(second_engine)
         await first.prepare()
-        await first.startup()
+        await first.start()
         lease = await first.try_acquire("resource", lease_duration=timedelta(seconds=2))
         assert lease is not None
         original_expiry = lease.expires_at
@@ -212,7 +212,7 @@ async def test_expired_public_handle_cannot_touch_replacement(tmp_path: Path) ->
         first = SQLLeaseLockService(first_engine)
         second = SQLLeaseLockService(second_engine)
         await first.prepare()
-        await first.startup()
+        await first.start()
         old = await first.try_acquire(
             "resource", lease_duration=timedelta(milliseconds=100)
         )
@@ -244,7 +244,7 @@ async def one_service(
     try:
         service = SQLLeaseLockService(engine)
         await service.prepare()
-        await service.startup()
+        await service.start()
         yield service, engine
     finally:
         await engine.dispose()

@@ -77,7 +77,7 @@ async def _registry(
         ),
     )
     await registry.prepare()
-    await registry.startup()
+    await registry.start()
     return registry
 
 
@@ -782,7 +782,7 @@ async def test_the_backoff_stops_doubling_at_its_maximum(
         ),
     )
     await registry.prepare()
-    await registry.startup()
+    await registry.start()
     partition_uuid = (await registry._reserve("a")).partition_uuid
     await registry.unregister("a")
     await _age_deletion(registry, partition_uuid)

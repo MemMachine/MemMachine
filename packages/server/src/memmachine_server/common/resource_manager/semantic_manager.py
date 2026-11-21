@@ -100,14 +100,12 @@ class SemanticResourceManager:
         self._semantic_service: SemanticService | None = None
         self._semantic_session_manager: SemanticSessionManager | None = None
 
-    async def close(self) -> None:
-        """Stop semantic services if they were started."""
-        tasks = []
-
+    async def stop(self) -> None:
+        """Stop the semantic service and the semantic storage it built and started."""
         if self._semantic_service is not None:
-            tasks.append(self._semantic_service.stop())
-
-        await asyncio.gather(*tasks)
+            await self._semantic_service.stop()
+        if self._semantic_storage is not None:
+            await self._semantic_storage.stop()
 
     async def prepare(self) -> None:
         """
@@ -141,7 +139,7 @@ class SemanticResourceManager:
         if self._conf.storage_backend == SemanticMemoryStorageBackend.VECTOR_STORE:
             return await self._get_vector_store_semantic_storage()
         storage = await self._construct_semantic_storage()
-        await storage.startup()
+        await storage.start()
         return storage
 
     async def _construct_semantic_storage(self) -> SemanticStorage:
@@ -253,7 +251,7 @@ class SemanticResourceManager:
             vector_store,
         )
         storage = VectorStoreSemanticStorage(sql_engine, partition)
-        await storage.startup()
+        await storage.start()
         return storage
 
     async def _vector_store_semantic_resources(
@@ -346,7 +344,7 @@ class SemanticResourceManager:
 
     async def get_semantic_config_storage(self) -> SemanticConfigStorage:
         storage = await self._build_semantic_config_storage()
-        await storage.startup()
+        await storage.start()
         return storage
 
     async def _build_semantic_config_storage(self) -> SemanticConfigStorage:

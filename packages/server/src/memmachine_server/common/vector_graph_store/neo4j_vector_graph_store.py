@@ -903,9 +903,11 @@ class Neo4jVectorGraphStore(VectorGraphStore):
     async def prepare(self) -> None:
         """Create nothing ahead of use: each index is created once its label grows past a threshold."""
 
-    async def close(self) -> None:
-        """Close the underlying Neo4j driver."""
-        await self._driver.close()
+    async def start(self) -> None:
+        pass
+
+    async def stop(self) -> None:
+        pass
 
     async def _count_nodes(self, collection: str) -> int:
         """Count the number of nodes in a collection."""

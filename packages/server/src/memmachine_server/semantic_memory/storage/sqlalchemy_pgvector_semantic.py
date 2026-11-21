@@ -211,11 +211,11 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
     async def prepare(self) -> None:
         await apply_alembic_migrations(self._engine)
 
-    async def startup(self) -> None:
+    async def start(self) -> None:
         pass
 
-    async def cleanup(self) -> None:
-        await self._engine.dispose()
+    async def stop(self) -> None:
+        pass
 
     async def delete_all(self) -> None:
         async with self._create_session() as session:

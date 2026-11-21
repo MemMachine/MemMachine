@@ -51,7 +51,7 @@ async def sqlite_vector_history_storage(sqlalchemy_sqlite_engine: AsyncEngine):
     )
     storage = VectorStoreSemanticStorage(sqlalchemy_sqlite_engine, partition)
     await storage.prepare()
-    await storage.startup()
+    await storage.start()
     return storage
 
 

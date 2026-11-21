@@ -663,9 +663,7 @@ class SQLiteVectorStore(VectorStore):
 
     def _require_started(self) -> None:
         if not self._started:
-            raise RuntimeError(
-                "VectorStore has not been started. Call startup() first."
-            )
+            raise RuntimeError("VectorStore has not been started. Call start() first.")
 
     @property
     @override
@@ -680,7 +678,7 @@ class SQLiteVectorStore(VectorStore):
             await connection.run_sync(BaseSQLiteVectorStore.metadata.create_all)
 
     @override
-    async def startup(self) -> None:
+    async def start(self) -> None:
         if self._started:
             return
 
@@ -756,7 +754,7 @@ class SQLiteVectorStore(VectorStore):
             )
 
     @override
-    async def shutdown(self) -> None:
+    async def stop(self) -> None:
         self._require_started()
         if self._index_directory is not None:
             for partition_uuid, search_engine in self._search_engines.items():

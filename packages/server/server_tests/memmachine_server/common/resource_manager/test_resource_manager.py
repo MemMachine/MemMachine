@@ -256,7 +256,7 @@ async def test_sql_lock_service_uses_session_database_and_is_shared(
         assert "lease_lock" in session_tables
         assert "lease_lock" not in other_tables
     finally:
-        await resource_manager.close()
+        await resource_manager.stop()
 
 
 @pytest.mark.asyncio
@@ -326,17 +326,15 @@ async def test_get_partition_registry_starts_each_namespace_once_with_its_purge_
     monkeypatch.setattr(
         invalid_resource_manager, "get_sql_engine", AsyncMock(return_value=engine)
     )
-    monkeypatch.setattr(
-        invalid_resource_manager._database_manager, "close", AsyncMock()
-    )
-    startup = SQLAlchemyPartitionRegistry.startup
+    monkeypatch.setattr(invalid_resource_manager._database_manager, "stop", AsyncMock())
+    original_start = SQLAlchemyPartitionRegistry.start
     started: list[str] = []
 
-    async def counted_startup(registry: SQLAlchemyPartitionRegistry) -> None:
+    async def counted_start(registry: SQLAlchemyPartitionRegistry) -> None:
         started.append(registry._partition_namespace)
-        await startup(registry)
+        await original_start(registry)
 
-    monkeypatch.setattr(SQLAlchemyPartitionRegistry, "startup", counted_startup)
+    monkeypatch.setattr(SQLAlchemyPartitionRegistry, "start", counted_start)
     sweepers: list[tuple[str, tuple[PartitionedStore, ...]]] = []
 
     async def recorded_sweeper(
@@ -381,7 +379,7 @@ async def test_get_partition_registry_starts_each_namespace_once_with_its_purge_
     assert len(tasks) == 2
 
     # Bounded: close() waits for the purges it cancels.
-    await asyncio.wait_for(invalid_resource_manager.close(), 30)
+    await asyncio.wait_for(invalid_resource_manager.stop(), 30)
 
     assert all(task.cancelled() for task in tasks)
     await engine.dispose()
@@ -391,7 +389,7 @@ async def test_get_partition_registry_starts_each_namespace_once_with_its_purge_
 async def test_concurrent_first_gets_of_a_namespace_start_its_registry_and_purge_rounds_once(
     invalid_resource_manager, monkeypatch, tmp_path
 ):
-    """Gets that all find the namespace unstarted before the first startup
+    """Gets that all find the namespace unstarted before the first start
     ends start its registry and its purge rounds once."""
     engine = _sqlite_engine(tmp_path / "registry.db")
     gets = 3
@@ -406,19 +404,17 @@ async def test_concurrent_first_gets_of_a_namespace_start_its_registry_and_purge
         return engine
 
     monkeypatch.setattr(invalid_resource_manager, "get_sql_engine", get_sql_engine)
-    monkeypatch.setattr(
-        invalid_resource_manager._database_manager, "close", AsyncMock()
-    )
-    startup = SQLAlchemyPartitionRegistry.startup
+    monkeypatch.setattr(invalid_resource_manager._database_manager, "stop", AsyncMock())
+    original_start = SQLAlchemyPartitionRegistry.start
     started: list[str] = []
-    end_startup = asyncio.Event()
+    end_start = asyncio.Event()
 
-    async def held_startup(registry: SQLAlchemyPartitionRegistry) -> None:
+    async def held_start(registry: SQLAlchemyPartitionRegistry) -> None:
         started.append(registry._partition_namespace)
-        await end_startup.wait()
-        await startup(registry)
+        await end_start.wait()
+        await original_start(registry)
 
-    monkeypatch.setattr(SQLAlchemyPartitionRegistry, "startup", held_startup)
+    monkeypatch.setattr(SQLAlchemyPartitionRegistry, "start", held_start)
     purge_rounds = _record_purge_rounds(monkeypatch)
     store = create_autospec(PartitionedStore, instance=True)
 
@@ -433,9 +429,9 @@ async def test_concurrent_first_gets_of_a_namespace_start_its_registry_and_purge
             for _ in range(gets)
         )
     )
-    # Every get has found the namespace unstarted, and one is in its startup.
+    # Every get has found the namespace unstarted, and one is in its start.
     await all_gets_begun.wait()
-    end_startup.set()
+    end_start.set()
     await concurrent_gets
 
     assert started == ["a"]
@@ -443,32 +439,30 @@ async def test_concurrent_first_gets_of_a_namespace_start_its_registry_and_purge
         (partition_namespace, partition_manager._partitioned_stores)
         for partition_namespace, partition_manager in purge_rounds
     ] == [("a", (store,))]
-    await invalid_resource_manager.close()
+    await invalid_resource_manager.stop()
     await engine.dispose()
 
 
 @pytest.mark.asyncio
-async def test_a_get_whose_registry_startup_fails_starts_no_purge_rounds_and_the_next_get_starts_them(
+async def test_a_get_whose_registry_start_fails_starts_no_purge_rounds_and_the_next_get_starts_them(
     invalid_resource_manager, monkeypatch, tmp_path
 ):
     engine = _sqlite_engine(tmp_path / "registry.db")
     monkeypatch.setattr(
         invalid_resource_manager, "get_sql_engine", AsyncMock(return_value=engine)
     )
-    monkeypatch.setattr(
-        invalid_resource_manager._database_manager, "close", AsyncMock()
-    )
-    startup = SQLAlchemyPartitionRegistry.startup
-    startups = 0
+    monkeypatch.setattr(invalid_resource_manager._database_manager, "stop", AsyncMock())
+    original_start = SQLAlchemyPartitionRegistry.start
+    starts = 0
 
-    async def startup_failing_once(registry: SQLAlchemyPartitionRegistry) -> None:
-        nonlocal startups
-        startups += 1
-        if startups == 1:
+    async def start_failing_once(registry: SQLAlchemyPartitionRegistry) -> None:
+        nonlocal starts
+        starts += 1
+        if starts == 1:
             raise ConnectionError("the database is down")
-        await startup(registry)
+        await original_start(registry)
 
-    monkeypatch.setattr(SQLAlchemyPartitionRegistry, "startup", startup_failing_once)
+    monkeypatch.setattr(SQLAlchemyPartitionRegistry, "start", start_failing_once)
     purge_rounds = _record_purge_rounds(monkeypatch)
     store = create_autospec(PartitionedStore, instance=True)
 
@@ -489,12 +483,12 @@ async def test_a_get_whose_registry_startup_fails_starts_no_purge_rounds_and_the
         partitioned_stores=[store],
     )
 
-    assert startups == 2
+    assert starts == 2
     assert [
         (partition_namespace, partition_manager._partitioned_stores)
         for partition_namespace, partition_manager in purge_rounds
     ] == [("a", (store,))]
-    await invalid_resource_manager.close()
+    await invalid_resource_manager.stop()
     await engine.dispose()
 
 
@@ -511,17 +505,15 @@ async def test_one_namespace_in_two_databases_starts_a_registry_and_purge_rounds
         return engines[name]
 
     monkeypatch.setattr(invalid_resource_manager, "get_sql_engine", get_sql_engine)
-    monkeypatch.setattr(
-        invalid_resource_manager._database_manager, "close", AsyncMock()
-    )
-    startup = SQLAlchemyPartitionRegistry.startup
+    monkeypatch.setattr(invalid_resource_manager._database_manager, "stop", AsyncMock())
+    original_start = SQLAlchemyPartitionRegistry.start
     started: list[SQLAlchemyPartitionRegistry] = []
 
-    async def counted_startup(registry: SQLAlchemyPartitionRegistry) -> None:
+    async def counted_start(registry: SQLAlchemyPartitionRegistry) -> None:
         started.append(registry)
-        await startup(registry)
+        await original_start(registry)
 
-    monkeypatch.setattr(SQLAlchemyPartitionRegistry, "startup", counted_startup)
+    monkeypatch.setattr(SQLAlchemyPartitionRegistry, "start", counted_start)
     purge_rounds = _record_purge_rounds(monkeypatch)
     stores = {
         database: create_autospec(PartitionedStore, instance=True)
@@ -550,7 +542,7 @@ async def test_one_namespace_in_two_databases_starts_a_registry_and_purge_rounds
         ("a", started[0], (stores["db1"],)),
         ("a", started[1], (stores["db2"],)),
     ]
-    await invalid_resource_manager.close()
+    await invalid_resource_manager.stop()
     for engine in engines.values():
         await engine.dispose()
 
@@ -563,9 +555,7 @@ async def test_purge_rounds_are_timed_under_their_namespace_with_the_prometheus_
     monkeypatch.setattr(
         invalid_resource_manager, "get_sql_engine", AsyncMock(return_value=engine)
     )
-    monkeypatch.setattr(
-        invalid_resource_manager._database_manager, "close", AsyncMock()
-    )
+    monkeypatch.setattr(invalid_resource_manager._database_manager, "stop", AsyncMock())
     metrics_factory = MagicMock(spec=MetricsFactory)
     get_metrics_factory = AsyncMock(return_value=metrics_factory)
     monkeypatch.setattr(ResourceManagerImpl, "get_metrics_factory", get_metrics_factory)
@@ -593,7 +583,7 @@ async def test_purge_rounds_are_timed_under_their_namespace_with_the_prometheus_
         "operation": "run_purge_round",
         "status": "ok",
     }
-    await invalid_resource_manager.close()
+    await invalid_resource_manager.stop()
     await engine.dispose()
 
 

@@ -147,7 +147,7 @@ def _params(client, **overrides) -> QdrantVectorStoreParams:
 async def store(any_qdrant_client):
     s = QdrantVectorStore(_params(any_qdrant_client))
     await s.prepare()
-    await s.startup()
+    await s.start()
     yield s
 
 
@@ -292,7 +292,7 @@ class TestSimilarityMetrics:
             )
         )
         await store.prepare()
-        await store.startup()
+        await store.start()
         partition = await _created(store)
         records = [_make_record(vector=vector) for vector in _METRIC_VECTORS]
         await partition.upsert(records=records)
@@ -342,7 +342,7 @@ class TestSimilarityMetrics:
             )
         )
         await store.prepare()
-        await store.startup()
+        await store.start()
         partition = await _created(store)
         records = [_make_record(vector=vector) for vector in _METRIC_VECTORS]
         await partition.upsert(records=records)
@@ -1234,7 +1234,7 @@ class TestPartitionIsolation:
             )
         )
         await store.prepare()
-        await store.startup()
+        await store.start()
         partition_a = await _created(store)
         partition_b = await _created(store)
 
@@ -1285,7 +1285,7 @@ class TestPartitionIsolation:
             _params(store._client, vector_store_name=f"{VECTOR_STORE_NAME}_other")
         )
         await other.prepare()
-        await other.startup()
+        await other.start()
         partition_uuid = uuid4()
         await store.create_partition(partition_uuid)
         await other.create_partition(partition_uuid)
@@ -1372,7 +1372,7 @@ class TestPurge:
             _params(any_qdrant_client, vector_store_name="dropped_native")
         )
         await dropped.prepare()
-        await dropped.startup()
+        await dropped.start()
         partition = await _created(dropped)
         await partition.upsert(
             records=[_make_record(vector=_normalize([1.0, 0.0, 0.0]))]
@@ -1577,7 +1577,7 @@ class TestAgainstAModel:
             )
         )
         await store.prepare()
-        await store.startup()
+        await store.start()
         rng = random.Random(_MODEL_SEED)
         run = _ModelRun(store, rng, sorted(uuid4() for _ in range(_MODEL_POOL_SIZE)))
         for key in _MODEL_NAMES:
@@ -1625,7 +1625,7 @@ class TestMetrics:
 
         store = QdrantVectorStore(_params(qdrant_client, metrics_factory=mock_factory))
         await store.prepare()
-        await store.startup()
+        await store.start()
 
         partition_uuid = uuid4()
         await store.create_partition(partition_uuid)
@@ -1717,7 +1717,7 @@ class TestStrictMode:
     async def test_the_collection_is_strict(self, qdrant_client):
         store = QdrantVectorStore(_params(qdrant_client))
         await store.prepare()
-        await store.startup()
+        await store.start()
         info = await qdrant_client.get_collection(VECTOR_STORE_NAME)
         assert info.config.strict_mode_config is not None
         assert info.config.strict_mode_config.enabled is True
@@ -1742,7 +1742,7 @@ class TestStrictMode:
         """The store answers a mistyped leaf itself; the server would refuse it."""
         store = QdrantVectorStore(_params(qdrant_client))
         await store.prepare()
-        await store.startup()
+        await store.start()
         partition = await _created(store)
         held = _make_record(vector=_normalize([1.0, 0.0, 0.0]), properties={"age": 5})
         await partition.upsert(records=[held])

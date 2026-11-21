@@ -19,6 +19,7 @@ from memmachine_server.common.episode_store.episode_sqlalchemy_store import (
     SqlAlchemyEpisodeStore,
 )
 from memmachine_server.common.language_model import LanguageModel
+from memmachine_server.common.lifecycle import Lifecycle
 from memmachine_server.common.metrics_factory import MetricsFactory, OperationTracker
 from memmachine_server.common.partition_registry import (
     PartitionedStore,
@@ -169,8 +170,8 @@ class ResourceManagerImpl:
         await self._database_manager.prepare_graph_stores()
         await (await self.get_semantic_manager()).prepare()
 
-    async def close(self) -> None:
-        """Close resources and clean up state."""
+    async def stop(self) -> None:
+        """Stop every component it built and started, then close the connections they use."""
         purge_tasks = list(self._partition_registry_purge_tasks)
         self._partition_registry_purge_tasks.clear()
         self._started_partition_namespaces.clear()
@@ -181,15 +182,24 @@ class ResourceManagerImpl:
             purge_task.cancel()
         await asyncio.gather(*purge_tasks, return_exceptions=True)
 
-        tasks = []
+        components: list[Lifecycle] = [
+            *segment_stores,
+            *(
+                component
+                for component in (
+                    self._episode_storage,
+                    self._session_data_manager,
+                    self._sql_lock_service,
+                )
+                if component is not None
+            ),
+        ]
+        stops = [component.stop() for component in components]
         if self._semantic_manager is not None:
-            tasks.append(self._semantic_manager.close())
+            stops.append(self._semantic_manager.stop())
+        await asyncio.gather(*stops)
 
-        tasks.extend(segment_store.shutdown() for segment_store in segment_stores)
-
-        tasks.append(self._database_manager.close())
-
-        await asyncio.gather(*tasks)
+        await self._database_manager.stop()
 
     async def get_sql_engine(self, name: str, validate: bool = False) -> AsyncEngine:
         """Return a SQL engine by name."""
@@ -241,7 +251,7 @@ class ResourceManagerImpl:
             async with self._segment_store_lock:
                 if name not in self._segment_stores:
                     store = await self._build_segment_store(name)
-                    await store.startup()
+                    await store.start()
                     self._segment_stores[name] = store
         return self._segment_stores[name]
 
@@ -283,7 +293,7 @@ class ResourceManagerImpl:
         if key not in self._started_partition_namespaces:
             async with self._partition_registry_lock:
                 if key not in self._started_partition_namespaces:
-                    await registry.startup()
+                    await registry.start()
                     self._started_partition_namespaces.add(key)
                     self._partition_registry_purge_tasks.append(
                         asyncio.create_task(
@@ -362,7 +372,7 @@ class ResourceManagerImpl:
             async with self._sql_lock_service_lock:
                 if self._sql_lock_service is None:
                     service = await self._build_sql_lock_service()
-                    await service.startup()
+                    await service.start()
                     self._sql_lock_service = service
         assert self._sql_lock_service is not None
         return self._sql_lock_service
@@ -393,7 +403,7 @@ class ResourceManagerImpl:
             async with self._episode_storage_lock:
                 if self._episode_storage is None:
                     episode_storage = await self._build_episode_storage()
-                    await episode_storage.startup()
+                    await episode_storage.start()
 
                     if self._episode_storage_conf().with_count_cache:
                         episode_storage = CountCachingEpisodeStorage(episode_storage)

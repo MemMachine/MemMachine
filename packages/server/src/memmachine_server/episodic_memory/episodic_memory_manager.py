@@ -390,7 +390,6 @@ class EpisodicMemoryManager:
             if self._closed:
                 return
             await self._instance_cache.close()
-            await self._session_data_manager.close()
             self._session_locks.clear()
             self._closed = True
 

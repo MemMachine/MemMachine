@@ -202,11 +202,11 @@ class VectorStoreSemanticStorage(SemanticStorage):
         async with self._engine.begin() as conn:
             await conn.run_sync(BaseVectorSemanticStorage.metadata.create_all)
 
-    async def startup(self) -> None:
+    async def start(self) -> None:
         pass
 
-    async def cleanup(self) -> None:
-        await self._engine.dispose()
+    async def stop(self) -> None:
+        pass
 
     async def delete_all(self) -> None:
         async with write_session(self._session_factory) as session:

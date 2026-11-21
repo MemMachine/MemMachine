@@ -882,11 +882,11 @@ class SQLAlchemySegmentStore(SegmentStore):
             await connection.run_sync(BaseSegmentStore.metadata.create_all)
 
     @override
-    async def startup(self) -> None:
+    async def start(self) -> None:
         pass
 
     @override
-    async def shutdown(self) -> None:
+    async def stop(self) -> None:
         pass
 
     # Partitions

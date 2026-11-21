@@ -553,7 +553,7 @@ class MemMachine:
             semantic_service = await self._resources.get_semantic_service()
             await semantic_service.stop()
 
-        await self._resources.close()
+        await self._resources.stop()
 
     @property
     def resource_manager(self) -> ResourceManagerImpl:

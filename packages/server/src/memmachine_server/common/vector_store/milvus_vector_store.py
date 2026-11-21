@@ -612,8 +612,8 @@ class MilvusVectorStore(VectorStore):
                 )
 
     @override
-    async def startup(self) -> None:
-        async with self._tracker("startup"):
+    async def start(self) -> None:
+        async with self._tracker("start"):
             # Searches need the collection in memory; loading one already
             # loaded does nothing.
             await self._client.load_collection(
@@ -622,8 +622,8 @@ class MilvusVectorStore(VectorStore):
             )
 
     @override
-    async def shutdown(self) -> None:
-        # Stores of different names may share the client, so shutdown leaves
+    async def stop(self) -> None:
+        # Stores of different names may share the client, so stop leaves
         # it open.
         pass
 

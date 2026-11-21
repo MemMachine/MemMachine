@@ -1264,13 +1264,10 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
         )
         await self._client.execute(f"SESSION SET GRAPH {self._graph_name}")
 
-    async def close(self) -> None:
-        """
-        Shut down and release resources.
+    async def start(self) -> None:
+        pass
 
-        Cancels background tasks and closes the client connection.
-        """
-        # Cancel background tasks
+    async def stop(self) -> None:
         for task in self._background_tasks:
             task.cancel()
 

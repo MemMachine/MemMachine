@@ -62,7 +62,7 @@ async def registry(tmp_path):
         ),
     )
     await registry.prepare()
-    await registry.startup()
+    await registry.start()
     yield registry
     await engine.dispose()
 

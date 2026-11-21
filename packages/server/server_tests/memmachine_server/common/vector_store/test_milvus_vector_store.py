@@ -308,7 +308,7 @@ async def _started_store(client: AsyncMilvusClient, **overrides) -> MilvusVector
     """A started store."""
     vector_store = MilvusVectorStore(_params(client, **overrides))
     await vector_store.prepare()
-    await vector_store.startup()
+    await vector_store.start()
     return vector_store
 
 
@@ -316,7 +316,7 @@ async def _started_store(client: AsyncMilvusClient, **overrides) -> MilvusVector
 async def store(milvus_client):
     vector_store = await _started_store(milvus_client)
     yield vector_store
-    await vector_store.shutdown()
+    await vector_store.stop()
 
 
 @pytest_asyncio.fixture
@@ -326,7 +326,7 @@ async def other_store(milvus_container):
     client = AsyncMilvusClient(uri=milvus_container.get_connection_url())
     vector_store = await _started_store(client)
     yield vector_store
-    await vector_store.shutdown()
+    await vector_store.stop()
     await client.close()
 
 
@@ -354,7 +354,7 @@ async def test_every_request_carries_the_timeout(store, monkeypatch):
     # A collection of its own, so `prepare` creates it through the spies.
     timed = MilvusVectorStore(_params(store._client, vector_store_name="timed"))
     await timed.prepare()
-    await timed.startup()
+    await timed.start()
     partition = await _created(timed)
     vector = _normalize([1.0, 0.0, 0.0])
     record, kept = (
@@ -404,7 +404,7 @@ class TestPartitionLifecycle:
     async def test_a_preparation_that_failed_part_way_is_as_if_never_attempted(
         self, store, monkeypatch, failing_step
     ):
-        """The next preparation and startup complete what a failed one left behind."""
+        """The next preparation and start complete what a failed one left behind."""
         partial = MilvusVectorStore(
             _params(
                 store._client,
@@ -418,7 +418,7 @@ class TestPartitionLifecycle:
 
         async def prepare() -> None:
             await partial.prepare()
-            await partial.startup()
+            await partial.start()
 
         with monkeypatch.context() as patch:
             patch.setattr(store._client, failing_step, refuse)
@@ -451,7 +451,7 @@ class TestPartitionLifecycle:
             _params(store._client, vector_store_name="0_digit_first")
         )
         await digit_first.prepare()
-        await digit_first.startup()
+        await digit_first.start()
         partition = await _created(digit_first)
         await _purge(digit_first, partition._partition_uuid)
 
@@ -1299,7 +1299,7 @@ class TestScores:
             )
         )
         await scored.prepare()
-        await scored.startup()
+        await scored.start()
         partition = await _created(scored)
         record = _make_record(vector=[1.2, 1.6, 0.0])
         await partition.upsert(records=[record])
