@@ -36,8 +36,54 @@ jobs:
 
       - name: Build the packages with uv
         run: |
-          uv build --project packages/common && uv build --project packages/client && uv build --project packages/server && uv build --project packages/meta
+          # memmachine-common is built first, from the unmodified checkout; its version is the release's.
+          uv build --project packages/common
+          version=$(basename dist/memmachine_common-*.whl | cut -d- -f2)
+
+          # Each package requires exactly the memmachine packages released with it.
+          sed -i "s/\"memmachine-common\"/\"memmachine-common==${version}\"/" packages/client/pyproject.toml packages/server/pyproject.toml
+          sed -i "s/\"memmachine-client\"/\"memmachine-client==${version}\"/; s/\"memmachine-server\"/\"memmachine-server==${version}\"/" packages/meta/pyproject.toml
+
+          # Those edits modify the checkout, which would change the version setuptools-scm derives.
+          export SETUPTOOLS_SCM_PRETEND_VERSION="${version}"
+          uv build --project packages/client
+          uv build --project packages/server
+          # packages/meta is not a workspace member, so its output directory is named.
+          uv build --project packages/meta --out-dir dist
           ls -lh dist/
+
+      - name: Check the built packages
+        run: |
+          python - <<'EOF'
+          import glob
+          import sys
+          import zipfile
+          from email.parser import Parser
+
+          pinned_dependencies = {
+              "memmachine_common": [],
+              "memmachine_client": ["memmachine-common"],
+              "memmachine_server": ["memmachine-common"],
+              "memmachine": ["memmachine-client", "memmachine-server"],
+          }
+          versions = set()
+          for name, dependencies in pinned_dependencies.items():
+              wheels = glob.glob(f"dist/{name}-*.whl")
+              source_archives = glob.glob(f"dist/{name}-*.tar.gz")
+              if len(wheels) != 1 or len(source_archives) != 1:
+                  sys.exit(f"::error::dist/ should hold one wheel and one source archive of {name}")
+              with zipfile.ZipFile(wheels[0]) as wheel:
+                  metadata_path = next(path for path in wheel.namelist() if path.endswith(".dist-info/METADATA"))
+                  metadata = Parser().parsestr(wheel.read(metadata_path).decode())
+              version = metadata["Version"]
+              versions.add(version)
+              requirements = metadata.get_all("Requires-Dist") or []
+              for dependency in dependencies:
+                  if f"{dependency}=={version}" not in requirements:
+                      sys.exit(f"::error::{name} {version} doesn't require {dependency}=={version}")
+          if len(versions) != 1:
+              sys.exit(f"::error::The packages were built at different versions: {sorted(versions)}")
+          EOF
 
       - name: Upload built distributions as artifact
         uses: actions/upload-artifact@v4

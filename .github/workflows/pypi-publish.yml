@@ -11,7 +11,19 @@ permissions:
   contents: read
 
 jobs:
+  version:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v6
+
+      - name: Check the release tag
+        uses: ./.github/actions/release-version
+        with:
+          tag: ${{ github.event.release.tag_name }}
+
   build:
+    needs: version
     uses: ./.github/workflows/build-python.yml
     with:
       python-version: "3.x"
@@ -35,3 +47,13 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist/
+
+  report-failure:
+    needs: [version, build, publish]
+    if: failure()
+    permissions:
+      issues: write
+    uses: ./.github/workflows/release-failure.yml
+    with:
+      step: Publishing to PyPI
+      tag: ${{ github.event.release.tag_name }}

@@ -1,0 +1,10 @@
+# Categories for GitHub's generated release notes.
+
+changelog:
+  categories:
+    - title: Breaking changes
+      labels:
+        - breaking
+    - title: Other changes
+      labels:
+        - "*"
