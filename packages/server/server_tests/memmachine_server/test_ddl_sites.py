@@ -59,15 +59,15 @@ _PREPARE = {
     ),
     (
         "common/vector_store/qdrant_vector_store.py",
-        "QdrantVectorStore._prepare_storage",
+        "QdrantVectorStore.prepare",
     ),
     (
         "common/vector_store/milvus_vector_store.py",
-        "MilvusVectorStore._prepare_storage",
+        "MilvusVectorStore.prepare",
     ),
     (
         "common/vector_store/milvus_vector_store.py",
-        "MilvusVectorStore._prepare_storage._create_collection",
+        "MilvusVectorStore.prepare._create_collection",
     ),
     (
         "common/vector_graph_store/nebula_graph_vector_graph_store.py",

@@ -525,63 +525,61 @@ class QdrantVectorStore(VectorStore):
     @override
     async def prepare(self) -> None:
         async with self._tracker("prepare"):
-            await self._prepare_storage()
-
-    @override
-    async def startup(self) -> None:
-        pass
-
-    async def _prepare_storage(self) -> None:
-        """Prepare the collection every partition lives in, and its payload indexes, each step idempotent."""
-        distance = QdrantVectorStore._SIMILARITY_METRIC_TO_QDRANT_DISTANCE[
-            self._store_schema.similarity_metric
-        ]
-        # The collection and each payload index are created under their own
-        # already-exists guard, so a creation that finds the collection there
-        # still creates the indexes it lacks.
-        try:
-            await self._client.create_collection(
-                collection_name=self._vector_store_name,
-                vectors_config=models.VectorParams(
-                    size=self._store_schema.vector_dimensions, distance=distance
-                ),
-                hnsw_config=models.HnswConfigDiff(
-                    m=0,
-                    payload_m=self._hnsw_m,
-                ),
-                strict_mode_config=QdrantVectorStore._STRICT_MODE,
-            )
-        except (UnexpectedResponse, grpc.aio.AioRpcError) as e:
-            if not QdrantVectorStore._is_already_exists_error(e):
-                raise
-
-        indexes: list[tuple[str, Any]] = [
-            (
-                _PAYLOAD_PARTITION_UUID,
-                models.KeywordIndexParams(
-                    type=models.KeywordIndexType.KEYWORD,
-                    is_tenant=True,
-                ),
-            )
-        ]
-        for (
-            prop_name,
-            prop_type,
-        ) in self._store_schema.indexed_properties.items():
-            index_type = QdrantVectorStore._PROPERTY_TYPE_TO_INDEX_TYPE.get(prop_type)
-            if index_type is not None:
-                indexes.append((prop_name, index_type))
-
-        for field_name, field_schema in indexes:
+            distance = QdrantVectorStore._SIMILARITY_METRIC_TO_QDRANT_DISTANCE[
+                self._store_schema.similarity_metric
+            ]
+            # The collection and each payload index are created under their own
+            # already-exists guard, so a creation that finds the collection there
+            # still creates the indexes it lacks.
             try:
-                await self._client.create_payload_index(
+                await self._client.create_collection(
                     collection_name=self._vector_store_name,
-                    field_name=field_name,
-                    field_schema=field_schema,
+                    vectors_config=models.VectorParams(
+                        size=self._store_schema.vector_dimensions, distance=distance
+                    ),
+                    hnsw_config=models.HnswConfigDiff(
+                        m=0,
+                        payload_m=self._hnsw_m,
+                    ),
+                    strict_mode_config=QdrantVectorStore._STRICT_MODE,
                 )
             except (UnexpectedResponse, grpc.aio.AioRpcError) as e:
                 if not QdrantVectorStore._is_already_exists_error(e):
                     raise
+
+            indexes: list[tuple[str, Any]] = [
+                (
+                    _PAYLOAD_PARTITION_UUID,
+                    models.KeywordIndexParams(
+                        type=models.KeywordIndexType.KEYWORD,
+                        is_tenant=True,
+                    ),
+                )
+            ]
+            for (
+                prop_name,
+                prop_type,
+            ) in self._store_schema.indexed_properties.items():
+                index_type = QdrantVectorStore._PROPERTY_TYPE_TO_INDEX_TYPE.get(
+                    prop_type
+                )
+                if index_type is not None:
+                    indexes.append((prop_name, index_type))
+
+            for field_name, field_schema in indexes:
+                try:
+                    await self._client.create_payload_index(
+                        collection_name=self._vector_store_name,
+                        field_name=field_name,
+                        field_schema=field_schema,
+                    )
+                except (UnexpectedResponse, grpc.aio.AioRpcError) as e:
+                    if not QdrantVectorStore._is_already_exists_error(e):
+                        raise
+
+    @override
+    async def startup(self) -> None:
+        pass
 
     @staticmethod
     def _is_already_exists_error(error: Exception) -> bool:

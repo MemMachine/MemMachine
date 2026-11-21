@@ -512,7 +512,104 @@ class MilvusVectorStore(VectorStore):
     @override
     async def prepare(self) -> None:
         async with self._tracker("prepare"):
-            await self._prepare_storage()
+            # Each step runs when it is missing, so the next preparation completes
+            # one that failed part way.
+            index_params = self._client.prepare_index_params()
+            index_params.add_index(
+                field_name=_VECTOR_FIELD,
+                index_name=_VECTOR_FIELD,
+                index_type=_VECTOR_INDEX_TYPE,
+                metric_type=self._SIMILARITY_METRIC_TO_MILVUS_METRIC[
+                    self._store_schema.similarity_metric
+                ],
+                params=_VECTOR_INDEX_PARAMS,
+            )
+            for key in self._store_schema.indexed_properties:
+                index_params.add_index(
+                    field_name=f"{_DECLARED_FIELD_PREFIX}{key}",
+                    index_name=f"{_DECLARED_FIELD_PREFIX}{key}",
+                    index_type="AUTOINDEX",
+                )
+
+            async def _create_collection() -> None:
+                schema = self._client.create_schema(
+                    auto_id=False,
+                    enable_dynamic_field=False,
+                )
+                schema.add_field(
+                    field_name=_ID_FIELD,
+                    datatype=DataType.VARCHAR,
+                    is_primary=True,
+                    max_length=_PRIMARY_ID_LENGTH,
+                )
+                schema.add_field(
+                    field_name=_RECORD_UUID_FIELD,
+                    datatype=DataType.VARCHAR,
+                    max_length=_UUID_LENGTH,
+                )
+                schema.add_field(
+                    field_name=_PARTITION_KEY_FIELD,
+                    datatype=DataType.VARCHAR,
+                    max_length=_UUID_LENGTH,
+                    is_partition_key=True,
+                )
+                schema.add_field(
+                    field_name=_VECTOR_FIELD,
+                    datatype=DataType.FLOAT_VECTOR,
+                    dim=self._store_schema.vector_dimensions,
+                )
+                for key, declared_type in self._store_schema.indexed_properties.items():
+                    if declared_type is str:
+                        schema.add_field(
+                            field_name=f"{_DECLARED_FIELD_PREFIX}{key}",
+                            datatype=DataType.VARCHAR,
+                            max_length=self._max_varchar_length,
+                            nullable=True,
+                        )
+                    else:
+                        schema.add_field(
+                            field_name=f"{_DECLARED_FIELD_PREFIX}{key}",
+                            datatype=_DECLARED_DATA_TYPES[declared_type],
+                            nullable=True,
+                        )
+
+                # Without index_params, so the indexes and the load below are
+                # steps of their own.
+                await self._client.create_collection(
+                    collection_name=self._collection_name,
+                    schema=schema,
+                    properties={"partitionkey.isolation": True},
+                    consistency_level="Bounded",
+                    timeout=self._request_timeout_seconds,
+                )
+
+            # Milvus answers a create of an existing collection with the same
+            # schema with success, so racing creators both go on.
+            if not await self._client.has_collection(
+                self._collection_name,
+                timeout=self._request_timeout_seconds,
+            ):
+                await _create_collection()
+
+            # Index names are their field names, so the ones present say which
+            # fields are indexed. An index a racing creator made is created again
+            # without error.
+            existing = set(
+                await self._client.list_indexes(
+                    self._collection_name,
+                    timeout=self._request_timeout_seconds,
+                )
+            )
+            missing = self._client.prepare_index_params()
+            missing.extend(
+                index for index in index_params if index.index_name not in existing
+            )
+            if missing:
+                await self._client.create_index(
+                    self._collection_name,
+                    missing,
+                    timeout=self._request_timeout_seconds,
+                )
 
     @override
     async def startup(self) -> None:
@@ -521,107 +618,6 @@ class MilvusVectorStore(VectorStore):
             # loaded does nothing.
             await self._client.load_collection(
                 self._collection_name,
-                timeout=self._request_timeout_seconds,
-            )
-
-    async def _prepare_storage(self) -> None:
-        """Prepare the collection every partition lives in, with its indexes, each step idempotent."""
-        # Each step runs when it is missing, so the next preparation completes
-        # one that failed part way.
-        index_params = self._client.prepare_index_params()
-        index_params.add_index(
-            field_name=_VECTOR_FIELD,
-            index_name=_VECTOR_FIELD,
-            index_type=_VECTOR_INDEX_TYPE,
-            metric_type=self._SIMILARITY_METRIC_TO_MILVUS_METRIC[
-                self._store_schema.similarity_metric
-            ],
-            params=_VECTOR_INDEX_PARAMS,
-        )
-        for key in self._store_schema.indexed_properties:
-            index_params.add_index(
-                field_name=f"{_DECLARED_FIELD_PREFIX}{key}",
-                index_name=f"{_DECLARED_FIELD_PREFIX}{key}",
-                index_type="AUTOINDEX",
-            )
-
-        async def _create_collection() -> None:
-            schema = self._client.create_schema(
-                auto_id=False,
-                enable_dynamic_field=False,
-            )
-            schema.add_field(
-                field_name=_ID_FIELD,
-                datatype=DataType.VARCHAR,
-                is_primary=True,
-                max_length=_PRIMARY_ID_LENGTH,
-            )
-            schema.add_field(
-                field_name=_RECORD_UUID_FIELD,
-                datatype=DataType.VARCHAR,
-                max_length=_UUID_LENGTH,
-            )
-            schema.add_field(
-                field_name=_PARTITION_KEY_FIELD,
-                datatype=DataType.VARCHAR,
-                max_length=_UUID_LENGTH,
-                is_partition_key=True,
-            )
-            schema.add_field(
-                field_name=_VECTOR_FIELD,
-                datatype=DataType.FLOAT_VECTOR,
-                dim=self._store_schema.vector_dimensions,
-            )
-            for key, declared_type in self._store_schema.indexed_properties.items():
-                if declared_type is str:
-                    schema.add_field(
-                        field_name=f"{_DECLARED_FIELD_PREFIX}{key}",
-                        datatype=DataType.VARCHAR,
-                        max_length=self._max_varchar_length,
-                        nullable=True,
-                    )
-                else:
-                    schema.add_field(
-                        field_name=f"{_DECLARED_FIELD_PREFIX}{key}",
-                        datatype=_DECLARED_DATA_TYPES[declared_type],
-                        nullable=True,
-                    )
-
-            # Without index_params, so the indexes and the load below are
-            # steps of their own.
-            await self._client.create_collection(
-                collection_name=self._collection_name,
-                schema=schema,
-                properties={"partitionkey.isolation": True},
-                consistency_level="Bounded",
-                timeout=self._request_timeout_seconds,
-            )
-
-        # Milvus answers a create of an existing collection with the same
-        # schema with success, so racing creators both go on.
-        if not await self._client.has_collection(
-            self._collection_name,
-            timeout=self._request_timeout_seconds,
-        ):
-            await _create_collection()
-
-        # Index names are their field names, so the ones present say which
-        # fields are indexed. An index a racing creator made is created again
-        # without error.
-        existing = set(
-            await self._client.list_indexes(
-                self._collection_name,
-                timeout=self._request_timeout_seconds,
-            )
-        )
-        missing = self._client.prepare_index_params()
-        missing.extend(
-            index for index in index_params if index.index_name not in existing
-        )
-        if missing:
-            await self._client.create_index(
-                self._collection_name,
-                missing,
                 timeout=self._request_timeout_seconds,
             )
 
