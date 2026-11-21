@@ -36,8 +36,22 @@ jobs:
 
       - name: Build the packages with uv
         run: |
-          uv build --project packages/common && uv build --project packages/client && uv build --project packages/server && uv build --project packages/meta
+          uv build --project packages/common && uv build --project packages/client && uv build --project packages/server
+
+          # The meta-package requires exactly the client and server built with it.
+          version=$(basename dist/memmachine_client-*.whl | cut -d- -f2)
+          sed -i "s/\"memmachine-client\"/\"memmachine-client==${version}\"/; s/\"memmachine-server\"/\"memmachine-server==${version}\"/" packages/meta/pyproject.toml
+          grep -q "\"memmachine-client==${version}\"" packages/meta/pyproject.toml && grep -q "\"memmachine-server==${version}\"" packages/meta/pyproject.toml || { echo "::error::Could not pin the meta-package's dependencies to ${version}"; exit 1; }
+
+          # packages/meta is not a workspace member, so name the output directory.
+          uv build --project packages/meta --out-dir dist
           ls -lh dist/
+
+      - name: Check that every package was built
+        run: |
+          for package in memmachine_common memmachine_client memmachine_server memmachine; do
+            ls dist/${package}-*.whl dist/${package}-*.tar.gz > /dev/null || { echo "::error::dist/ is missing ${package}"; exit 1; }
+          done
 
       - name: Upload built distributions as artifact
         uses: actions/upload-artifact@v4
