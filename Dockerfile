@@ -4,10 +4,10 @@
 FROM python:3.12-slim-trixie AS builder
 
 # Update OS and Python/PIP Packages
-# Install curl, and g++ to build optional dependencies published only as source
+# Install curl
 RUN apt-get update && \
     apt-get upgrade -y && \
-    apt-get install -y curl g++ && \
+    apt-get install -y curl && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
@@ -25,17 +25,17 @@ ARG SCM_VERSION="0.0.0"
 ENV SETUPTOOLS_SCM_PRETEND_VERSION=${SCM_VERSION}
 
 # Install dependencies into a virtual environment, but NOT the project itself.
-# Every extra except gpu is installed, so each provider the configuration
-# accepts works in the image unless it runs a local model.
+# Every extra is installed except those for single-user pip installs: gpu
+# (local models) and hnswlib (an index engine for the SQLite vector store).
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --package memmachine-server --no-install-workspace --no-editable --no-dev --all-extras --no-extra gpu
+    uv sync --frozen --package memmachine-server --no-install-workspace --no-editable --no-dev --all-extras --no-extra gpu --no-extra hnswlib
 
 # Copy the application source code
 COPY . /app
 
 # Install the project itself from the local source
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --package memmachine-server --no-editable --no-dev --all-extras --no-extra gpu
+    uv sync --frozen --package memmachine-server --no-editable --no-dev --all-extras --no-extra gpu --no-extra hnswlib
 
 #
 # Stage 2: Final
