@@ -1776,15 +1776,18 @@ async def test_pg_segment_deletes_wait_for_a_purge_of_their_partition(
     partition = await _created(pg_store)
     segments = [_seg(ts_offset_seconds=index) for index in range(3)]
     await partition.add_segments(_links(*segments))
-    held = asyncio.Event()
+    held, finished = asyncio.Event(), asyncio.Event()
 
     async def delete_once_the_purge_is_held() -> None:
         await held.wait()
-        await partition.delete_segments([segment.uuid for segment in segments])
+        try:
+            await partition.delete_segments([segment.uuid for segment in segments])
+        finally:
+            finished.set()
 
-    with _held_at_the_next_segment_delete_until_a_lock_wait(
-        pg_store._engine, held
-    ) as waited:
+    with _held_at_the_next_segment_delete_until_it_blocks_another_transaction(
+        pg_store._engine, held, finished
+    ) as blocked:
         await asyncio.wait_for(
             asyncio.gather(
                 pg_store.purge_partition(PARTITION_UUID),
@@ -1793,7 +1796,7 @@ async def test_pg_segment_deletes_wait_for_a_purge_of_their_partition(
             60,
         )
 
-    assert waited == [True]
+    assert blocked == [True]
     assert await _row_counts(pg_store, PARTITION_UUID) == (0, 0)
 
 
@@ -1806,15 +1809,18 @@ async def test_pg_a_purge_waits_for_segment_deletes_of_its_partition(
     partition = await _created(pg_store)
     segments = [_seg(ts_offset_seconds=index) for index in range(3)]
     await partition.add_segments(_links(*segments))
-    held = asyncio.Event()
+    held, finished = asyncio.Event(), asyncio.Event()
 
     async def purge_once_the_deletion_is_held() -> None:
         await held.wait()
-        await pg_store.purge_partition(PARTITION_UUID)
+        try:
+            await pg_store.purge_partition(PARTITION_UUID)
+        finally:
+            finished.set()
 
-    with _held_at_the_next_segment_delete_until_a_lock_wait(
-        pg_store._engine, held
-    ) as waited:
+    with _held_at_the_next_segment_delete_until_it_blocks_another_transaction(
+        pg_store._engine, held, finished
+    ) as blocked:
         await asyncio.wait_for(
             asyncio.gather(
                 partition.delete_segments([segment.uuid for segment in segments]),
@@ -1823,20 +1829,21 @@ async def test_pg_a_purge_waits_for_segment_deletes_of_its_partition(
             60,
         )
 
-    assert waited == [True]
+    assert blocked == [True]
     assert await _row_counts(pg_store, PARTITION_UUID) == (0, 0)
 
 
 @contextlib.contextmanager
-def _held_at_the_next_segment_delete_until_a_lock_wait(
-    engine: AsyncEngine, held: asyncio.Event
+def _held_at_the_next_segment_delete_until_it_blocks_another_transaction(
+    engine: AsyncEngine, held: asyncio.Event, finished: asyncio.Event
 ) -> Generator[list[bool], None, None]:
-    """Hold the engine's next delete of segment rows until another transaction waits for a lock, and yield whether one did.
+    """Hold the engine's next delete of segment rows until its transaction blocks another, and yield whether it did.
 
-    Sets `held` when the hold begins, and gives up after two seconds.
+    Sets `held` when the hold begins. The hold ends without having blocked
+    a transaction once `finished` is set.
     """
     entered: list[bool] = []
-    waited: list[bool] = []
+    blocked: list[bool] = []
 
     def _hold(connection, clauseelement, *_args) -> None:
         if entered or not (
@@ -1846,18 +1853,21 @@ def _held_at_the_next_segment_delete_until_a_lock_wait(
             return
         entered.append(True)
         held.set()
-        for _ in range(200):
+        while not finished.is_set():
             if connection.execute(
-                text("SELECT count(*) FROM pg_locks WHERE NOT granted")
+                text(
+                    "SELECT count(*) FROM pg_locks WHERE NOT granted "
+                    "AND pg_backend_pid() = ANY (pg_blocking_pids(pid))"
+                )
             ).scalar_one():
-                waited.append(True)
+                blocked.append(True)
                 return
             connection.execute(text("SELECT pg_sleep(0.01)"))
-        waited.append(False)
+        blocked.append(False)
 
     event.listen(engine.sync_engine, "before_execute", _hold)
     try:
-        yield waited
+        yield blocked
     finally:
         event.remove(engine.sync_engine, "before_execute", _hold)
     assert entered, "no segment delete ran"
