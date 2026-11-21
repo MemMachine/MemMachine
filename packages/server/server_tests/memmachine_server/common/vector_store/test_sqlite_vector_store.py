@@ -1274,7 +1274,7 @@ async def _unapplied_operation_counts(engine) -> dict[str, int]:
 
 
 class TestCrashRecovery:
-    """Tests for pending operations replay on startup."""
+    """Tests for the pending operations a store replays when it starts."""
 
     @pytest.mark.asyncio
     async def test_replay_upserts_after_crash(self, tmp_path):
@@ -1289,7 +1289,7 @@ class TestCrashRecovery:
         ]
         await partition.upsert(records=records)
 
-        # Simulate crash: dispose without shutdown (pending ops remain).
+        # Simulate crash: dispose without stopping (pending ops remain).
         await engine1.dispose()
 
         # Restart with fresh in-memory engines.
@@ -1322,8 +1322,9 @@ class TestCrashRecovery:
         await _set_all_pending_operations_unapplied(engine1)
         await engine1.dispose()
 
-        # Restart: replay should re-apply unapplied ops to the engine.
+        # Restart: replay re-applies the unapplied ops to the engine, and marks none.
         store2, engine2 = await _fresh_store(db_path, tmp_path)
+        assert await _unapplied_operation_counts(engine2) == {VECTOR_STORE_NAME: 2}
         partition_2 = await store2.get_partition(partition._partition_uuid)
 
         results = await partition_2.query(
@@ -1336,21 +1337,23 @@ class TestCrashRecovery:
 
     @pytest.mark.asyncio
     async def test_replay_applies_only_its_own_stores_operations(self, tmp_path):
-        """A store's startup replays its own partitions' operations, not another store's."""
+        """A store's start replays its own partitions' operations, not another store's."""
         db_path = tmp_path / "test.db"
         store1, engine1 = await _fresh_store(db_path, tmp_path)
         other = await _store_with(store1, "other_store")
+        partitions = {}
         for vector_store in (store1, other):
             partition = await _created(vector_store)
             await partition.upsert(
                 records=[_make_record(vector=_normalize([1.0, 0.0, 0.0]))]
             )
+            partitions[vector_store] = partition
 
         await _set_all_pending_operations_unapplied(engine1)
         await engine1.dispose()
 
         store2, engine2 = await _fresh_store(db_path, tmp_path)
-        assert await _unapplied_operation_counts(engine2) == {"other_store": 1}
+        assert set(store2._search_engines) == {partitions[store1]._partition_uuid}
 
         await store2.stop()
         await engine2.dispose()
@@ -1523,23 +1526,37 @@ class TestIndexFileDurability:
         await engine.dispose()
 
     @pytest.mark.asyncio
-    async def test_saved_flag_flips_on_clean_shutdown(self, tmp_path):
-        """Clean shutdown flips index_saved to True even below save_threshold."""
+    async def test_a_stopped_stores_operations_are_served_after_it_starts_again(
+        self, tmp_path
+    ):
+        """Operations below save_threshold are replayed by the next start, not saved by stop."""
         db_path = tmp_path / "test.db"
-        store, engine = await _fresh_store(db_path, tmp_path, save_threshold=1000)
+        store1, engine1 = await _fresh_store(db_path, tmp_path, save_threshold=1000)
 
-        partition = await _created(store)
+        partition = await _created(store1)
         await partition.upsert(
-            records=[_make_record(vector=_normalize([1.0, 0.0, 0.0]))]
+            records=[
+                _make_record(vector=_normalize([1.0, 0.0, 0.0])),
+                _make_record(vector=_normalize([0.0, 1.0, 0.0])),
+            ]
         )
 
-        # Below save_threshold, so _maybe_save_index has not flipped the flag yet.
-        assert await _get_index_saved(engine, partition._partition_uuid) is False
+        await store1.stop()
+        assert await _get_index_saved(engine1, partition._partition_uuid) is False
+        assert not list((tmp_path / "indexes").glob("*.idx"))
+        assert await _pending_operation_count(engine1) == 2
+        await engine1.dispose()
 
-        await store.stop()
-        assert await _get_index_saved(engine, partition._partition_uuid) is True
+        store2, engine2 = await _fresh_store(db_path, tmp_path)
+        assert await _pending_operation_count(engine2) == 2
+        partition_2 = await store2.get_partition(partition._partition_uuid)
+        results = await partition_2.query(
+            query_vectors=[_normalize([1.0, 0.0, 0.0])], limit=10
+        )
+        assert len(results[0].matches) == 2
 
-        await engine.dispose()
+        await store2.stop()
+        await engine2.dispose()
 
     @pytest.mark.asyncio
     async def test_stop_closes_the_connections_a_filtered_query_opened(self, tmp_path):
@@ -1568,7 +1585,8 @@ class TestIndexFileDurability:
     async def test_missing_file_when_saved_raises(self, tmp_path):
         """If the index has been saved, a missing file is loud, not silent."""
         db_path = tmp_path / "test.db"
-        store1, engine1 = await _fresh_store(db_path, tmp_path)
+        # A save threshold of 1 saves the index on the first upsert.
+        store1, engine1 = await _fresh_store(db_path, tmp_path, save_threshold=1)
 
         partition = await _created(store1)
         await partition.upsert(
@@ -1599,7 +1617,8 @@ class TestIndexFileDurability:
     async def test_corrupt_file_when_saved_raises(self, tmp_path):
         """If the index has been saved, a corrupt file is loud, not silent."""
         db_path = tmp_path / "test.db"
-        store1, engine1 = await _fresh_store(db_path, tmp_path)
+        # A save threshold of 1 saves the index on the first upsert.
+        store1, engine1 = await _fresh_store(db_path, tmp_path, save_threshold=1)
 
         partition = await _created(store1)
         await partition.upsert(
@@ -1637,7 +1656,7 @@ class TestIndexFileDurability:
             ]
         )
 
-        # Crash without shutdown: index_saved stays False, no file on disk.
+        # Crash without stopping: index_saved stays False, no file on disk.
         await engine1.dispose()
         assert not (tmp_path / "indexes").exists() or not list(
             (tmp_path / "indexes").glob("*.idx")
