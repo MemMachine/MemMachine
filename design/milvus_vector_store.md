@@ -53,7 +53,7 @@ registry](partition_registry.md),
   created afterward. A declared property's field name is its key, at most 32
   bytes, under `_p_`, within `proxy.maxNameLength` (255 unless configured).
 - **Preparation converges:** `prepare` creates the collection and its indexes
-  (named by their fields) only when missing. `startup` loads the collection,
+  (named by their fields) only when missing. `start` loads the collection,
   a no-op when it is loaded already.
 - **A delete raises unless Milvus accepted every key sent.** Milvus counts the
   primary keys a delete accepts, present or not (milvus-io/milvus#51566), and
