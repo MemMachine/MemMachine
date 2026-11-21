@@ -371,18 +371,27 @@ class VectorStoreSemanticStorage(SemanticStorage):
         except ValidationError as e:
             raise ResourceNotFoundError(f"Invalid feature IDs: {feature_ids}") from e
 
-        async with write_session(self._session_factory) as session:
+        async with self._create_session() as session:
             vector_uuids = list(
                 (
                     await session.execute(
-                        delete(VectorSemanticFeature)
-                        .where(VectorSemanticFeature.id.in_(feature_id_ints))
-                        .returning(VectorSemanticFeature.vector_uuid)
+                        select(VectorSemanticFeature.vector_uuid).where(
+                            VectorSemanticFeature.id.in_(feature_id_ints)
+                        )
                     )
                 ).scalars()
             )
 
+        # A row goes only after its vector: once the row is gone nothing names
+        # the vector, so a retry after a failed vector delete could not find it.
         await self._vector_partition.delete(record_uuids=vector_uuids)
+
+        async with write_session(self._session_factory) as session:
+            await session.execute(
+                delete(VectorSemanticFeature).where(
+                    VectorSemanticFeature.vector_uuid.in_(vector_uuids)
+                )
+            )
 
     async def delete_feature_set(
         self,
