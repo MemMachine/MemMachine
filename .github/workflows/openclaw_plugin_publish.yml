@@ -7,8 +7,8 @@ on:
     types: [published]
   workflow_dispatch:
     inputs:
-      version:
-        description: "Version to build (for example: 0.3.0)"
+      tag:
+        description: "Release tag to publish (for example: v0.4.0)"
         required: true
         type: string
 
@@ -18,6 +18,9 @@ permissions:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     defaults:
       run:
         working-directory: ./integrations/openclaw/
@@ -25,19 +28,39 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v6
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.version) || github.event.release.tag_name }}
+          ref: ${{ inputs.tag || github.event.release.tag_name }}
+
+      - name: Check the release tag
+        id: release
+        uses: ./.github/actions/release-version
+        with:
+          tag: ${{ inputs.tag || github.event.release.tag_name }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22.x'
+          registry-url: 'https://registry.npmjs.org/'
+
+      - name: Wait for @memmachine/client
+        # The plugin depends on the client at the same version, which the client's
+        # publish workflow uploads during the same release.
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          for attempt in $(seq 60); do
+            if [ "$(npm view "@memmachine/client@${VERSION}" version 2>/dev/null)" = "${VERSION}" ]; then
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::@memmachine/client ${VERSION} is not on npm after 10 minutes."
+          exit 1
 
       - name: Apply version to package and dependency
         env:
-          VERSION_INPUT: ${{ github.event_name == 'workflow_dispatch' && inputs.version || github.event.release.tag_name }}
+          VERSION: ${{ steps.release.outputs.version }}
         run: |
-          set -euo pipefail
-          VERSION="${VERSION_INPUT#v}"
-          if ! [[ "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
-            echo "Version must be numeric semver-like without a 'v' prefix (for example: 0.3.0). Got: ${VERSION}"
-            exit 1
-          fi
-
           PKG_VERSION="${VERSION}" MM_CLIENT_VERSION="${VERSION}" node -e '
             const fs = require("node:fs");
             const path = "package.json";
@@ -48,12 +71,6 @@ jobs:
             fs.writeFileSync(path, `${JSON.stringify(pkg, null, 2)}\n`);
           '
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: '22.x'
-          registry-url: 'https://registry.npmjs.org/'
-
       - name: Install dependencies
         run: npm install
 
@@ -61,6 +78,18 @@ jobs:
         run: npm run build
 
       - name: Publish to npm
-        run: npm publish --access public
+        # A pre-release goes to the next dist-tag; npm refuses to publish one as latest.
+        run: npm publish --access public --provenance --tag "$NPM_TAG"
         env:
+          NPM_TAG: ${{ steps.release.outputs.npm-tag }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  report-failure:
+    needs: publish
+    if: failure()
+    permissions:
+      issues: write
+    uses: ./.github/workflows/release-failure.yml
+    with:
+      step: Publishing @memmachine/openclaw-memmachine to npm
+      tag: ${{ inputs.tag || github.event.release.tag_name }}

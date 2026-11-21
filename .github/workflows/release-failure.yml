@@ -1,0 +1,35 @@
+# Reusable workflow that reports a failed release step as an issue.
+
+name: Report a failed release step
+
+on:
+  workflow_call:
+    inputs:
+      step:
+        description: The release step that failed, such as "Publishing to PyPI".
+        required: true
+        type: string
+      tag:
+        description: The release tag.
+        required: true
+        type: string
+
+permissions:
+  issues: write
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Open an issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          STEP: ${{ inputs.step }}
+          TAG: ${{ inputs.tag }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          gh issue create --repo "$GITHUB_REPOSITORY" \
+            --title "Release ${TAG}: ${STEP} failed" \
+            --body "${STEP} failed for release ${TAG}: ${RUN_URL}
+
+          Fix the cause, then re-run the failed jobs of that run. A registry that never received the version accepts it again under the same number."

@@ -7,8 +7,8 @@ on:
     types: [published]
   workflow_dispatch:
     inputs:
-      version:
-        description: 'Version to publish (e.g. 0.3.0, without v prefix)'
+      tag:
+        description: 'Release tag to publish (for example: v0.4.0)'
         required: true
 
 permissions:
@@ -17,12 +17,23 @@ permissions:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     defaults:
       run:
         working-directory: ./packages/ts-client
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.tag || github.event.release.tag_name }}
+
+      - name: Check the release tag
+        id: release
+        uses: ./.github/actions/release-version
+        with:
+          tag: ${{ inputs.tag || github.event.release.tag_name }}
 
       - name: Set up Node.js
         uses: actions/setup-node@v6
@@ -30,24 +41,30 @@ jobs:
           node-version: '24.x'
           registry-url: 'https://registry.npmjs.org/'
 
+      - name: Install dependencies
+        run: npm ci
+
       - name: Set version from release tag
         env:
-          INPUT_VERSION: ${{ inputs.version }}
-        run: |
-          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
-            VERSION="$INPUT_VERSION"
-          else
-            VERSION="${GITHUB_REF_NAME#v}"
-          fi
-          npm version "$VERSION" --no-git-tag-version
-
-      - name: Install dependencies
-        run: npm install
+          VERSION: ${{ steps.release.outputs.version }}
+        run: npm version "$VERSION" --no-git-tag-version
 
       - name: Build package
         run: npm run build
 
       - name: Publish to npm
-        run: npm publish --access public
+        # A pre-release goes to the next dist-tag; npm refuses to publish one as latest.
+        run: npm publish --access public --provenance --tag "$NPM_TAG"
         env:
+          NPM_TAG: ${{ steps.release.outputs.npm-tag }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  report-failure:
+    needs: publish
+    if: failure()
+    permissions:
+      issues: write
+    uses: ./.github/workflows/release-failure.yml
+    with:
+      step: Publishing @memmachine/client to npm
+      tag: ${{ inputs.tag || github.event.release.tag_name }}

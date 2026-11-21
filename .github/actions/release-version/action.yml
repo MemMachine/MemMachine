@@ -1,0 +1,33 @@
+name: Release version
+description: Check a release tag and derive the package version and npm dist-tag from it.
+
+inputs:
+  tag:
+    description: The release tag, such as v0.4.0 or v0.5.0-rc1.
+    required: true
+
+outputs:
+  version:
+    description: The tag without its v prefix.
+    value: ${{ steps.parse.outputs.version }}
+  npm-tag:
+    description: The npm dist-tag to publish under, next for a pre-release and latest otherwise.
+    value: ${{ steps.parse.outputs.npm-tag }}
+
+runs:
+  using: composite
+  steps:
+    - id: parse
+      shell: bash
+      env:
+        TAG: ${{ inputs.tag }}
+      run: |
+        # Every registry must accept the version: npm needs MAJOR.MINOR.PATCH, and PyPI
+        # needs a pre-release suffix that Python packaging can normalize.
+        if ! [[ "$TAG" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+(-(a|b|rc|alpha|beta|dev)[0-9]+)?$ ]]; then
+          echo "::error::Release tag ${TAG} must be MAJOR.MINOR.PATCH, with an optional v prefix and an optional pre-release suffix such as -rc1."
+          exit 1
+        fi
+        version="${TAG#v}"
+        if [[ "$version" == *-* ]]; then npm_tag=next; else npm_tag=latest; fi
+        { echo "version=${version}"; echo "npm-tag=${npm_tag}"; } >> "$GITHUB_OUTPUT"
