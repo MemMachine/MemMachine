@@ -91,7 +91,7 @@ async def long_term_memory_from_config(
             return LongTermMemory(await _declarative_memory(config, resource_manager))
         case EventLongTermMemoryConf():
             reranker = (
-                await resource_manager.get_reranker(config.reranker, validate=True)
+                await resource_manager.get_reranker(config.reranker)
                 if config.reranker is not None
                 else None
             )
@@ -201,12 +201,8 @@ async def _declarative_memory(
             vector_graph_store=await resource_manager.get_vector_graph_store(
                 config.vector_graph_store,
             ),
-            embedder=await resource_manager.get_embedder(
-                config.embedder, validate=True
-            ),
-            reranker=await resource_manager.get_reranker(
-                config.reranker, validate=True
-            ),
+            embedder=await resource_manager.get_embedder(config.embedder),
+            reranker=await resource_manager.get_reranker(config.reranker),
             message_sentence_chunking=config.message_sentence_chunking,
         ),
     )
@@ -222,7 +218,7 @@ async def _event_memory(
     _, segment_store_id, embedder_id = deployment_event_memory_ids(
         resource_manager.config
     )
-    embedder = await resource_manager.get_embedder(embedder_id, validate=True)
+    embedder = await resource_manager.get_embedder(embedder_id)
     segment_store = await resource_manager.get_segment_store(segment_store_id)
     vector_store = await event_backend_vector_store(resource_manager)
     return EventMemory(
@@ -299,7 +295,7 @@ async def event_backend_vector_store(
     vector_store_id, _, embedder_id = deployment_event_memory_ids(
         resource_manager.config
     )
-    embedder = await resource_manager.get_embedder(embedder_id, validate=True)
+    embedder = await resource_manager.get_embedder(embedder_id)
     return await resource_manager.get_vector_store(
         vector_store_id,
         vector_store_name=_EVENT_MEMORY_VECTOR_STORE_NAME,
