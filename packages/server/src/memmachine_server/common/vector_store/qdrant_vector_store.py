@@ -525,7 +525,6 @@ class QdrantVectorStore(VectorStore):
 
     @override
     async def prepare(self) -> None:
-        # Preparing and then checking refuses a collection of another schema.
         async with self._tracker("prepare"):
             distance = QdrantVectorStore._SIMILARITY_METRIC_TO_QDRANT_DISTANCE[
                 self._store_schema.similarity_metric
@@ -578,6 +577,7 @@ class QdrantVectorStore(VectorStore):
                 except (UnexpectedResponse, grpc.aio.AioRpcError) as e:
                     if not QdrantVectorStore._is_already_exists_error(e):
                         raise
+            # Preparing and then checking refuses a collection of another schema.
             await self._check_storage()
 
     @override

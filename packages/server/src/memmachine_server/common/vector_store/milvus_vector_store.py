@@ -512,7 +512,6 @@ class MilvusVectorStore(VectorStore):
 
     @override
     async def prepare(self) -> None:
-        # Preparing and then checking refuses a collection of another schema.
         async with self._tracker("prepare"):
             # Each step runs when it is missing, so the next preparation completes
             # one that failed part way.
@@ -612,6 +611,7 @@ class MilvusVectorStore(VectorStore):
                     missing,
                     timeout=self._request_timeout_seconds,
                 )
+            # Preparing and then checking refuses a collection of another schema.
             await self._check_storage()
 
     @override
