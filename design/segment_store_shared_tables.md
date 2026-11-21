@@ -137,17 +137,30 @@ reclaimed by the purge, which starts only after the retention.
 
 ### Locking model
 
-Row locks only. Writers lock nothing beyond the rows they write;
-`delete_segments` deletes its segments one statement each in key order, so
-every deletion takes its row locks in that order; the purge takes
-`FOR UPDATE` on its partition's row, which only the purgers and the drop of
-the same partition contend for. No table-level lock, no DDL,
-and no lock upgrade anywhere in the store, which removes the measured
-deadlock classes at the root: reclamation touches only rows of a partition
-no request can reach. On SQLite, which drops locking clauses, every write
+Row locks only. `add_segments` locks nothing beyond the rows it writes.
+`delete_segments` takes `FOR KEY SHARE` on its partition's row and then
+deletes its segments one statement each in key order, so every deletion
+takes its segment locks in that order. The purge takes `FOR UPDATE` on its
+partition's row, which the purgers, the drop, and the deletions of the same
+partition contend for. No table-level lock, no DDL, and no lock upgrade
+anywhere in the store, which removes the measured deadlock classes at the
+root. On SQLite, which drops locking clauses, every write
 transaction of the store takes the database's write lock at BEGIN
 (`BEGIN IMMEDIATE`, through the `enable_sqlite_explicit_begin` setup the
 store requires of its engine), which stands in for the row locks.
+
+A deletion and a purge of one partition lock its segments in different
+orders: the purge deletes a key range in one statement, and PostgreSQL
+locks that statement's rows in the order its plan reads them. Run at once,
+each can hold a segment the other waits for. Their locks on the partition's
+row conflict, so each waits for the other to finish before it locks any
+segment, and neither depends on the other's order. A deletion whose
+partition has no row, the partition having been dropped, deletes nothing
+and leaves its segments to the purge, which has no row to lock either.
+Measured on PostgreSQL 18 in a forced race, a purge of a 2,000-segment
+partition against deletions of its segments 100 at a time: without the
+deletion's lock on the partition's row, a purge or a deletion failed with a
+deadlock in 14 of 20 rounds; with it, in none of 20.
 
 The order of `delete_segments`'s row locks is the order in which its
 statements reach PostgreSQL. PostgreSQL documents its part: it runs a

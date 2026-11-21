@@ -734,6 +734,21 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
             self._tracker("delete_segments"),
             write_session(self._create_session) as session,
         ):
+            # The partition's row is locked first, in a mode the purge's lock
+            # on it conflicts with: a deletion and a purge of the partition
+            # lock its segments in different orders, and would deadlock if
+            # they ran at once. A dropped partition has no row, and its
+            # segments are left to the purge.
+            partition_row = (
+                await session.execute(
+                    select(PartitionRow.partition_uuid)
+                    .where(PartitionRow.partition_uuid == self._partition_uuid)
+                    .with_for_update(read=True, key_share=True)
+                )
+            ).one_or_none()
+            if partition_row is None:
+                return
+
             # One statement per segment, in UUID order. Each locks the row
             # it deletes, so concurrent deletions of overlapping segments
             # take their locks in one order and cannot deadlock. Each also
