@@ -156,8 +156,18 @@ class VectorStore(PartitionedStore):
         raise NotImplementedError
 
     @abstractmethod
+    async def prepare(self) -> None:
+        """
+        Create the store's durable resources, or bring them up to date.
+
+        The caller runs it before `startup`, while no other process uses the
+        store. Running it again changes nothing.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
     async def startup(self) -> None:
-        """Start the store, creating idempotently what must exist before a partition is created."""
+        """Start the store on the durable resources `prepare` created, creating none."""
         raise NotImplementedError
 
     @abstractmethod

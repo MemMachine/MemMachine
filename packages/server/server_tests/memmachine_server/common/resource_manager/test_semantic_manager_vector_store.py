@@ -19,6 +19,7 @@ from memmachine_server.common.configuration import (
     SemanticMemoryStorageBackend,
 )
 from memmachine_server.common.data_types import SimilarityMetric
+from memmachine_server.common.errors import SchemaMismatchError
 from memmachine_server.common.metrics_factory import MetricsFactory, OperationTracker
 from memmachine_server.common.partition_registry import PartitionManager
 from memmachine_server.common.partition_registry.sqlalchemy_partition_registry import (
@@ -65,6 +66,9 @@ async def test_semantic_manager_builds_vector_store_backend(sqlalchemy_sqlite_en
         resource_manager=resource_manager,
         episode_storage=MagicMock(),
     )
+
+    # The tables `prepare` creates.
+    await VectorStoreSemanticStorage(sqlalchemy_sqlite_engine, MagicMock()).prepare()
 
     storage = await manager.get_semantic_storage()
 
@@ -125,6 +129,7 @@ async def partition_registry(
             tombstone_retention_seconds=0,
         ),
     )
+    await registry.prepare()
     await registry.startup()
     return registry
 
@@ -219,3 +224,35 @@ async def test_a_failed_creation_of_semantic_memorys_partition_frees_its_name(
         purged.append(claim.partition_uuid)
         await claim.complete()
     assert purged == partition_uuids
+
+
+@pytest.mark.asyncio
+async def test_semantic_storage_refuses_a_missing_partition(sqlalchemy_sqlite_engine):
+    partition_registry = MagicMock()
+    partition_registry.resolve = AsyncMock(return_value=None)
+    resource_manager = MagicMock()
+    resource_manager.get_sql_engine = AsyncMock(return_value=sqlalchemy_sqlite_engine)
+    resource_manager.get_vector_store = AsyncMock(
+        return_value=create_autospec(VectorStore, instance=True)
+    )
+    resource_manager.get_partition_registry = AsyncMock(return_value=partition_registry)
+    resource_manager.get_metrics_factory = AsyncMock(
+        return_value=MagicMock(spec=MetricsFactory)
+    )
+    manager = SemanticResourceManager(
+        semantic_conf=SemanticMemoryConf(
+            storage_backend=SemanticMemoryStorageBackend.VECTOR_STORE,
+            feature_store="semantic_db",
+            config_database="config_db",
+            vector_collection="semantic_vectors",
+            llm_model="llm",
+            embedding_model="embedder",
+            vector_dimensions=2,
+        ),
+        prompt_conf=PromptConf(),
+        resource_manager=resource_manager,
+        episode_storage=MagicMock(),
+    )
+
+    with pytest.raises(SchemaMismatchError, match="memmachine-server prepare"):
+        await manager.get_semantic_storage()

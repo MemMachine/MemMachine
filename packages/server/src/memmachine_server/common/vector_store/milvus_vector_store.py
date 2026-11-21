@@ -17,6 +17,7 @@ from memmachine_server.common.data_types import (
     PropertyValue,
     SimilarityMetric,
 )
+from memmachine_server.common.errors import SchemaMismatchError
 from memmachine_server.common.filter.filter_parser import (
     And as FilterAnd,
 )
@@ -510,14 +511,79 @@ class MilvusVectorStore(VectorStore):
         return self._store_schema
 
     @override
+    async def prepare(self) -> None:
+        # Preparing and then checking refuses a collection of another schema.
+        async with self._tracker("prepare"):
+            await self._prepare_storage()
+            await self._check_storage()
+
+    @override
     async def startup(self) -> None:
         async with self._tracker("startup"):
-            await self._prepare_storage()
+            await self._check_storage()
+            # Searches need the collection in memory; loading one already
+            # loaded does nothing.
+            await self._client.load_collection(
+                self._collection_name,
+                timeout=self._request_timeout_seconds,
+            )
+
+    async def _check_storage(self) -> None:
+        timeout = self._request_timeout_seconds
+        if not await self._client.has_collection(
+            self._collection_name, timeout=timeout
+        ) or _VECTOR_FIELD not in await self._client.list_indexes(
+            self._collection_name, timeout=timeout
+        ):
+            raise SchemaMismatchError(
+                f"The Milvus collection {self._collection_name!r} is missing or "
+                "not fully prepared. Run `memmachine-server prepare`."
+            )
+        description = await self._client.describe_collection(
+            self._collection_name, timeout=timeout
+        )
+        dimensions = next(
+            (
+                int(field["params"]["dim"])
+                for field in description["fields"]
+                if field["name"] == _VECTOR_FIELD
+            ),
+            None,
+        )
+        index = await self._client.describe_index(
+            self._collection_name, index_name=_VECTOR_FIELD, timeout=timeout
+        )
+        metric = self._SIMILARITY_METRIC_TO_MILVUS_METRIC[
+            self._store_schema.similarity_metric
+        ]
+        if (
+            dimensions != self._store_schema.vector_dimensions
+            or index.get("metric_type") != metric
+        ):
+            raise SchemaMismatchError(
+                f"The Milvus collection {self._collection_name!r} holds vectors "
+                f"other than this store's: {self._store_schema.vector_dimensions} dimensions "
+                f"by {metric}."
+            )
+        declared_fields = {
+            field["name"]: field["type"]
+            for field in description["fields"]
+            if field["name"].startswith(_DECLARED_FIELD_PREFIX)
+        }
+        declared = {
+            f"{_DECLARED_FIELD_PREFIX}{key}": _DECLARED_DATA_TYPES[property_type]
+            for key, property_type in self._store_schema.indexed_properties.items()
+        }
+        if declared_fields != declared:
+            raise SchemaMismatchError(
+                f"The Milvus collection {self._collection_name!r} holds other "
+                "declared properties than this store's."
+            )
 
     async def _prepare_storage(self) -> None:
-        """Prepare and load the collection every partition lives in, with its indexes, each step idempotent."""
-        # Each step runs when it is missing, and the collection is loaded, so
-        # the next startup completes one that failed part way.
+        """Prepare the collection every partition lives in, with its indexes, each step idempotent."""
+        # Each step runs when it is missing, so the next preparation completes
+        # one that failed part way.
         index_params = self._client.prepare_index_params()
         index_params.add_index(
             field_name=_VECTOR_FIELD,
@@ -614,11 +680,6 @@ class MilvusVectorStore(VectorStore):
                 missing,
                 timeout=self._request_timeout_seconds,
             )
-        # A no-op when the collection is already loaded.
-        await self._client.load_collection(
-            self._collection_name,
-            timeout=self._request_timeout_seconds,
-        )
 
     @override
     async def shutdown(self) -> None:
@@ -628,7 +689,7 @@ class MilvusVectorStore(VectorStore):
 
     @override
     async def create_partition(self, partition_uuid: UUID) -> None:
-        # Every partition lives in the collection startup prepared.
+        # Every partition lives in the collection `prepare` created.
         return
 
     @override
@@ -673,5 +734,5 @@ class MilvusVectorStore(VectorStore):
 
     @override
     async def drop_partition(self, partition_uuid: UUID) -> None:
-        # Every partition lives in the collection startup prepared.
+        # Every partition lives in the collection `prepare` created.
         return

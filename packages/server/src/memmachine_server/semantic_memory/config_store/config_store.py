@@ -16,6 +16,15 @@ from memmachine_server.semantic_memory.semantic_model import (
 class SemanticConfigStorage(Protocol):
     """Contract for persisting and retrieving semantic memory configuration."""
 
+    async def prepare(self) -> None:
+        """
+        Create the storage's missing durable resources.
+
+        The caller runs it before `startup`, while no other process uses the
+        storage. Running it again changes nothing.
+        """
+        ...
+
     async def startup(self) -> None: ...
 
     async def delete_all(self) -> None: ...

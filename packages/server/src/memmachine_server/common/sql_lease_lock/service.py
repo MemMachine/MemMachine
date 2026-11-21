@@ -177,8 +177,12 @@ class SQLLeaseLockService:
         """
         self._store = SQLLeaseStore(engine)
 
+    async def prepare(self) -> None:
+        """Create the service's SQL tables, or bring them up to date, before `startup`."""
+        await self._store.prepare()
+
     async def startup(self) -> None:
-        """Create the service's SQL tables."""
+        """Start the service on the tables `prepare` created."""
         await self._store.startup()
 
     async def try_acquire(self, key: str, *, lease_duration: timedelta) -> Lease | None:

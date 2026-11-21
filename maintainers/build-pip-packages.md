@@ -116,6 +116,9 @@ results = memory.search("What do I like?")
 After installing `memmachine-server`:
 
 ```bash
+# Create the schema of the configured databases before starting the server
+memmachine-server prepare
+
 # Run server
 memmachine-server
 

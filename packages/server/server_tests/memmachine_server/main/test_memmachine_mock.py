@@ -1655,6 +1655,7 @@ async def test_two_machines_share_sql_deletion_lease(
     try:
         first_lease = SQLLeaseLockService(first_engine)
         second_lease = SQLLeaseLockService(second_engine)
+        await first_lease.prepare()
         await first_lease.startup()
 
         first_resources = AsyncMock()

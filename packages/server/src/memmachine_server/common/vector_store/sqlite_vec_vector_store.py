@@ -12,6 +12,7 @@ admits fewer.
 """
 
 from collections.abc import Iterable, Mapping, Sequence
+from pathlib import Path
 from typing import ClassVar, override
 from uuid import UUID
 
@@ -42,13 +43,27 @@ from memmachine_server.common.data_types import (
     SimilarityMetric,
 )
 from memmachine_server.common.filter.filter_parser import FilterExpr
-from memmachine_server.common.sql import validate_engine_connections, write_session
+from memmachine_server.common.schema_migration import (
+    Lineage,
+    check_lineage,
+    upgrade_lineage,
+)
+from memmachine_server.common.sql import (
+    validate_engine_connections,
+    write_connection,
+    write_session,
+)
 
 from .data_types import (
     QueryMatch,
     QueryResult,
     Record,
     VectorStoreSchema,
+)
+from .sql_store_schema import (
+    check_store_schema,
+    record_store_schema,
+    store_schema_tables,
 )
 from .sqlite_properties import (
     compile_property_filter,
@@ -66,6 +81,17 @@ from .utils import (
     validate_supported_filter,
 )
 from .vector_store import VectorStore, VectorStoreParams, VectorStorePartition
+
+_CATALOG_METADATA = MetaData()
+"""The tables the store's partitions share: its recorded schema."""
+
+_STORE_SCHEMA_TABLES = store_schema_tables(_CATALOG_METADATA, "vector_store_sqlite_vec")
+
+SQLITE_VEC_VECTOR_STORE_LINEAGE = Lineage(
+    name="sqlite_vec_vector_store",
+    versions=Path(__file__).parent / "migrations" / "sqlite_vec_vector_store",
+    metadata=_CATALOG_METADATA,
+)
 
 
 class SQLiteVecVectorStorePartition(VectorStorePartition):
@@ -414,10 +440,31 @@ class SQLiteVecVectorStore(VectorStore):
         return self._store_schema
 
     @override
+    async def prepare(self) -> None:
+        await upgrade_lineage(self._engine, SQLITE_VEC_VECTOR_STORE_LINEAGE)
+        async with write_connection(self._engine) as connection:
+            await record_store_schema(
+                connection,
+                _STORE_SCHEMA_TABLES,
+                self._vector_store_name,
+                self._store_schema,
+            )
+        await check_store_schema(
+            self._engine,
+            _STORE_SCHEMA_TABLES,
+            self._vector_store_name,
+            self._store_schema,
+        )
+
+    @override
     async def startup(self) -> None:
-        # create_partition creates each partition's tables, and the store
-        # has no others.
-        pass
+        await check_lineage(self._engine, SQLITE_VEC_VECTOR_STORE_LINEAGE)
+        await check_store_schema(
+            self._engine,
+            _STORE_SCHEMA_TABLES,
+            self._vector_store_name,
+            self._store_schema,
+        )
 
     @override
     async def shutdown(self) -> None:

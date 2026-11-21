@@ -221,6 +221,12 @@ jobs:
           fi
           echo "Neo4j is ready!"
 
+      - name: Prepare the configured stores
+        shell: bash
+        run: |
+          set -eo pipefail
+          memmachine-server prepare
+
       - name: Start memmachine-server
         shell: bash
         run: |

@@ -159,6 +159,7 @@ async def sqlite_store(
     store = SQLAlchemySegmentStore(
         SQLAlchemySegmentStoreParams(engine=sqlalchemy_sqlite_engine)
     )
+    await store.prepare()
     await store.startup()
     yield store
     async with sqlalchemy_sqlite_engine.begin() as conn:
@@ -172,6 +173,7 @@ async def pg_store(
     store = SQLAlchemySegmentStore(
         SQLAlchemySegmentStoreParams(engine=sqlalchemy_pg_engine)
     )
+    await store.prepare()
     await store.startup()
     yield store
     async with sqlalchemy_pg_engine.begin() as conn:
