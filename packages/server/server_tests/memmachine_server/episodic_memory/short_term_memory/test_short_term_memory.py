@@ -105,7 +105,9 @@ class MockShortTermMemoryDataManager(SessionDataManager):
         )
 
     async def get_sessions(
-        self, filters: dict[str, PropertyValue | None] | None = None
+        self,
+        filters: dict[str, PropertyValue | None] | None = None,
+        status: SessionDataManager.SessionStatus | None = None,
     ) -> list[str]:
         return []
 

@@ -1,10 +1,12 @@
 """Helpers for building long-term memory from configuration."""
 
+import asyncio
 import hashlib
 import logging
 
 from pydantic import InstanceOf
 
+from memmachine_server.common.configuration import Configuration
 from memmachine_server.common.configuration.episodic_config import (
     DeclarativeLongTermMemoryConf,
     DeriverConf,
@@ -16,24 +18,35 @@ from memmachine_server.common.configuration.episodic_config import (
     TextSegmenterConf,
     WholeTextDeriverConf,
 )
-from memmachine_server.common.data_types import (
-    PROPERTY_TYPE_NAME_TO_PROPERTY_TYPE,
-    PropertyValue,
+from memmachine_server.common.data_types import PropertyType
+from memmachine_server.common.errors import ConfigurationError
+from memmachine_server.common.partition_registry import (
+    PartitionAlreadyExistsError,
+    PartitionCreateAttemptsExhaustedError,
+    PartitionDeletedError,
+    PartitionPendingError,
+    PartitionRegistry,
+    validate_partition_name,
 )
+from memmachine_server.common.reranker import Reranker
 from memmachine_server.common.resource_manager import CommonResourceManager
-from memmachine_server.common.vector_store import VectorStoreCollectionConfig
+from memmachine_server.common.vector_store import VectorStore, VectorStoreSchema
+from memmachine_server.episodic_memory.declarative_memory import (
+    DeclarativeMemory,
+    DeclarativeMemoryParams,
+)
 from memmachine_server.episodic_memory.event_memory.deriver import Deriver
 from memmachine_server.episodic_memory.event_memory.deriver.text_deriver import (
     SentenceTextDeriver,
     WholeTextDeriver,
 )
-from memmachine_server.episodic_memory.event_memory.event_memory import EventMemory
-from memmachine_server.episodic_memory.event_memory.segment_store import (
-    SegmentStorePartitionConfig,
+from memmachine_server.episodic_memory.event_memory.event_memory import (
+    EventMemory,
+    EventMemoryParams,
+    EventMemoryPartition,
 )
-from memmachine_server.episodic_memory.event_memory.segment_store.utils import (
-    PARTITION_KEY_MAX_BYTES,
-    validate_partition_key,
+from memmachine_server.episodic_memory.event_memory.segment_store import (
+    SegmentStore,
 )
 from memmachine_server.episodic_memory.event_memory.segmenter import Segmenter
 from memmachine_server.episodic_memory.event_memory.segmenter.passthrough_segmenter import (
@@ -45,172 +58,289 @@ from memmachine_server.episodic_memory.event_memory.segmenter.text_segmenter imp
 
 from .long_term_memory import (
     EVENT_BACKEND_SYSTEM_FIELDS,
-    DeclarativeBackendParams,
-    EventBackendParams,
-    LongTermMemoryParams,
+    LongTermMemory,
 )
 
 logger = logging.getLogger(__name__)
 
-_EVENT_BACKEND_NAMESPACE = "long_term_memory"
+_EVENT_MEMORY_VECTOR_STORE_NAME = "event_memory"
+"""The name of event memory's one vector store, whatever its backend and embedder.
+
+Fixed, because the name locates the store's data.
+"""
+_EVENT_MEMORY_PARTITION_NAMESPACE = "event_memory"
+"""The partition namespace of every session's event memory partition.
+
+Fixed, because the namespace locates the partitions' registrations.
+"""
+
+# The attempts `_get_or_create_event_memory_partition` makes,
+# _GET_OR_CREATE_RETRY_DELAY_SECONDS apart, before giving up on a partition
+# that stays pending or a name other creators keep taking.
+_MAX_GET_OR_CREATE_ATTEMPTS = 10
+_GET_OR_CREATE_RETRY_DELAY_SECONDS = 1
 
 
-async def long_term_memory_params_from_config(
+async def long_term_memory_from_config(
     config: LongTermMemoryConf,
     resource_manager: InstanceOf[CommonResourceManager],
-) -> LongTermMemoryParams:
-    """Build LongTermMemoryParams from configuration and resources."""
+) -> LongTermMemory:
+    """Build a session's LongTermMemory from its configuration and the deployment's resources."""
     match config:
         case DeclarativeLongTermMemoryConf():
-            return await _declarative_params(config, resource_manager)
+            return LongTermMemory(await _declarative_memory(config, resource_manager))
         case EventLongTermMemoryConf():
-            return await _event_params(config, resource_manager)
+            reranker = (
+                await resource_manager.get_reranker(config.reranker, validate=True)
+                if config.reranker is not None
+                else None
+            )
+            event_memory = await _event_memory(
+                config, resource_manager, reranker=reranker
+            )
+            return LongTermMemory(
+                await _get_or_create_event_memory_partition(
+                    event_memory, partition_name_for_session(config.session_id)
+                ),
+                episode_storage=await resource_manager.get_episode_storage(),
+                reranker=reranker,
+            )
         case _:
             raise NotImplementedError(
                 f"Unsupported long-term memory backend: {type(config).__name__}"
             )
 
 
-async def _declarative_params(
-    config: DeclarativeLongTermMemoryConf,
+async def _get_or_create_event_memory_partition(
+    event_memory: EventMemory, partition_name: str
+) -> EventMemoryPartition:
+    """
+    Get the live event memory partition under a name, creating it if no partition holds the name.
+
+    Read-then-create, retried a bounded number of times: a live partition is
+    returned; a pending one is another creator's, which the call waits for;
+    no partition means create, then read again. The call retries when the
+    creation finds the name taken or the partition deleted while the stores
+    created it, and when the partition is deleted before the read after the
+    creation.
+
+    Raises:
+        PartitionPendingError:
+            If the partition was another creator's and still pending at the
+            last attempt.
+        PartitionCreateAttemptsExhaustedError:
+            If the attempts ran out with the last one losing the name to
+            another creator or deleter, or if the registry gave up after
+            repeated attempts to reserve the free name failed.
+    """
+    pending_error: PartitionPendingError | None = None
+    lost_race: PartitionAlreadyExistsError | PartitionDeletedError | None = None
+    for attempt in range(_MAX_GET_OR_CREATE_ATTEMPTS):
+        if attempt:
+            await asyncio.sleep(_GET_OR_CREATE_RETRY_DELAY_SECONDS)
+        try:
+            partition = await event_memory.get_partition(partition_name)
+            if partition is None:
+                await event_memory.create_partition(partition_name)
+                partition = await event_memory.get_partition(partition_name)
+        except PartitionPendingError as err:
+            pending_error = err
+            continue
+        except (PartitionAlreadyExistsError, PartitionDeletedError) as err:
+            pending_error = None
+            lost_race = err
+            continue
+        pending_error = None
+        if partition is not None:
+            return partition
+    # The last lookup found the partition pending.
+    if pending_error is not None:
+        raise pending_error
+    raise PartitionCreateAttemptsExhaustedError(
+        f"Getting or creating partition {partition_name!r} made no progress "
+        f"after {_MAX_GET_OR_CREATE_ATTEMPTS} attempts"
+    ) from lost_race
+
+
+async def delete_long_term_memory_storage(
+    config: LongTermMemoryConf,
     resource_manager: InstanceOf[CommonResourceManager],
-) -> DeclarativeBackendParams:
-    vector_graph_store = await resource_manager.get_vector_graph_store(
-        config.vector_graph_store,
-    )
-    embedder = await resource_manager.get_embedder(config.embedder, validate=True)
-    reranker = await resource_manager.get_reranker(config.reranker, validate=True)
-    return DeclarativeBackendParams(
-        session_id=config.session_id,
-        vector_graph_store=vector_graph_store,
-        embedder=embedder,
-        reranker=reranker,
-        message_sentence_chunking=config.message_sentence_chunking,
-    )
+) -> None:
+    """
+    Delete a session's long-term memory storage.
 
-
-async def _event_params(
-    config: EventLongTermMemoryConf,
-    resource_manager: InstanceOf[CommonResourceManager],
-) -> EventBackendParams:
-    vector_store = await resource_manager.get_vector_store(config.vector_store)
-    segment_store = await resource_manager.get_segment_store(config.segment_store)
-    embedder = await resource_manager.get_embedder(config.embedder, validate=True)
-    reranker = (
-        await resource_manager.get_reranker(config.reranker, validate=True)
-        if config.reranker is not None
-        else None
-    )
-    episode_storage = await resource_manager.get_episode_storage()
-
-    partition_key = partition_key_for_session(config.session_id)
-
-    # Open the existing collection if any (preserves the original schema). Only
-    # create with our merged schema if the partition does not yet exist.
-    collection = await vector_store.open_collection(
-        namespace=_EVENT_BACKEND_NAMESPACE,
-        name=partition_key,
-    )
-    if collection is None:
-        user_schema = _resolve_user_properties_schema(config.properties_schema)
-        collection_config = VectorStoreCollectionConfig(
-            vector_dimensions=embedder.dimensions,
-            similarity_metric=embedder.similarity_metric,
-            indexed_properties_schema={
-                **EventMemory.expected_vector_store_collection_schema(),
-                **EVENT_BACKEND_SYSTEM_FIELDS,
-                **user_schema,
-            },
-        )
-        await vector_store.create_collection(
-            namespace=_EVENT_BACKEND_NAMESPACE,
-            name=partition_key,
-            config=collection_config,
-        )
-        collection = await vector_store.open_collection(
-            namespace=_EVENT_BACKEND_NAMESPACE,
-            name=partition_key,
-        )
-        if collection is None:
-            raise RuntimeError(
-                f"Failed to open vector store collection after creation for "
-                f"partition {partition_key!r}"
+    The event backend deletes the session's partition by name, without
+    getting or creating it.
+    """
+    match config:
+        case DeclarativeLongTermMemoryConf():
+            declarative_memory = await _declarative_memory(config, resource_manager)
+            episodes = await declarative_memory.get_matching_episodes()
+            await declarative_memory.delete_episodes(
+                episode.uid for episode in episodes
+            )
+        case EventLongTermMemoryConf():
+            # Deleting a partition uses no reranker.
+            event_memory = await _event_memory(config, resource_manager, reranker=None)
+            await event_memory.delete_partition(
+                partition_name_for_session(config.session_id)
+            )
+        case _:
+            raise NotImplementedError(
+                f"Unsupported long-term memory backend: {type(config).__name__}"
             )
 
-    partition = await segment_store.open_or_create_partition(
-        partition_key,
-        SegmentStorePartitionConfig(),
-    )
 
-    segmenter = _build_segmenter(config.segmenter)
-    deriver = _build_deriver(config.deriver)
-
-    return EventBackendParams(
-        session_id=config.session_id,
-        vector_store=vector_store,
-        vector_store_collection=collection,
-        vector_store_collection_namespace=_EVENT_BACKEND_NAMESPACE,
-        segment_store=segment_store,
-        segment_store_partition=partition,
-        partition_key=partition_key,
-        episode_storage=episode_storage,
-        embedder=embedder,
-        reranker=reranker,
-        segmenter=segmenter,
-        deriver=deriver,
-        user_property_keys=frozenset(config.properties_schema),
-        metrics_factory=await resource_manager.get_metrics_factory("prometheus"),
+async def _declarative_memory(
+    config: DeclarativeLongTermMemoryConf,
+    resource_manager: InstanceOf[CommonResourceManager],
+) -> DeclarativeMemory:
+    return DeclarativeMemory(
+        DeclarativeMemoryParams(
+            session_id=config.session_id,
+            vector_graph_store=await resource_manager.get_vector_graph_store(
+                config.vector_graph_store,
+            ),
+            embedder=await resource_manager.get_embedder(
+                config.embedder, validate=True
+            ),
+            reranker=await resource_manager.get_reranker(
+                config.reranker, validate=True
+            ),
+            message_sentence_chunking=config.message_sentence_chunking,
+        ),
     )
 
 
-def partition_key_for_session(session_id: str) -> str:
+async def _event_memory(
+    config: EventLongTermMemoryConf,
+    resource_manager: InstanceOf[CommonResourceManager],
+    *,
+    reranker: Reranker | None,
+) -> EventMemory:
+    """An EventMemory on the deployment's stores and embedder, with the session's segmenter and deriver."""
+    _, segment_store_id, embedder_id = deployment_event_memory_ids(
+        resource_manager.config
+    )
+    embedder = await resource_manager.get_embedder(embedder_id, validate=True)
+    segment_store = await resource_manager.get_segment_store(segment_store_id)
+    vector_store = await event_backend_vector_store(resource_manager)
+    return EventMemory(
+        EventMemoryParams(
+            segment_store=segment_store,
+            vector_store=vector_store,
+            partition_registry=await _event_memory_partition_registry(
+                resource_manager, segment_store, vector_store
+            ),
+            segmenter=_build_segmenter(config.segmenter),
+            deriver=_build_deriver(config.deriver),
+            embedder=embedder,
+            reranker=reranker,
+            metrics_factory=await resource_manager.get_metrics_factory("prometheus"),
+        )
+    )
+
+
+async def _event_memory_partition_registry(
+    resource_manager: InstanceOf[CommonResourceManager],
+    segment_store: SegmentStore,
+    vector_store: VectorStore,
+) -> PartitionRegistry:
     """
-    Derive a partition key satisfying the segment store's contract.
+    The registry of event memory's partition namespace, whose purge rounds run over the given stores in the background.
 
-    If the session_id already satisfies it (checked by the store's own
-    validator, so the two can never disagree), use it directly to keep
-    debug paths legible. Otherwise hash to a stable 32-char hex digest and
-    emit a DEBUG log of the original→hashed mapping so operators can
-    correlate partition keys back to sessions during incident response.
+    The stores must be the ones event memory is built over, so the purge
+    rounds reach every store holding the namespace's partitions.
+
+    Raises:
+        ConfigurationError: If the deployment configures no event memory.
+
+    """
+    deployment = resource_manager.config.episodic_memory.long_term_memory
+    if deployment is None or deployment.partition_registry is None:
+        raise ConfigurationError("The deployment configures no event memory")
+    return await resource_manager.get_partition_registry(
+        deployment.partition_registry,
+        partition_namespace=_EVENT_MEMORY_PARTITION_NAMESPACE,
+        tombstone_retention_seconds=deployment.tombstone_retention_seconds,
+        partitioned_stores=[segment_store, vector_store],
+    )
+
+
+def deployment_event_memory_ids(configuration: Configuration) -> tuple[str, str, str]:
+    """
+    The deployment's event memory vector store, segment store, and embedder ids.
+
+    Every session's event memory uses them, with the deployment's
+    partition registry.
+
+    Raises:
+        ConfigurationError: If the deployment configures no event memory,
+            or leaves its vector store, segment store, partition registry, or
+            embedder unset.
+
+    """
+    deployment = configuration.episodic_memory.long_term_memory
+    if (
+        deployment is None
+        or deployment.vector_store is None
+        or deployment.segment_store is None
+        or deployment.partition_registry is None
+        or deployment.embedder is None
+    ):
+        raise ConfigurationError("The deployment configures no event memory")
+    return deployment.vector_store, deployment.segment_store, deployment.embedder
+
+
+async def event_backend_vector_store(
+    resource_manager: InstanceOf[CommonResourceManager],
+) -> VectorStore:
+    """The deployment's event memory vector store, built for its embedder."""
+    vector_store_id, _, embedder_id = deployment_event_memory_ids(
+        resource_manager.config
+    )
+    embedder = await resource_manager.get_embedder(embedder_id, validate=True)
+    return await resource_manager.get_vector_store(
+        vector_store_id,
+        vector_store_name=_EVENT_MEMORY_VECTOR_STORE_NAME,
+        store_schema=VectorStoreSchema(
+            vector_dimensions=embedder.dimensions,
+            similarity_metric=embedder.similarity_metric,
+            indexed_properties=event_backend_indexed_properties(),
+        ),
+    )
+
+
+def event_backend_indexed_properties() -> dict[str, PropertyType]:
+    """The system keys the event backend declares for its vector records."""
+    return {
+        **EventMemory.expected_vector_store_indexed_properties(),
+        **EVENT_BACKEND_SYSTEM_FIELDS,
+    }
+
+
+def partition_name_for_session(session_id: str) -> str:
+    """
+    Derive the name of a session's event memory partition.
+
+    A session id that is a valid partition name is the name as it is, which
+    keeps debug paths legible. Any other is hashed to a stable hex digest,
+    and the mapping is logged at DEBUG so operators can correlate partition
+    names back to sessions.
     """
     try:
-        validate_partition_key(session_id)
+        validate_partition_name(session_id)
     except ValueError:
         pass
     else:
         return session_id
-    partition_key = hashlib.sha256(session_id.encode("utf-8")).hexdigest()[
-        :PARTITION_KEY_MAX_BYTES
-    ]
+    partition_name = hashlib.sha256(session_id.encode("utf-8")).hexdigest()
     logger.debug(
-        "partition_key_for_session: hashed session_id %r -> partition_key %r",
+        "partition_name_for_session: hashed session_id %r -> partition name %r",
         session_id,
-        partition_key,
+        partition_name,
     )
-    return partition_key
-
-
-def _resolve_user_properties_schema(
-    raw: dict[str, str],
-) -> dict[str, type[PropertyValue]]:
-    resolved: dict[str, type[PropertyValue]] = {}
-    for key, type_name in raw.items():
-        if key.startswith("_"):
-            # `_`-prefixed keys are reserved for system-defined event fields
-            # (`_episode_uid`, `_session_key`, `_producer_id`, ...). Allowing a
-            # user property to share that namespace would let it overwrite the
-            # system slot in the merged collection schema (dict-spread is last-
-            # wins) and silently change its declared type.
-            raise ValueError(
-                f"Property {key!r}: keys starting with '_' are reserved for "
-                "system-defined event fields and cannot be used as user "
-                "property names."
-            )
-        prop_type = PROPERTY_TYPE_NAME_TO_PROPERTY_TYPE.get(type_name)
-        if prop_type is None:
-            raise ValueError(f"Property {key!r}: unknown type name {type_name!r}")
-        resolved[key] = prop_type
-    return resolved
+    return partition_name
 
 
 def _build_segmenter(conf: SegmenterConf) -> Segmenter:

@@ -49,6 +49,13 @@ YamlValue = dict[str, "YamlValue"] | list["YamlValue"] | str | int | float | boo
 
 logger = logging.getLogger(__name__)
 
+# The floor of event memory's tombstone retention on a remote vector store: a
+# write in flight when its partition is deleted lands within its client's
+# request timeout plus the server's delay, so the floor is the request
+# timeout times this factor, plus these extra seconds.
+_RETENTION_FLOOR_TIMEOUT_FACTOR = 10
+_RETENTION_FLOOR_EXTRA_SECONDS = 300
+
 
 def _is_openai_incomplete(conf: ApiKeyMixin) -> bool:
     """Check if an OpenAI-based config has empty credentials and no base_url."""
@@ -108,7 +115,9 @@ class SemanticMemoryConf(YamlSerializableMixin):
         default=True,
         description="Whether semantic memory is enabled. "
         "Auto-disabled when required backend, config_database, llm_model, "
-        "or embedding_model fields are empty.",
+        "or embedding_model fields are empty. Deleting a project or its "
+        "episodes still removes its stored semantic data while database "
+        "(or feature_store and vector_collection) remains set.",
     )
     database: str | None = Field(
         default=None,
@@ -193,16 +202,24 @@ class SemanticMemoryConf(YamlSerializableMixin):
         self.auto_disable_when_incomplete()
         return self
 
+    def storage_configured(self) -> bool:
+        """Whether the selected storage backend has its storage set."""
+        if self.storage_backend == SemanticMemoryStorageBackend.VECTOR_STORE:
+            return bool(self.feature_store and self.vector_collection)
+        return bool(self.database)
+
     def missing_required_fields(self) -> list[str]:
         """Names of the fields that must be set for semantic memory to run."""
         missing: list[str] = []
-        if self.storage_backend == SemanticMemoryStorageBackend.VECTOR_STORE:
-            if not self.feature_store:
-                missing.append("feature_store")
-            if not self.vector_collection:
-                missing.append("vector_collection")
-        elif not self.database:
-            missing.append("database")
+        if not self.storage_configured():
+            if self.storage_backend == SemanticMemoryStorageBackend.VECTOR_STORE:
+                missing.extend(
+                    name
+                    for name in ("feature_store", "vector_collection")
+                    if not getattr(self, name)
+                )
+            else:
+                missing.append("database")
         missing.extend(
             name
             for name in ("config_database", "llm_model", "embedding_model")
@@ -376,6 +393,15 @@ class ServerConf(YamlSerializableMixin):
         gt=0,
         lt=65536,
     )
+    metrics_port: int | None = Field(
+        default=None,
+        description=(
+            "The port number for a Prometheus metrics endpoint served from its "
+            "own thread, apart from the MemMachine API server"
+        ),
+        gt=0,
+        lt=65536,
+    )
 
     @model_validator(mode="before")
     @classmethod
@@ -435,6 +461,32 @@ class Configuration(BaseModel):
         if was_enabled and not self.semantic_memory.enabled:
             return "an OpenAI resource has empty credentials and no base_url"
         return None
+
+    @model_validator(mode="after")
+    def _validate_event_memory_retention(self) -> Configuration:
+        """Refuse an event memory retention below the floor its remote vector store's request timeout sets."""
+        long_term_memory = self.episodic_memory.long_term_memory
+        if long_term_memory is None or long_term_memory.vector_store is None:
+            return self
+        databases = self.resources.databases
+        vector_store_conf = databases.qdrant_confs.get(
+            long_term_memory.vector_store
+        ) or databases.milvus_confs.get(long_term_memory.vector_store)
+        if vector_store_conf is None:
+            return self
+        floor = (
+            _RETENTION_FLOOR_TIMEOUT_FACTOR * vector_store_conf.request_timeout_seconds
+            + _RETENTION_FLOOR_EXTRA_SECONDS
+        )
+        if long_term_memory.tombstone_retention_seconds < floor:
+            raise ValueError(
+                "episodic_memory.long_term_memory.tombstone_retention_seconds "
+                f"({long_term_memory.tombstone_retention_seconds}) must be at "
+                f"least {_RETENTION_FLOOR_TIMEOUT_FACTOR} x the request_timeout_seconds "
+                f"of vector store {long_term_memory.vector_store!r} "
+                f"+ {_RETENTION_FLOOR_EXTRA_SECONDS}, {floor}"
+            )
+        return self
 
     @model_validator(mode="after")
     def _auto_disable_when_openai_incomplete(self) -> Configuration:

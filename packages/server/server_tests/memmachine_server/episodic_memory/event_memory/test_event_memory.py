@@ -2,23 +2,30 @@
 
 import datetime
 import json
+import random
 from datetime import UTC
+from typing import Any
 from uuid import uuid4
 
 import pytest
+import pytest_asyncio
 
 from memmachine_server.common.data_types import PropertyValue, SimilarityMetric
+from memmachine_server.common.embedder import Embedder
 from memmachine_server.common.filter.filter_parser import (
     And,
     Comparison,
+    FilterExpr,
     In,
     IsNull,
     Not,
     Or,
+    map_filter_fields,
 )
+from memmachine_server.common.property_keys import reserved_property_key
+from memmachine_server.common.vector_store import VectorStoreSchema
 from memmachine_server.common.vector_store.data_types import (
     Record,
-    VectorStoreCollectionConfig,
 )
 from memmachine_server.episodic_memory.event_memory.data_types import (
     Event,
@@ -34,19 +41,28 @@ from memmachine_server.episodic_memory.event_memory.deriver.text_deriver import 
     WholeTextDeriver,
 )
 from memmachine_server.episodic_memory.event_memory.event_memory import (
+    EVENT_TIMESTAMP_KEY,
     EventMemory,
-    EventMemoryParams,
+    EventMemoryPartition,
 )
 from memmachine_server.episodic_memory.event_memory.segmenter.text_segmenter import (
     TextSegmenter,
 )
+from server_tests.memmachine_server.common.filter.random_filters import (
+    random_filter,
+    random_properties,
+)
 from server_tests.memmachine_server.common.reranker.fake_embedder import (
     FakeEmbedder,
+)
+from server_tests.memmachine_server.common.vector_store.in_memory_vector_store_partition import (
+    evaluate_filter,
 )
 
 from .conftest import (
     InMemorySegmentStorePartition,
-    InMemoryVectorStoreCollection,
+    InMemoryVectorStorePartition,
+    create_event_memory_partition,
 )
 
 _async = pytest.mark.asyncio
@@ -63,6 +79,21 @@ def _record_properties(record: Record) -> dict[str, PropertyValue]:
     """Get properties from a record, asserting they are not None."""
     assert record.properties is not None
     return record.properties
+
+
+def _record_query_filters(
+    partition: InMemoryVectorStorePartition, monkeypatch: pytest.MonkeyPatch
+) -> list[FilterExpr | None]:
+    """Record the filter of every query the partition gets, in order."""
+    seen: list[FilterExpr | None] = []
+    query = partition.query
+
+    async def spy(*args, **kwargs):
+        seen.append(kwargs["property_filter"])
+        return await query(*args, **kwargs)
+
+    monkeypatch.setattr(partition, "query", spy)
+    return seen
 
 
 def _make_event(
@@ -92,10 +123,9 @@ def _ts(minutes: int) -> datetime.datetime:
 
 
 class TestSchema:
-    def test_expected_vector_store_collection_schema_only_has_base_fields(self):
-        assert EventMemory.expected_vector_store_collection_schema() == {
-            "_segment_uuid": str,
-            "_timestamp": datetime.datetime,
+    def test_expected_vector_store_indexed_properties_only_has_base_fields(self):
+        assert EventMemory.expected_vector_store_indexed_properties() == {
+            EVENT_TIMESTAMP_KEY: datetime.datetime,
         }
 
 
@@ -108,12 +138,12 @@ class TestSchema:
 class TestEncodeEvents:
     async def test_single_text_event(
         self,
-        event_memory: EventMemory,
+        event_memory_partition: EventMemoryPartition,
         fake_segment_store_partition: InMemorySegmentStorePartition,
-        fake_vector_store_collection: InMemoryVectorStoreCollection,
+        fake_vector_store_partition: InMemoryVectorStorePartition,
     ):
         event = _make_event("hello world")
-        await event_memory.encode_events([event])
+        await event_memory_partition.encode_events([event])
 
         # One segment stored.
         assert len(fake_segment_store_partition.segments) == 1
@@ -124,45 +154,49 @@ class TestEncodeEvents:
         assert segment.block == TextBlock(text="hello world")
 
         # One derivative record in vector store.
-        assert len(fake_vector_store_collection.records) == 1
-        record = next(iter(fake_vector_store_collection.records.values()))
+        assert len(fake_vector_store_partition.records) == 1
+        record = next(iter(fake_vector_store_partition.records.values()))
         props = _record_properties(record)
-        assert props["_segment_uuid"] == str(segment.uuid)
-        assert props["_timestamp"] == event.timestamp
+        assert props[EVENT_TIMESTAMP_KEY] == event.timestamp
+        # The segment store maps the derivative to its segment.
+        assert "_segment_uuid" not in props
+        assert await fake_segment_store_partition.get_segment_uuids_by_derivative_uuids(
+            [record.uuid]
+        ) == {record.uuid: segment.uuid}
 
     async def test_producer_context(
         self,
-        event_memory: EventMemory,
-        fake_vector_store_collection: InMemoryVectorStoreCollection,
+        event_memory_partition: EventMemoryPartition,
+        fake_vector_store_partition: InMemoryVectorStorePartition,
     ):
         event = _make_event("hi", context=ProducerContext(producer="Alice"))
-        await event_memory.encode_events([event])
+        await event_memory_partition.encode_events([event])
 
-        record = next(iter(fake_vector_store_collection.records.values()))
+        record = next(iter(fake_vector_store_partition.records.values()))
         props = _record_properties(record)
         assert "_context_type" not in props
         assert "_context_producer" not in props
 
     async def test_no_context(
         self,
-        event_memory: EventMemory,
-        fake_vector_store_collection: InMemoryVectorStoreCollection,
+        event_memory_partition: EventMemoryPartition,
+        fake_vector_store_partition: InMemoryVectorStorePartition,
     ):
         event = _make_event("bare text")
-        await event_memory.encode_events([event])
+        await event_memory_partition.encode_events([event])
 
-        record = next(iter(fake_vector_store_collection.records.values()))
+        record = next(iter(fake_vector_store_partition.records.values()))
         props = _record_properties(record)
         assert "_context_type" not in props
 
     async def test_long_text_chunking(
         self,
-        event_memory: EventMemory,
+        event_memory_partition: EventMemoryPartition,
         fake_segment_store_partition: InMemorySegmentStorePartition,
     ):
         long_text = "word " * 1000  # ~5000 chars
         event = _make_event(long_text.strip())
-        await event_memory.encode_events([event])
+        await event_memory_partition.encode_events([event])
 
         segments = list(fake_segment_store_partition.segments.values())
         assert len(segments) > 1
@@ -177,7 +211,7 @@ class TestEncodeEvents:
 
     async def test_multiple_content_items(
         self,
-        event_memory: EventMemory,
+        event_memory_partition: EventMemoryPartition,
         fake_segment_store_partition: InMemorySegmentStorePartition,
     ):
         event = Event(
@@ -185,7 +219,7 @@ class TestEncodeEvents:
             timestamp=_T0,
             blocks=[TextBlock(text="first"), TextBlock(text="second")],
         )
-        await event_memory.encode_events([event])
+        await event_memory_partition.encode_events([event])
 
         segments = sorted(
             fake_segment_store_partition.segments.values(),
@@ -197,96 +231,125 @@ class TestEncodeEvents:
         assert segments[0].offset == 0
         assert segments[1].offset == 0
 
-    async def test_user_properties_propagate(
+    async def test_undeclared_properties_stay_on_the_segment(
         self,
-        event_memory: EventMemory,
-        fake_vector_store_collection: InMemoryVectorStoreCollection,
+        event_memory_partition: EventMemoryPartition,
+        fake_vector_store_partition: InMemoryVectorStorePartition,
+        fake_segment_store_partition: InMemorySegmentStorePartition,
     ):
-        event = _make_event("hi", properties={"color": "red"})
-        await event_memory.encode_events([event])
+        """An undeclared property is the segment store's; the vector record carries the declared keys."""
+        event = _make_event(
+            "hi", properties={"color": "red", "episode_uid": "episode-1"}
+        )
+        await event_memory_partition.encode_events([event])
 
-        record = next(iter(fake_vector_store_collection.records.values()))
-        assert _record_properties(record)["color"] == "red"
+        record = next(iter(fake_vector_store_partition.records.values()))
+        props = _record_properties(record)
+        assert "color" not in props
+        assert props["episode_uid"] == "episode-1"
+        segment = next(iter(fake_segment_store_partition.segments.values()))
+        assert segment.properties["color"] == "red"
 
     async def test_missing_context_schema_fields_still_allows_ingest(
         self, fake_embedder
     ):
-        # Collection without context fields.
-        config = VectorStoreCollectionConfig(
-            vector_dimensions=2,
+        # A partition without context fields.
+        store_schema = VectorStoreSchema(
+            vector_dimensions=fake_embedder.dimensions,
             similarity_metric=SimilarityMetric.COSINE,
-            indexed_properties_schema={
-                "_segment_uuid": str,
-                "_timestamp": datetime.datetime,
-            },
+            indexed_properties={EVENT_TIMESTAMP_KEY: datetime.datetime},
         )
-        collection = InMemoryVectorStoreCollection(config)
+        vector_store_partition = InMemoryVectorStorePartition(store_schema=store_schema)
         partition = InMemorySegmentStorePartition()
-        em = EventMemory(
-            EventMemoryParams(
-                segment_store_partition=partition,
-                vector_store_collection=collection,
-                segmenter=TextSegmenter(),
-                deriver=WholeTextDeriver(),
-                embedder=fake_embedder,
-            )
+        em = await create_event_memory_partition(
+            segment_store_partition=partition,
+            vector_store_partition=vector_store_partition,
+            store_schema=store_schema,
+            segmenter=TextSegmenter(),
+            deriver=WholeTextDeriver(),
+            embedder=fake_embedder,
         )
         event = _make_event("hi", context=ProducerContext(producer="Alice"))
         await em.encode_events([event])
 
-        assert len(collection.records) == 1
-        record = next(iter(collection.records.values()))
+        assert len(vector_store_partition.records) == 1
+        record = next(iter(vector_store_partition.records.values()))
         props = _record_properties(record)
         assert "_context_type" not in props
         assert "_context_producer" not in props
 
-    async def test_init_raises_on_missing_base_field(self, fake_embedder):
-        # Collection without _timestamp — base field required at init.
-        config = VectorStoreCollectionConfig(
-            vector_dimensions=2,
-            similarity_metric=SimilarityMetric.COSINE,
-            indexed_properties_schema={
-                "_segment_uuid": str,
-            },
+    async def test_reserved_property_key_is_rejected(
+        self, event_memory_partition: EventMemoryPartition
+    ):
+        event = _make_event("hi", properties={EVENT_TIMESTAMP_KEY: "spoofed"})
+        with pytest.raises(ValueError, match="reserved"):
+            await event_memory_partition.encode_events([event])
+
+    async def test_a_key_reserved_for_another_system_is_kept(
+        self,
+        event_memory_partition: EventMemoryPartition,
+        fake_segment_store_partition: InMemorySegmentStorePartition,
+    ):
+        """The component embedding the memory writes its own reserved keys."""
+        key = reserved_property_key("other", "field")
+        await event_memory_partition.encode_events(
+            [_make_event("hi", properties={key: "v"})]
         )
-        collection = InMemoryVectorStoreCollection(config)
+
+        segment = next(iter(fake_segment_store_partition.segments.values()))
+        assert segment.properties[key] == "v"
+
+    async def test_illegal_property_key_is_rejected(
+        self, event_memory_partition: EventMemoryPartition
+    ):
+        event = _make_event("hi", properties={"Color": "red"})
+        with pytest.raises(ValueError, match=r"\[a-z0-9_\]"):
+            await event_memory_partition.encode_events([event])
+
+    async def test_init_raises_on_missing_base_field(self, fake_embedder):
+        # A partition without the timestamp key — base field required at init.
+        store_schema = VectorStoreSchema(
+            vector_dimensions=fake_embedder.dimensions,
+            similarity_metric=SimilarityMetric.COSINE,
+            indexed_properties={},
+        )
+        vector_store_partition = InMemoryVectorStorePartition(store_schema=store_schema)
         partition = InMemorySegmentStorePartition()
         with pytest.raises(
             ValueError,
-            match="Collection schema missing fields required by EventMemory",
+            match="Vector store schema missing fields required by EventMemory",
         ):
-            EventMemory(
-                EventMemoryParams(
-                    vector_store_collection=collection,
-                    segment_store_partition=partition,
-                    segmenter=TextSegmenter(),
-                    embedder=fake_embedder,
-                    deriver=WholeTextDeriver(),
-                )
+            await create_event_memory_partition(
+                vector_store_partition=vector_store_partition,
+                store_schema=store_schema,
+                segment_store_partition=partition,
+                segmenter=TextSegmenter(),
+                embedder=fake_embedder,
+                deriver=WholeTextDeriver(),
             )
 
     async def test_empty_events(
         self,
-        event_memory: EventMemory,
+        event_memory_partition: EventMemoryPartition,
         fake_segment_store_partition: InMemorySegmentStorePartition,
-        fake_vector_store_collection: InMemoryVectorStoreCollection,
+        fake_vector_store_partition: InMemoryVectorStorePartition,
     ):
-        await event_memory.encode_events([])
+        await event_memory_partition.encode_events([])
         assert len(fake_segment_store_partition.segments) == 0
-        assert len(fake_vector_store_collection.records) == 0
+        assert len(fake_vector_store_partition.records) == 0
 
     async def test_derive_sentences(
         self,
-        event_memory_with_sentences: EventMemory,
-        fake_vector_store_collection: InMemoryVectorStoreCollection,
+        event_memory_partition_with_sentences: EventMemoryPartition,
+        fake_vector_store_partition: InMemoryVectorStorePartition,
         fake_segment_store_partition: InMemorySegmentStorePartition,
     ):
         event = _make_event("Hello there. How are you? I am fine.")
-        await event_memory_with_sentences.encode_events([event])
+        await event_memory_partition_with_sentences.encode_events([event])
 
         # One segment, but multiple derivatives (one per sentence).
         assert len(fake_segment_store_partition.segments) == 1
-        assert len(fake_vector_store_collection.records) > 1
+        assert len(fake_vector_store_partition.records) > 1
 
 
 # ===================================================================
@@ -296,12 +359,12 @@ class TestEncodeEvents:
 
 @_async
 class TestQuery:
-    async def test_basic_query(self, event_memory: EventMemory):
+    async def test_basic_query(self, event_memory_partition: EventMemoryPartition):
         e1 = _make_event("short", timestamp=_ts(0))
         e2 = _make_event("a longer sentence here", timestamp=_ts(1))
-        await event_memory.encode_events([e1, e2])
+        await event_memory_partition.encode_events([e1, e2])
 
-        result = await event_memory.query("test query")
+        result = await event_memory_partition.query("test query")
         assert isinstance(result, QueryResult)
         assert len(result.scored_segment_contexts) > 0
 
@@ -309,48 +372,52 @@ class TestQuery:
         for scored in result.scored_segment_contexts:
             assert len(scored.segments) > 0
 
-    async def test_vector_search_limit(self, event_memory: EventMemory):
+    async def test_vector_search_limit(
+        self, event_memory_partition: EventMemoryPartition
+    ):
         events = [_make_event(f"event {i}", timestamp=_ts(i)) for i in range(10)]
-        await event_memory.encode_events(events)
+        await event_memory_partition.encode_events(events)
 
-        result = await event_memory.query("test", vector_search_limit=2)
+        result = await event_memory_partition.query("test", vector_search_limit=2)
         assert len(result.scored_segment_contexts) <= 2
 
     async def test_expand_context(
         self,
-        event_memory: EventMemory,
+        event_memory_partition: EventMemoryPartition,
         fake_segment_store_partition: InMemorySegmentStorePartition,
     ):
         events = [_make_event(f"event {i}", timestamp=_ts(i)) for i in range(5)]
-        await event_memory.encode_events(events)
+        await event_memory_partition.encode_events(events)
 
-        result = await event_memory.query("test query", expand_context=3)
+        result = await event_memory_partition.query("test query", expand_context=3)
 
         # With expand_context=3, backward=1, forward=2.
         # Context windows should include neighbors.
         for scored in result.scored_segment_contexts:
             assert len(scored.segments) >= 1
 
-    async def test_empty_memory(self, event_memory: EventMemory):
-        result = await event_memory.query("anything")
+    async def test_empty_memory(self, event_memory_partition: EventMemoryPartition):
+        result = await event_memory_partition.query("anything")
         assert result.scored_segment_contexts == []
 
     async def test_without_reranker_uses_embedding_scores(
-        self, event_memory: EventMemory
+        self, event_memory_partition: EventMemoryPartition
     ):
-        await event_memory.encode_events([_make_event("hello")])
-        result = await event_memory.query("hello")
+        await event_memory_partition.encode_events([_make_event("hello")])
+        result = await event_memory_partition.query("hello")
 
         # FakeEmbedder: all vectors same direction → cosine ≈ 1.0.
         for scored in result.scored_segment_contexts:
             assert scored.score == pytest.approx(1.0, abs=0.01)
 
-    async def test_with_reranker(self, event_memory_with_reranker: EventMemory):
+    async def test_with_reranker(
+        self, event_memory_partition_with_reranker: EventMemoryPartition
+    ):
         e1 = _make_event("short", timestamp=_ts(0))
         e2 = _make_event("a much longer text", timestamp=_ts(1))
-        await event_memory_with_reranker.encode_events([e1, e2])
+        await event_memory_partition_with_reranker.encode_events([e1, e2])
 
-        result = await event_memory_with_reranker.query("anything")
+        result = await event_memory_partition_with_reranker.query("anything")
 
         # FakeReranker scores by string length (higher is better).
         # The result with the longer formatted context should come first.
@@ -369,41 +436,41 @@ class TestQuery:
 class TestForgetEvents:
     async def test_forget_basic(
         self,
-        event_memory: EventMemory,
+        event_memory_partition: EventMemoryPartition,
         fake_segment_store_partition: InMemorySegmentStorePartition,
-        fake_vector_store_collection: InMemoryVectorStoreCollection,
+        fake_vector_store_partition: InMemoryVectorStorePartition,
     ):
         e1 = _make_event("keep me", timestamp=_ts(0))
         e2 = _make_event("forget me", timestamp=_ts(1))
-        await event_memory.encode_events([e1, e2])
+        await event_memory_partition.encode_events([e1, e2])
 
         assert len(fake_segment_store_partition.segments) == 2
-        assert len(fake_vector_store_collection.records) == 2
+        assert len(fake_vector_store_partition.records) == 2
 
-        await event_memory.forget_events([e2.uuid])
+        await event_memory_partition.forget_events([e2.uuid])
 
         # Only e1's data remains.
         assert len(fake_segment_store_partition.segments) == 1
         remaining_segment = next(iter(fake_segment_store_partition.segments.values()))
         assert remaining_segment.event_uuid == e1.uuid
-        assert len(fake_vector_store_collection.records) == 1
+        assert len(fake_vector_store_partition.records) == 1
 
     async def test_forget_empty_set(
         self,
-        event_memory: EventMemory,
+        event_memory_partition: EventMemoryPartition,
         fake_segment_store_partition: InMemorySegmentStorePartition,
     ):
-        await event_memory.encode_events([_make_event("keep me")])
-        await event_memory.forget_events([])
+        await event_memory_partition.encode_events([_make_event("keep me")])
+        await event_memory_partition.forget_events([])
         assert len(fake_segment_store_partition.segments) == 1
 
     async def test_forget_nonexistent(
         self,
-        event_memory: EventMemory,
+        event_memory_partition: EventMemoryPartition,
         fake_segment_store_partition: InMemorySegmentStorePartition,
     ):
-        await event_memory.encode_events([_make_event("keep me")])
-        await event_memory.forget_events([uuid4()])
+        await event_memory_partition.encode_events([_make_event("keep me")])
+        await event_memory_partition.forget_events([uuid4()])
         assert len(fake_segment_store_partition.segments) == 1
 
 
@@ -586,7 +653,7 @@ class TestStringFromSegmentContext:
 @_async
 class TestRoundTrips:
     async def test_encode_then_query_returns_encoded_content(
-        self, event_memory: EventMemory
+        self, event_memory_partition: EventMemoryPartition
     ):
         """Encoded events should be retrievable through query."""
         e1 = _make_event(
@@ -599,9 +666,9 @@ class TestRoundTrips:
             context=ProducerContext(producer="Bob"),
             timestamp=_ts(1),
         )
-        await event_memory.encode_events([e1, e2])
+        await event_memory_partition.encode_events([e1, e2])
 
-        result = await event_memory.query("test query")
+        result = await event_memory_partition.query("test query")
         assert len(result.scored_segment_contexts) == 2
 
         # Verify the actual content is present in the returned segments.
@@ -614,29 +681,31 @@ class TestRoundTrips:
         assert "The quick brown fox" in all_texts
         assert "jumps over the lazy dog" in all_texts
 
-    async def test_encode_then_query_preserves_context(self, event_memory: EventMemory):
+    async def test_encode_then_query_preserves_context(
+        self, event_memory_partition: EventMemoryPartition
+    ):
         """Query results should carry the original context."""
         event = _make_event(
             "hello", context=ProducerContext(producer="Alice"), timestamp=_ts(0)
         )
-        await event_memory.encode_events([event])
+        await event_memory_partition.encode_events([event])
 
-        result = await event_memory.query("test")
+        result = await event_memory_partition.query("test")
         segment = result.scored_segment_contexts[0].segments[0]
         assert isinstance(segment.context, ProducerContext)
         assert segment.context.producer == "Alice"
 
     async def test_forget_then_query_excludes_forgotten(
-        self, event_memory: EventMemory
+        self, event_memory_partition: EventMemoryPartition
     ):
         """Forgotten events must not appear in query results."""
         e1 = _make_event("keep this one", timestamp=_ts(0))
         e2 = _make_event("forget this one", timestamp=_ts(1))
-        await event_memory.encode_events([e1, e2])
+        await event_memory_partition.encode_events([e1, e2])
 
-        await event_memory.forget_events([e2.uuid])
+        await event_memory_partition.forget_events([e2.uuid])
 
-        result = await event_memory.query("test query")
+        result = await event_memory_partition.query("test query")
         all_texts = {
             seg.block.text
             for scored in result.scored_segment_contexts
@@ -646,26 +715,30 @@ class TestRoundTrips:
         assert "keep this one" in all_texts
         assert "forget this one" not in all_texts
 
-    async def test_forget_all_then_query_returns_empty(self, event_memory: EventMemory):
+    async def test_forget_all_then_query_returns_empty(
+        self, event_memory_partition: EventMemoryPartition
+    ):
         """After forgetting all events, query should return nothing."""
         e1 = _make_event("first", timestamp=_ts(0))
         e2 = _make_event("second", timestamp=_ts(1))
-        await event_memory.encode_events([e1, e2])
+        await event_memory_partition.encode_events([e1, e2])
 
-        await event_memory.forget_events([e1.uuid, e2.uuid])
+        await event_memory_partition.forget_events([e1.uuid, e2.uuid])
 
-        result = await event_memory.query("test")
+        result = await event_memory_partition.query("test")
         assert result.scored_segment_contexts == []
 
-    async def test_multiple_encode_calls_are_additive(self, event_memory: EventMemory):
+    async def test_multiple_encode_calls_are_additive(
+        self, event_memory_partition: EventMemoryPartition
+    ):
         """Successive encode_events calls should accumulate data."""
         e1 = _make_event("batch one", timestamp=_ts(0))
         e2 = _make_event("batch two", timestamp=_ts(1))
 
-        await event_memory.encode_events([e1])
-        await event_memory.encode_events([e2])
+        await event_memory_partition.encode_events([e1])
+        await event_memory_partition.encode_events([e2])
 
-        result = await event_memory.query("test query")
+        result = await event_memory_partition.query("test query")
         all_texts = {
             seg.block.text
             for scored in result.scored_segment_contexts
@@ -675,12 +748,14 @@ class TestRoundTrips:
         assert "batch one" in all_texts
         assert "batch two" in all_texts
 
-    async def test_expand_context_includes_neighbors(self, event_memory: EventMemory):
+    async def test_expand_context_includes_neighbors(
+        self, event_memory_partition: EventMemoryPartition
+    ):
         """Query with expand_context should return neighboring segments."""
         events = [_make_event(f"event {i}", timestamp=_ts(i)) for i in range(5)]
-        await event_memory.encode_events(events)
+        await event_memory_partition.encode_events(events)
 
-        result = await event_memory.query(
+        result = await event_memory_partition.query(
             "test query", vector_search_limit=1, expand_context=6
         )
 
@@ -694,16 +769,18 @@ class TestRoundTrips:
         event_uuids = {seg.event_uuid for seg in context_segments}
         assert len(event_uuids) > 1
 
-    async def test_query_result_formatted_as_string(self, event_memory: EventMemory):
+    async def test_query_result_formatted_as_string(
+        self, event_memory_partition: EventMemoryPartition
+    ):
         """End-to-end: encode, query, format as string."""
         event = _make_event(
             "The mitochondria is the powerhouse of the cell.",
             context=ProducerContext(producer="textbook"),
             timestamp=_ts(0),
         )
-        await event_memory.encode_events([event])
+        await event_memory_partition.encode_events([event])
 
-        result = await event_memory.query("biology")
+        result = await event_memory_partition.query("biology")
         segments = EventMemory.build_query_result_context(result, max_num_segments=10)
         context_string = EventMemory.string_from_segment_context(segments)
 
@@ -718,13 +795,236 @@ class TestRoundTrips:
 
 @_async
 class TestQueryWithFilter:
-    async def test_equality_filter(self, event_memory: EventMemory):
+    async def test_an_undeclared_property_conjunct_reaches_only_the_segment_store(
+        self,
+        event_memory_partition: EventMemoryPartition,
+        fake_vector_store_partition: InMemoryVectorStorePartition,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """The vector store gets the conjuncts on declared fields; the segment store gets the whole filter."""
+        seen = _record_query_filters(fake_vector_store_partition, monkeypatch)
+        e1 = _make_event("red thing", properties={"color": "red", "episode_uid": "e1"})
+        e2 = _make_event(
+            "blue thing", properties={"color": "blue", "episode_uid": "e2"}
+        )
+        await event_memory_partition.encode_events([e1, e2])
+
+        result = await event_memory_partition.query(
+            "thing",
+            property_filter=And(
+                left=Comparison(field="m.color", op="=", value="red"),
+                right=Comparison(field="m.episode_uid", op="=", value="e1"),
+            ),
+        )
+
+        assert seen == [Comparison(field="episode_uid", op="=", value="e1")]
+        all_texts = {
+            seg.block.text
+            for scored in result.scored_segment_contexts
+            for seg in scored.segments
+            if isinstance(seg.block, TextBlock)
+        }
+        assert all_texts == {"red thing"}
+
+    async def test_a_timestamp_condition_reaches_the_vector_store_under_its_reserved_key(
+        self,
+        event_memory_partition: EventMemoryPartition,
+        fake_vector_store_partition: InMemoryVectorStorePartition,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """The vector search filters on the timestamp, which the record carries under its reserved key."""
+        seen = _record_query_filters(fake_vector_store_partition, monkeypatch)
+        await event_memory_partition.encode_events(
+            [
+                _make_event("early thing", timestamp=_ts(0)),
+                _make_event("late thing", timestamp=_ts(10)),
+            ]
+        )
+
+        result = await event_memory_partition.query(
+            "thing",
+            property_filter=Comparison(field="timestamp", op=">=", value=_ts(5)),
+        )
+
+        assert seen == [Comparison(field=EVENT_TIMESTAMP_KEY, op=">=", value=_ts(5))]
+        all_texts = {
+            seg.block.text
+            for scored in result.scored_segment_contexts
+            for seg in scored.segments
+            if isinstance(seg.block, TextBlock)
+        }
+        assert all_texts == {"late thing"}
+
+    async def test_an_undeclared_property_under_or_leaves_the_vector_search_unfiltered(
+        self,
+        event_memory_partition: EventMemoryPartition,
+        fake_vector_store_partition: InMemoryVectorStorePartition,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """An Or with an arm on undeclared fields alone leaves nothing for the vector store."""
+        seen = _record_query_filters(fake_vector_store_partition, monkeypatch)
+        await event_memory_partition.encode_events(
+            [_make_event("thing", timestamp=_ts(0))]
+        )
+
+        await event_memory_partition.query(
+            "thing",
+            property_filter=Or(
+                left=Comparison(field="m.color", op="=", value="red"),
+                right=Comparison(field="m.episode_uid", op="=", value="e1"),
+            ),
+        )
+
+        assert seen == [None]
+
+    @pytest.mark.parametrize(
+        ("property_filter", "vector_store_filter"),
+        [
+            pytest.param(
+                Or(
+                    left=And(
+                        left=Comparison(field="m.color", op="=", value="red"),
+                        right=Comparison(field="m.episode_uid", op="=", value="e1"),
+                    ),
+                    right=And(
+                        left=Comparison(field="m.color", op="=", value="blue"),
+                        right=Comparison(field="m.episode_uid", op="=", value="e2"),
+                    ),
+                ),
+                Or(
+                    left=Comparison(field="episode_uid", op="=", value="e1"),
+                    right=Comparison(field="episode_uid", op="=", value="e2"),
+                ),
+                id="each arm of an or",
+            ),
+            pytest.param(
+                Not(
+                    expr=Or(
+                        left=Comparison(field="m.color", op="=", value="red"),
+                        right=Comparison(field="m.episode_uid", op="=", value="e1"),
+                    )
+                ),
+                Not(expr=Comparison(field="episode_uid", op="=", value="e1")),
+                id="a negated or",
+            ),
+            pytest.param(
+                Not(
+                    expr=And(
+                        left=Comparison(field="m.color", op="=", value="red"),
+                        right=Comparison(field="m.episode_uid", op="=", value="e1"),
+                    )
+                ),
+                None,
+                id="a negated and",
+            ),
+            pytest.param(
+                Not(
+                    expr=Or(
+                        left=Comparison(field="m.color", op="=", value="red"),
+                        right=Not(
+                            expr=Comparison(field="m.episode_uid", op="=", value="e1")
+                        ),
+                    )
+                ),
+                Not(expr=Not(expr=Comparison(field="episode_uid", op="=", value="e1"))),
+                id="a negation under a negated or",
+            ),
+        ],
+    )
+    async def test_the_vector_store_gets_the_part_of_the_filter_on_declared_fields(
+        self,
+        event_memory_partition: EventMemoryPartition,
+        fake_vector_store_partition: InMemoryVectorStorePartition,
+        monkeypatch: pytest.MonkeyPatch,
+        property_filter: FilterExpr,
+        vector_store_filter: FilterExpr | None,
+    ):
+        """Every record matching the filter matches the part the vector store gets."""
+        seen = _record_query_filters(fake_vector_store_partition, monkeypatch)
+        await event_memory_partition.encode_events(
+            [_make_event("thing", timestamp=_ts(0))]
+        )
+
+        await event_memory_partition.query("thing", property_filter=property_filter)
+
+        assert seen == [vector_store_filter]
+
+    async def test_a_declared_user_property_reaches_the_vector_store(
+        self,
+        fake_embedder: FakeEmbedder,
+        fake_segment_store_partition: InMemorySegmentStorePartition,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """A user key the partition declares is on the record, and its condition reaches the search under its bare name."""
+        store_schema = VectorStoreSchema(
+            vector_dimensions=fake_embedder.dimensions,
+            similarity_metric=fake_embedder.similarity_metric,
+            indexed_properties={
+                **EventMemory.expected_vector_store_indexed_properties(),
+                "color": str,
+            },
+        )
+        vector_store_partition = InMemoryVectorStorePartition(store_schema=store_schema)
+        event_memory_partition = await create_event_memory_partition(
+            segment_store_partition=fake_segment_store_partition,
+            vector_store_partition=vector_store_partition,
+            store_schema=store_schema,
+            segmenter=TextSegmenter(),
+            deriver=WholeTextDeriver(),
+            embedder=fake_embedder,
+        )
+        seen = _record_query_filters(vector_store_partition, monkeypatch)
+        await event_memory_partition.encode_events(
+            [_make_event("red thing", properties={"color": "red", "size": 1})]
+        )
+
+        await event_memory_partition.query(
+            "thing",
+            property_filter=And(
+                left=Comparison(field="m.color", op="=", value="red"),
+                right=Comparison(field="m.size", op="=", value=1),
+            ),
+        )
+
+        record = next(iter(vector_store_partition.records.values()))
+        assert _record_properties(record)["color"] == "red"
+        assert "size" not in _record_properties(record)
+        assert seen == [Comparison(field="color", op="=", value="red")]
+
+    async def test_a_seed_the_filter_rejects_is_left_out_though_its_context_matches(
+        self,
+        event_memory_partition: EventMemoryPartition,
+        fake_segment_store_partition: InMemorySegmentStorePartition,
+    ):
+        await event_memory_partition.encode_events(
+            [
+                _make_event(
+                    "blue thing", timestamp=_ts(0), properties={"color": "blue"}
+                ),
+                _make_event("red thing", timestamp=_ts(1), properties={"color": "red"}),
+            ]
+        )
+
+        result = await event_memory_partition.query(
+            "thing",
+            vector_search_limit=2,
+            expand_context=1,
+            property_filter=Comparison(field="m.color", op="=", value="red"),
+        )
+
+        seed_blocks = [
+            fake_segment_store_partition.segments[scored.seed_segment_uuid].block
+            for scored in result.scored_segment_contexts
+        ]
+        assert seed_blocks == [TextBlock(text="red thing")]
+
+    async def test_equality_filter(self, event_memory_partition: EventMemoryPartition):
         """Filter by user property equality."""
         e1 = _make_event("red thing", timestamp=_ts(0), properties={"color": "red"})
         e2 = _make_event("blue thing", timestamp=_ts(1), properties={"color": "blue"})
-        await event_memory.encode_events([e1, e2])
+        await event_memory_partition.encode_events([e1, e2])
 
-        result = await event_memory.query(
+        result = await event_memory_partition.query(
             "thing",
             property_filter=Comparison(field="m.color", op="=", value="red"),
         )
@@ -737,13 +1037,15 @@ class TestQueryWithFilter:
         assert "red thing" in all_texts
         assert "blue thing" not in all_texts
 
-    async def test_inequality_filter(self, event_memory: EventMemory):
+    async def test_inequality_filter(
+        self, event_memory_partition: EventMemoryPartition
+    ):
         """Filter by != excludes matching events."""
         e1 = _make_event("red thing", timestamp=_ts(0), properties={"color": "red"})
         e2 = _make_event("blue thing", timestamp=_ts(1), properties={"color": "blue"})
-        await event_memory.encode_events([e1, e2])
+        await event_memory_partition.encode_events([e1, e2])
 
-        result = await event_memory.query(
+        result = await event_memory_partition.query(
             "thing",
             property_filter=Comparison(field="m.color", op="!=", value="red"),
         )
@@ -756,14 +1058,14 @@ class TestQueryWithFilter:
         assert "blue thing" in all_texts
         assert "red thing" not in all_texts
 
-    async def test_in_filter(self, event_memory: EventMemory):
+    async def test_in_filter(self, event_memory_partition: EventMemoryPartition):
         """Filter by IN membership."""
         e1 = _make_event("red thing", timestamp=_ts(0), properties={"color": "red"})
         e2 = _make_event("blue thing", timestamp=_ts(1), properties={"color": "blue"})
         e3 = _make_event("green thing", timestamp=_ts(2), properties={"color": "green"})
-        await event_memory.encode_events([e1, e2, e3])
+        await event_memory_partition.encode_events([e1, e2, e3])
 
-        result = await event_memory.query(
+        result = await event_memory_partition.query(
             "thing",
             property_filter=In(field="m.color", values=["red", "green"]),
         )
@@ -777,13 +1079,13 @@ class TestQueryWithFilter:
         assert "green thing" in all_texts
         assert "blue thing" not in all_texts
 
-    async def test_is_null_filter(self, event_memory: EventMemory):
+    async def test_is_null_filter(self, event_memory_partition: EventMemoryPartition):
         """Filter by IS NULL matches events missing the property."""
         e1 = _make_event("has color", timestamp=_ts(0), properties={"color": "red"})
         e2 = _make_event("no color", timestamp=_ts(1))
-        await event_memory.encode_events([e1, e2])
+        await event_memory_partition.encode_events([e1, e2])
 
-        result = await event_memory.query(
+        result = await event_memory_partition.query(
             "thing",
             property_filter=IsNull(field="m.color"),
         )
@@ -796,13 +1098,13 @@ class TestQueryWithFilter:
         assert "no color" in all_texts
         assert "has color" not in all_texts
 
-    async def test_and_filter(self, event_memory: EventMemory):
+    async def test_and_filter(self, event_memory_partition: EventMemoryPartition):
         """Filter by AND conjunction."""
         e1 = _make_event("red small", timestamp=_ts(0), properties={"color": "red"})
         e2 = _make_event("blue small", timestamp=_ts(1), properties={"color": "blue"})
-        await event_memory.encode_events([e1, e2])
+        await event_memory_partition.encode_events([e1, e2])
 
-        result = await event_memory.query(
+        result = await event_memory_partition.query(
             "thing",
             property_filter=And(
                 left=Comparison(field="m.color", op="=", value="red"),
@@ -818,14 +1120,14 @@ class TestQueryWithFilter:
         assert "red small" in all_texts
         assert "blue small" not in all_texts
 
-    async def test_or_filter(self, event_memory: EventMemory):
+    async def test_or_filter(self, event_memory_partition: EventMemoryPartition):
         """Filter by OR disjunction."""
         e1 = _make_event("red thing", timestamp=_ts(0), properties={"color": "red"})
         e2 = _make_event("blue thing", timestamp=_ts(1), properties={"color": "blue"})
         e3 = _make_event("green thing", timestamp=_ts(2), properties={"color": "green"})
-        await event_memory.encode_events([e1, e2, e3])
+        await event_memory_partition.encode_events([e1, e2, e3])
 
-        result = await event_memory.query(
+        result = await event_memory_partition.query(
             "thing",
             property_filter=Or(
                 left=Comparison(field="m.color", op="=", value="red"),
@@ -842,13 +1144,13 @@ class TestQueryWithFilter:
         assert "blue thing" in all_texts
         assert "green thing" not in all_texts
 
-    async def test_not_filter(self, event_memory: EventMemory):
+    async def test_not_filter(self, event_memory_partition: EventMemoryPartition):
         """Filter by NOT negation."""
         e1 = _make_event("red thing", timestamp=_ts(0), properties={"color": "red"})
         e2 = _make_event("blue thing", timestamp=_ts(1), properties={"color": "blue"})
-        await event_memory.encode_events([e1, e2])
+        await event_memory_partition.encode_events([e1, e2])
 
-        result = await event_memory.query(
+        result = await event_memory_partition.query(
             "thing",
             property_filter=Not(expr=Comparison(field="m.color", op="=", value="red")),
         )
@@ -862,32 +1164,235 @@ class TestQueryWithFilter:
         assert "red thing" not in all_texts
 
     async def test_filter_returns_empty_when_nothing_matches(
-        self, event_memory: EventMemory
+        self, event_memory_partition: EventMemoryPartition
     ):
         """Filter that matches nothing returns empty results."""
         e1 = _make_event("red thing", timestamp=_ts(0), properties={"color": "red"})
-        await event_memory.encode_events([e1])
+        await event_memory_partition.encode_events([e1])
 
-        result = await event_memory.query(
+        result = await event_memory_partition.query(
             "thing",
             property_filter=Comparison(field="m.color", op="=", value="purple"),
         )
         assert result.scored_segment_contexts == []
 
-    async def test_context_filter_returns_no_results(self, event_memory: EventMemory):
-        """Context fields are no longer filterable."""
-        event = _make_event("hi", context=ProducerContext(producer="Alice"))
-        await event_memory.encode_events([event])
 
-        result = await event_memory.query(
-            "hi",
-            property_filter=Comparison(
-                field="context.producer",
-                op="=",
-                value="Alice",
-            ),
+# ===================================================================
+# Queries with and without the vector store's part of the filter
+# ===================================================================
+
+_FIELDS_ON_THE_RECORD = ("m.d1", "m.d2", "m.d3")
+_FIELDS_ON_THE_SEGMENT_ONLY = ("m.u1", "m.u2")
+
+
+@pytest_asyncio.fixture
+async def declaring_event_memory_partition(
+    fake_embedder, fake_segment_store_partition
+) -> EventMemoryPartition:
+    """Event memory whose vector store declares `d1`, `d2`, and `d3` but not `u1` or `u2`."""
+    store_schema = VectorStoreSchema(
+        vector_dimensions=fake_embedder.dimensions,
+        similarity_metric=fake_embedder.similarity_metric,
+        indexed_properties={
+            **EventMemory.expected_vector_store_indexed_properties(),
+            "d1": int,
+            "d2": int,
+            "d3": int,
+        },
+    )
+    vector_store_partition = InMemoryVectorStorePartition(store_schema=store_schema)
+    return await create_event_memory_partition(
+        segment_store_partition=fake_segment_store_partition,
+        vector_store_partition=vector_store_partition,
+        store_schema=store_schema,
+        segmenter=TextSegmenter(),
+        deriver=WholeTextDeriver(),
+        embedder=fake_embedder,
+    )
+
+
+async def _encode_random_events(
+    event_memory_partition: EventMemoryPartition, rng: random.Random, count: int
+) -> dict[str, dict[str, PropertyValue]]:
+    """Encode `count` events with random properties; their properties by text."""
+    properties_by_text = {
+        f"event {index}": random_properties(rng, ("d1", "d2", "d3", "u1", "u2"))
+        for index in range(count)
+    }
+    await event_memory_partition.encode_events(
+        [
+            _make_event(text, timestamp=_ts(index), properties=properties)
+            for index, (text, properties) in enumerate(properties_by_text.items())
+        ]
+    )
+    return properties_by_text
+
+
+async def _query_texts(
+    event_memory_partition: EventMemoryPartition,
+    property_filter: FilterExpr,
+    limit: int,
+    query: str = "event",
+) -> set[str]:
+    result = await event_memory_partition.query(
+        query, vector_search_limit=limit, property_filter=property_filter
+    )
+    return {
+        segment.block.text
+        for scored in result.scored_segment_contexts
+        for segment in scored.segments
+        if isinstance(segment.block, TextBlock)
+    }
+
+
+def _without_the_part(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Give the vector store no filter at all."""
+    monkeypatch.setattr(
+        "memmachine_server.episodic_memory.event_memory.event_memory.extract_filter",
+        lambda expr, *, allowed_fields: None,
+    )
+
+
+@_async
+class TestQueryWithAndWithoutThePart:
+    async def test_both_answer_the_filter_when_the_search_reaches_every_record(
+        self,
+        declaring_event_memory_partition: EventMemoryPartition,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        rng = random.Random(1705)
+        properties_by_text = await _encode_random_events(
+            declaring_event_memory_partition, rng, 24
         )
-        assert result.scored_segment_contexts == []
+        fields = (*_FIELDS_ON_THE_RECORD, *_FIELDS_ON_THE_SEGMENT_ONLY)
+        for _ in range(300):
+            property_filter = random_filter(rng, fields, depth=4)
+            with_part = await _query_texts(
+                declaring_event_memory_partition, property_filter, limit=24
+            )
+            with monkeypatch.context() as patch:
+                _without_the_part(patch)
+                without_part = await _query_texts(
+                    declaring_event_memory_partition, property_filter, limit=24
+                )
+            segment_filter = map_filter_fields(
+                property_filter, InMemorySegmentStorePartition._normalize_segment_field
+            )
+            expected = {
+                text
+                for text, properties in properties_by_text.items()
+                if evaluate_filter(segment_filter, properties)
+            }
+            assert with_part == without_part == expected, property_filter
+
+    async def test_the_part_only_adds_hits_when_the_search_reaches_fewer_records(
+        self,
+        declaring_event_memory_partition: EventMemoryPartition,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        rng = random.Random(1706)
+        await _encode_random_events(declaring_event_memory_partition, rng, 24)
+        fields = (*_FIELDS_ON_THE_RECORD, *_FIELDS_ON_THE_SEGMENT_ONLY)
+        for _ in range(300):
+            property_filter = random_filter(rng, fields, depth=4)
+            with_part = await _query_texts(
+                declaring_event_memory_partition, property_filter, limit=4
+            )
+            with monkeypatch.context() as patch:
+                _without_the_part(patch)
+                without_part = await _query_texts(
+                    declaring_event_memory_partition, property_filter, limit=4
+                )
+            assert with_part >= without_part, property_filter
+
+
+class _ColorEmbedder(Embedder):
+    """Embeds a text by how often it says blue and red, so the two rank apart."""
+
+    async def _ingest_embed(
+        self, inputs: list[Any], max_attempts: int = 1
+    ) -> list[list[float]]:
+        return [self._embed(str(text)) for text in inputs]
+
+    async def _search_embed(
+        self, queries: list[Any], max_attempts: int = 1
+    ) -> list[list[float]]:
+        return [self._embed(str(query)) for query in queries]
+
+    @staticmethod
+    def _embed(text: str) -> list[float]:
+        return [float(text.count("blue")), float(text.count("red"))]
+
+    @property
+    def model_id(self) -> str:
+        return "color-model"
+
+    @property
+    def dimensions(self) -> int:
+        return 2
+
+    @property
+    def similarity_metric(self) -> SimilarityMetric:
+        return SimilarityMetric.COSINE
+
+
+@_async
+class TestQueryWithAConditionOnAnUndeclaredField:
+    async def test_the_condition_applies_to_the_seeds_the_search_returns(
+        self,
+        fake_store_schema: VectorStoreSchema,
+        fake_vector_store_partition: InMemoryVectorStorePartition,
+        fake_segment_store_partition: InMemorySegmentStorePartition,
+    ):
+        """A seed the search ranks below the limit is not found, unless the condition is on a declared field."""
+        event_memory_partition = await create_event_memory_partition(
+            segment_store_partition=fake_segment_store_partition,
+            vector_store_partition=fake_vector_store_partition,
+            store_schema=fake_store_schema,
+            segmenter=TextSegmenter(),
+            deriver=WholeTextDeriver(),
+            embedder=_ColorEmbedder(),
+        )
+        await event_memory_partition.encode_events(
+            [
+                *(
+                    _make_event(
+                        f"blue thing {index}",
+                        timestamp=_ts(index),
+                        properties={"color": "blue", "episode_uid": f"blue-{index}"},
+                    )
+                    for index in range(10)
+                ),
+                _make_event(
+                    "red thing",
+                    timestamp=_ts(10),
+                    properties={"color": "red", "episode_uid": "red"},
+                ),
+            ]
+        )
+
+        on_the_segment_only = await _query_texts(
+            event_memory_partition,
+            Comparison(field="m.color", op="=", value="red"),
+            limit=3,
+            query="blue thing",
+        )
+        on_the_segment_only_with_every_seed = await _query_texts(
+            event_memory_partition,
+            Comparison(field="m.color", op="=", value="red"),
+            limit=11,
+            query="blue thing",
+        )
+        on_the_record = await _query_texts(
+            event_memory_partition,
+            Comparison(field="m.episode_uid", op="=", value="red"),
+            limit=3,
+            query="blue thing",
+        )
+
+        assert on_the_segment_only == set()
+        assert on_the_segment_only_with_every_seed == {"red thing"}
+        assert on_the_record == {"red thing"}
 
 
 # ===================================================================
@@ -899,16 +1404,16 @@ class TestQueryWithFilter:
 class TestQueryDeduplication:
     async def test_multiple_derivatives_deduplicate_to_one_segment(
         self,
-        event_memory_with_sentences: EventMemory,
+        event_memory_partition_with_sentences: EventMemoryPartition,
     ):
         """Multiple derivatives from the same segment should produce one scored context."""
         event = _make_event(
             "First sentence. Second sentence. Third sentence.",
             timestamp=_ts(0),
         )
-        await event_memory_with_sentences.encode_events([event])
+        await event_memory_partition_with_sentences.encode_events([event])
 
-        result = await event_memory_with_sentences.query("sentence")
+        result = await event_memory_partition_with_sentences.query("sentence")
 
         # All derivatives map to the same segment, so deduplication
         # should collapse them into a single scored context.
@@ -917,7 +1422,7 @@ class TestQueryDeduplication:
 
     async def test_derivatives_from_different_segments_not_collapsed(
         self,
-        event_memory_with_sentences: EventMemory,
+        event_memory_partition_with_sentences: EventMemoryPartition,
     ):
         """Derivatives from different segments should remain separate scored contexts."""
         e1 = _make_event(
@@ -928,25 +1433,25 @@ class TestQueryDeduplication:
             "Gamma sentence. Delta sentence.",
             timestamp=_ts(1),
         )
-        await event_memory_with_sentences.encode_events([e1, e2])
+        await event_memory_partition_with_sentences.encode_events([e1, e2])
 
-        result = await event_memory_with_sentences.query("sentence")
+        result = await event_memory_partition_with_sentences.query("sentence")
 
         # Two events → two segments → two scored contexts.
         assert len(result.scored_segment_contexts) == 2
 
     async def test_dedup_uses_best_derivative_score(
         self,
-        event_memory_with_sentences: EventMemory,
+        event_memory_partition_with_sentences: EventMemoryPartition,
     ):
         """When multiple derivatives map to one segment, the best score wins."""
         event = _make_event(
             "Short. A much longer second sentence here.",
             timestamp=_ts(0),
         )
-        await event_memory_with_sentences.encode_events([event])
+        await event_memory_partition_with_sentences.encode_events([event])
 
-        result = await event_memory_with_sentences.query("test")
+        result = await event_memory_partition_with_sentences.query("test")
 
         # Cosine sim ≈ 1.0 for all (FakeEmbedder), but the key point
         # is that we get exactly one context with a valid score.
@@ -974,29 +1479,27 @@ class _RecordingEmbedder(FakeEmbedder):
 @_async
 class TestIngestFormatOptions:
     @staticmethod
-    def _build(embedder: FakeEmbedder) -> EventMemory:
-        config = VectorStoreCollectionConfig(
+    async def _build(embedder: FakeEmbedder) -> EventMemoryPartition:
+        store_schema = VectorStoreSchema(
             vector_dimensions=embedder.dimensions,
             similarity_metric=embedder.similarity_metric,
-            indexed_properties_schema=(
-                EventMemory.expected_vector_store_collection_schema()
-            ),
+            indexed_properties=EventMemory.expected_vector_store_indexed_properties(),
         )
-        return EventMemory(
-            EventMemoryParams(
-                segment_store_partition=InMemorySegmentStorePartition(),
-                vector_store_collection=InMemoryVectorStoreCollection(config),
-                segmenter=TextSegmenter(),
-                deriver=WholeTextDeriver(),
-                embedder=embedder,
-            )
+        vector_store_partition = InMemoryVectorStorePartition(store_schema=store_schema)
+        return await create_event_memory_partition(
+            segment_store_partition=InMemorySegmentStorePartition(),
+            vector_store_partition=vector_store_partition,
+            store_schema=store_schema,
+            segmenter=TextSegmenter(),
+            deriver=WholeTextDeriver(),
+            embedder=embedder,
         )
 
     async def test_default_bakes_full_date_into_embedding(self):
         embedder = _RecordingEmbedder()
-        event_memory = self._build(embedder)
+        event_memory_partition = await self._build(embedder)
 
-        await event_memory.encode_events([_make_event("hello world")])
+        await event_memory_partition.encode_events([_make_event("hello world")])
 
         # _T0 is 2025-06-01; the ingest default is a full date with no time,
         # and the message text is JSON-dumped (ensure_ascii=False).
@@ -1004,9 +1507,9 @@ class TestIngestFormatOptions:
 
     async def test_format_options_can_disable_timestamp(self):
         embedder = _RecordingEmbedder()
-        event_memory = self._build(embedder)
+        event_memory_partition = await self._build(embedder)
 
-        await event_memory.encode_events(
+        await event_memory_partition.encode_events(
             [_make_event("hello world")],
             format_options=FormatOptions(date_style=None, time_style=None),
         )
@@ -1017,24 +1520,22 @@ class TestIngestFormatOptions:
         """The baked timestamp lives only in the embedding, not the segment."""
         embedder = _RecordingEmbedder()
         partition = InMemorySegmentStorePartition()
-        config = VectorStoreCollectionConfig(
+        store_schema = VectorStoreSchema(
             vector_dimensions=embedder.dimensions,
             similarity_metric=embedder.similarity_metric,
-            indexed_properties_schema=(
-                EventMemory.expected_vector_store_collection_schema()
-            ),
+            indexed_properties=EventMemory.expected_vector_store_indexed_properties(),
         )
-        event_memory = EventMemory(
-            EventMemoryParams(
-                segment_store_partition=partition,
-                vector_store_collection=InMemoryVectorStoreCollection(config),
-                segmenter=TextSegmenter(),
-                deriver=WholeTextDeriver(),
-                embedder=embedder,
-            )
+        vector_store_partition = InMemoryVectorStorePartition(store_schema=store_schema)
+        event_memory_partition = await create_event_memory_partition(
+            segment_store_partition=partition,
+            vector_store_partition=vector_store_partition,
+            store_schema=store_schema,
+            segmenter=TextSegmenter(),
+            deriver=WholeTextDeriver(),
+            embedder=embedder,
         )
 
-        await event_memory.encode_events([_make_event("hello world")])
+        await event_memory_partition.encode_events([_make_event("hello world")])
 
         (segment,) = partition.segments.values()
         assert segment.block == TextBlock(text="hello world")

@@ -32,8 +32,7 @@ episodic_memory:
     reranker: my_reranker_id          # optional; omit to order by embedding score
     vector_store: event_vector_store  # Qdrant, below
     segment_store: profile_storage    # a relational DB; the segment store is built from it
-    # properties_schema:              # optional — user-defined filterable properties
-    #   source_role: str
+    partition_registry: profile_storage  # a relational DB holding the registry of event memory's partitions
     # segmenter:                      # optional — defaults to passthrough
     #   type: passthrough             # or: text (with max_chunk_length)
     # deriver:                        # optional — defaults to whole_text
@@ -62,8 +61,9 @@ prompt:
 
 resources:
   databases:
-    # Relational store: episodes, sessions, semantic memory, and the segment
-    # store for the event backend. `postgres` is the compose service name.
+    # Relational store: episodes, sessions, semantic memory, and the event
+    # backend's segment store and partition registry. `postgres` is the
+    # compose service name.
     profile_storage:
       provider: postgres
       config:

@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 import yaml
-from pydantic import SecretStr
+from pydantic import SecretStr, ValidationError
 
 from memmachine_server.common.configuration import (
     Configuration,
@@ -83,7 +83,7 @@ def test_update_episodic_memory_conf(
     )
 
     updated = specific.merge(base)
-    assert updated.long_term_memory is not None
+    assert isinstance(updated.long_term_memory, DeclarativeLongTermMemoryConf)
     assert updated.short_term_memory is not None
     assert updated.long_term_memory.embedder == "embedder_v2"
     assert updated.long_term_memory.reranker == "reranker_v1"
@@ -268,6 +268,7 @@ def test_old_param_data_without_backend_loads_as_declarative():
 
 
 def test_episodic_memory_conf_with_explicit_event_backend_loads_as_event():
+    """A saved event session loads without the stores and embedder it once recorded."""
     data = {
         "session_key": "s",
         "long_term_memory": {
@@ -282,8 +283,9 @@ def test_episodic_memory_conf_with_explicit_event_backend_loads_as_event():
 
     conf = EpisodicMemoryConf.model_validate(data)
     assert isinstance(conf.long_term_memory, EventLongTermMemoryConf)
-    assert conf.long_term_memory.vector_store == "vstore"
-    assert conf.long_term_memory.segment_store == "pg_engine"
+    assert not {"vector_store", "segment_store", "embedder"} & set(
+        conf.long_term_memory.model_dump()
+    )
     # Default sub-configs.
     assert isinstance(conf.long_term_memory.segmenter, PassthroughSegmenterConf)
     assert isinstance(conf.long_term_memory.deriver, WholeTextDeriverConf)
@@ -338,9 +340,7 @@ def test_partial_merge_with_event_backend_resolves_to_event():
 
     merged = override.merge(base)
     assert isinstance(merged, EventLongTermMemoryConf)
-    assert merged.vector_store == "v"
-    assert merged.segment_store == "seg"
-    assert merged.embedder == "e"
+    assert merged.session_id == "s"
     assert merged.reranker is None
 
 
@@ -455,3 +455,77 @@ def test_bare_disabled_semantic_memory_round_trips_through_yaml():
     assert dumped["semantic_memory"]["enabled"] is False
     assert "config_database" not in dumped["semantic_memory"]
     assert conf_cp.semantic_memory.enabled is False
+
+
+def test_empty_openai_key_disables_semantic_memory_but_keeps_its_storage():
+    data = _sample_config_data()
+    embedder = data["resources"]["embedders"]["openai_embedder"]["config"]
+    embedder["api_key"] = ""
+    embedder.pop("base_url")
+
+    conf = Configuration(**data)
+
+    assert conf.semantic_memory.enabled is False
+    assert conf.semantic_memory.storage_configured() is True
+
+
+@pytest.mark.parametrize("tombstone_retention_seconds", [0, 1.5])
+def test_a_tombstone_retention_that_is_not_a_positive_whole_number_of_seconds_is_refused(
+    tombstone_retention_seconds: float,
+):
+    with pytest.raises(ValidationError, match="tombstone_retention_seconds"):
+        LongTermMemoryConfPartial.model_validate(
+            {"tombstone_retention_seconds": tombstone_retention_seconds}
+        )
+
+
+@pytest.mark.parametrize("provider", ["qdrant", "milvus"])
+@pytest.mark.parametrize("request_timeout_seconds", [30, 90])
+@pytest.mark.parametrize("accepted", [True, False], ids=["at_floor", "below_floor"])
+def test_event_memory_retention_has_a_floor_set_by_its_remote_vector_stores_timeout(
+    provider: str, request_timeout_seconds: int, accepted: bool
+):
+    """The floor is 10 x the request timeout + 300 seconds."""
+    floor = 10 * request_timeout_seconds + 300
+    data = _event_memory_config_data(
+        {
+            "provider": provider,
+            "config": {"request_timeout_seconds": request_timeout_seconds},
+        },
+        floor if accepted else floor - 1,
+    )
+
+    if accepted:
+        Configuration(**data)
+    else:
+        with pytest.raises(ValueError, match="tombstone_retention_seconds"):
+            Configuration(**data)
+
+
+def test_event_memory_retention_below_the_remote_floor_is_accepted_on_a_sqlite_vector_store():
+    """A SQLite vector store sets no floor."""
+    data = _event_memory_config_data(
+        {"provider": "sqlite_vector_store", "config": {"path": "event_vectors.db"}}, 1
+    )
+
+    conf = Configuration(**data)
+
+    assert conf.episodic_memory.long_term_memory is not None
+    assert conf.episodic_memory.long_term_memory.tombstone_retention_seconds == 1
+
+
+def _event_memory_config_data(
+    vector_store: dict, tombstone_retention_seconds: int
+) -> dict:
+    """The sample configuration with event memory on `vector_store`, keeping deleted partitions for `tombstone_retention_seconds`."""
+    data = _sample_config_data()
+    data["resources"]["databases"]["event_vector_store"] = vector_store
+    data["episodic_memory"]["long_term_memory"] = {
+        "backend": "event",
+        "embedder": "openai_embedder",
+        "vector_store": "event_vector_store",
+        "segment_store": "profile_storage",
+        "partition_registry": "profile_storage",
+        "tombstone_retention_seconds": tombstone_retention_seconds,
+    }
+    return data

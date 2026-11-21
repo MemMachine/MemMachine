@@ -3,6 +3,7 @@
 import asyncio
 import logging
 from asyncio import Lock
+from collections.abc import Iterable
 
 from neo4j import AsyncDriver
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -18,7 +19,16 @@ from memmachine_server.common.episode_store.episode_sqlalchemy_store import (
     SqlAlchemyEpisodeStore,
 )
 from memmachine_server.common.language_model import LanguageModel
-from memmachine_server.common.metrics_factory import MetricsFactory
+from memmachine_server.common.metrics_factory import MetricsFactory, OperationTracker
+from memmachine_server.common.partition_registry import (
+    PartitionedStore,
+    PartitionManager,
+    PartitionRegistry,
+)
+from memmachine_server.common.partition_registry.sqlalchemy_partition_registry import (
+    SQLAlchemyPartitionRegistry,
+    SQLAlchemyPartitionRegistryParams,
+)
 from memmachine_server.common.reranker import Reranker
 from memmachine_server.common.resource_manager.database_manager import DatabaseManager
 from memmachine_server.common.resource_manager.embedder_manager import EmbedderManager
@@ -37,7 +47,7 @@ from memmachine_server.common.session_manager.session_data_manager_sql_impl impo
 )
 from memmachine_server.common.sql_lease_lock import SQLLeaseLockService
 from memmachine_server.common.vector_graph_store import VectorGraphStore
-from memmachine_server.common.vector_store import VectorStore
+from memmachine_server.common.vector_store import VectorStore, VectorStoreSchema
 from memmachine_server.episodic_memory.episodic_memory_manager import (
     EpisodicMemoryManager,
     EpisodicMemoryManagerParams,
@@ -53,42 +63,38 @@ from memmachine_server.semantic_memory.semantic_memory import SemanticService
 from memmachine_server.semantic_memory.semantic_session_manager import (
     SemanticSessionManager,
 )
+from memmachine_server.semantic_memory.storage.storage_base import SemanticStorage
 
 logger = logging.getLogger(__name__)
 
-_SEGMENT_STORE_PURGE_INTERVAL_SECONDS = 60.0
-_SEGMENT_STORE_PURGE_BUSY_PAUSE_SECONDS = 1.0
+_PARTITION_REGISTRY_PURGE_PAUSE_SECONDS = 1.0
 
 
-async def _purge_deleted_partitions_forever(store: SegmentStore) -> None:
-    """Drive the store's bounded purge, paced by its backlog signal.
+async def _run_purge_rounds_forever(
+    partition_manager: PartitionManager,
+    partition_namespace: str,
+) -> None:
+    """Run a partition namespace's purge rounds for as long as the task runs.
 
-    The store never schedules reclamation itself; this loop is the
-    deployment's scheduler. Each call is bounded, and a True return
-    means more work remains, so a backlog drains at one bounded call
-    per short pause -- the pause yields the database (and SQLite's
-    single write lock) to request serving between calls -- while an
-    idle store costs one call per tick. A failed call is logged and
-    retried a tick later, and concurrent purgers are safe by the
-    store's contract.
+    The next call follows a short pause, whether the call ran a round, found
+    none due, or raised; a raise is logged. A tombstone whose round failed
+    backs off on its own, so the next call moves on to another. Sweepers in
+    other processes may run the same namespace's purge rounds at the same
+    time.
 
-    A module-level coroutine on purpose: the event loop keeps a pending
-    task alive while it sleeps, so the task pins whatever its frame
-    references. Referencing only the store lets a manager dropped
-    without close() be collected instead of pinned, with its loop
-    querying the engine, for the process lifetime.
+    A module-level coroutine on purpose: the event loop keeps a pending task
+    alive while it sleeps, so the task pins whatever its frame references.
+    Referencing only the partition manager and the namespace lets a
+    resource manager dropped without close() be collected instead of pinned.
     """
     while True:
         try:
-            more = await store.purge_deleted_partitions()
+            await partition_manager.run_purge_round()
         except Exception:
-            logger.exception("Segment store purge failed; retrying next tick")
-            more = False
-        await asyncio.sleep(
-            _SEGMENT_STORE_PURGE_BUSY_PAUSE_SECONDS
-            if more
-            else _SEGMENT_STORE_PURGE_INTERVAL_SECONDS
-        )
+            logger.exception(
+                "Purge round of partition namespace %r failed", partition_namespace
+            )
+        await asyncio.sleep(_PARTITION_REGISTRY_PURGE_PAUSE_SECONDS)
 
 
 class ResourceManagerImpl:
@@ -119,7 +125,10 @@ class ResourceManagerImpl:
         self._episode_storage: EpisodeStorage | None = None
         self._semantic_manager: SemanticResourceManager | None = None
         self._segment_stores: dict[str, SegmentStore] = {}
-        self._segment_store_purge_tasks: list[asyncio.Task[None]] = []
+        # The (database, partition namespace) pairs whose registry is started
+        # and purging.
+        self._started_partition_namespaces: set[tuple[str, str]] = set()
+        self._partition_registry_purge_tasks: list[asyncio.Task[None]] = []
 
         self._session_data_manager_lock = Lock()
         self._sql_lock_service_lock = Lock()
@@ -127,6 +136,7 @@ class ResourceManagerImpl:
         self._episode_storage_lock = Lock()
         self._semantic_manager_lock = Lock()
         self._segment_store_lock = Lock()
+        self._partition_registry_lock = Lock()
 
     async def build(self) -> None:
         """Build all configured resources in parallel."""
@@ -143,8 +153,9 @@ class ResourceManagerImpl:
 
     async def close(self) -> None:
         """Close resources and clean up state."""
-        purge_tasks = list(self._segment_store_purge_tasks)
-        self._segment_store_purge_tasks.clear()
+        purge_tasks = list(self._partition_registry_purge_tasks)
+        self._partition_registry_purge_tasks.clear()
+        self._started_partition_namespaces.clear()
         segment_stores = list(self._segment_stores.values())
         self._segment_stores.clear()
 
@@ -178,9 +189,19 @@ class ResourceManagerImpl:
         """Return a vector graph store by name."""
         return await self._database_manager.get_vector_graph_store(name)
 
-    async def get_vector_store(self, name: str) -> VectorStore:
-        """Return a vector store by name."""
-        return await self._database_manager.get_vector_store(name)
+    async def get_vector_store(
+        self,
+        vector_store_id: str,
+        *,
+        vector_store_name: str,
+        store_schema: VectorStoreSchema,
+    ) -> VectorStore:
+        """Return the store of one name on a configured vector store."""
+        return await self._database_manager.get_vector_store(
+            vector_store_id,
+            vector_store_name=vector_store_name,
+            store_schema=store_schema,
+        )
 
     async def get_segment_store(self, name: str) -> SegmentStore:
         """Return a segment store by name, constructing it on first access."""
@@ -200,10 +221,54 @@ class ResourceManagerImpl:
                     )
                     await store.startup()
                     self._segment_stores[name] = store
-                    self._segment_store_purge_tasks.append(
-                        asyncio.create_task(_purge_deleted_partitions_forever(store))
-                    )
         return self._segment_stores[name]
+
+    async def get_partition_registry(
+        self,
+        database: str,
+        *,
+        partition_namespace: str,
+        tombstone_retention_seconds: int,
+        partitioned_stores: Iterable[PartitionedStore],
+    ) -> PartitionRegistry:
+        """Return a started registry of a partition namespace in a database.
+
+        Each call builds a registry. The first call for a namespace in a
+        database starts its registry, and runs the namespace's purge rounds
+        over that call's `partitioned_stores` in the background until close(),
+        with the namespace as their metrics prefix.
+        """
+        registry = SQLAlchemyPartitionRegistry(
+            SQLAlchemyPartitionRegistryParams(
+                engine=await self.get_sql_engine(database),
+                partition_namespace=partition_namespace,
+                tombstone_retention_seconds=tombstone_retention_seconds,
+            ),
+        )
+        key = (database, partition_namespace)
+        if key not in self._started_partition_namespaces:
+            async with self._partition_registry_lock:
+                if key not in self._started_partition_namespaces:
+                    await registry.startup()
+                    self._started_partition_namespaces.add(key)
+                    self._partition_registry_purge_tasks.append(
+                        asyncio.create_task(
+                            _run_purge_rounds_forever(
+                                PartitionManager(
+                                    registry,
+                                    partitioned_stores,
+                                    tracker=OperationTracker(
+                                        await ResourceManagerImpl.get_metrics_factory(
+                                            "prometheus"
+                                        ),
+                                        prefix=partition_namespace,
+                                    ),
+                                ),
+                                partition_namespace,
+                            )
+                        )
+                    )
+        return registry
 
     async def get_embedder(self, name: str, validate: bool = False) -> Embedder:
         """Return an embedder by name."""
@@ -322,6 +387,11 @@ class ResourceManagerImpl:
         """Return the semantic session manager."""
         semantic_manager = await self.get_semantic_manager()
         return await semantic_manager.get_semantic_session_manager()
+
+    async def get_semantic_storage(self) -> SemanticStorage:
+        """Return the semantic storage the semantic service uses."""
+        semantic_manager = await self.get_semantic_manager()
+        return await semantic_manager.get_semantic_storage()
 
     @staticmethod
     async def get_metrics_factory(name: str) -> MetricsFactory:

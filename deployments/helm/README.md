@@ -129,7 +129,11 @@ episodic_memory:
   long_term_memory:
     embedder: default_embedder     # references resources.embedders.default_embedder
     reranker: my_reranker_id       # references resources.rerankers.my_reranker_id
-    vector_graph_store: db_neo4j   # references resources.databases.db_neo4j
+    backend: event                 # the default; backend: declarative instead
+                                   # wires vector_graph_store: db_neo4j
+    vector_store: event_vector_store  # references resources.databases.event_vector_store
+    segment_store: db_postgres     # references resources.databases.db_postgres
+    partition_registry: db_postgres  # references resources.databases.db_postgres
   short_term_memory:
     llm_model: default_model       # references resources.language_models.default_model
     message_capacity: 500
@@ -229,7 +233,7 @@ picks which, and the chart deploys only the store that choice needs:
 
 | `backend`     | Store deployed | `long_term_memory` wiring                            |
 |---------------|----------------|------------------------------------------------------|
-| `event` (default) | Qdrant     | `vector_store: event_vector_store`, `segment_store: db_postgres` |
+| `event` (default) | Qdrant     | `vector_store: event_vector_store`, `segment_store: db_postgres`, `partition_registry: db_postgres` |
 | `declarative` | Neo4j          | `vector_graph_store: db_neo4j`                        |
 
 ```bash

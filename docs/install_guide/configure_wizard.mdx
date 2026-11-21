@@ -47,10 +47,10 @@ The wizard will prompt you for various configuration options, including:
 The wizard can generate an event-memory configuration backed by a VectorStore.
 If the Qdrant extra is installed, Qdrant is selected by default. If Qdrant is
 not installed but the Milvus extra is installed, Milvus is selected and the
-generated `uri` points at a local Milvus Lite file. Without those optional
-extras, the wizard falls back to the local SQLiteVectorStore. You can edit the
-generated `cfg.yml` afterward to point Milvus at a standalone server or Zilliz
-Cloud by changing `uri`, `token`, and `db_name`.
+generated `uri` points at a Milvus server on `http://localhost:19530`. Without
+those optional extras, the wizard falls back to the local SQLiteVectorStore.
+You can edit the generated `cfg.yml` afterward to point Milvus at another
+server or Zilliz Cloud by changing `uri`, `token`, and `db_name`.
 
 The relational database is configured to use SQLite by default. For users who
 wish to use other relational databases, manual configuration of the `cfg.yml`

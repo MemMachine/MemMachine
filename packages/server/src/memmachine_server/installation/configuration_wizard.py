@@ -180,6 +180,7 @@ class ConfigurationWizard:
             reranker=self.RERANKER_NAME,
             vector_store=self.vector_store_id,
             segment_store=self.SQLITE_DB_ID,
+            partition_registry=self.SQLITE_DB_ID,
         )
 
     def _available_vector_store_choices(self) -> tuple[set[str], str, bool, bool]:
@@ -218,9 +219,7 @@ class ConfigurationWizard:
                 "extra to enable)"
             )
         if milvus_ok:
-            logger.info(
-                "  milvus              - Milvus Lite, Milvus server, or Zilliz Cloud"
-            )
+            logger.info("  milvus              - Milvus server or Zilliz Cloud")
         else:
             logger.info(
                 "  (milvus            - install memmachine-server[milvus] "
@@ -245,7 +244,7 @@ class ConfigurationWizard:
         if not milvus_ok:
             logger.info(
                 "Tip: install the `memmachine-server[milvus]` extra to use "
-                "Milvus Lite, Milvus server, or Zilliz Cloud."
+                "a Milvus server or Zilliz Cloud."
             )
 
     def _ask_vector_store_choice(self, valid: set[str], default_choice: str) -> str:
@@ -275,8 +274,10 @@ class ConfigurationWizard:
           - `qdrant`: external Qdrant server, recommended for production.
             Requires `pip install memmachine-server[qdrant]` and a running
             Qdrant instance.
-          - `milvus`: Milvus Lite by default, or Milvus server / Zilliz Cloud
-            after editing the generated URI/token config.
+          - `milvus`: external Milvus server (localhost by default) or
+            Zilliz Cloud after editing the generated URI/token config.
+            Requires `pip install memmachine-server[milvus]` and a running
+            Milvus instance.
           - `sqlite_vector_store`: in-process USearch index. Broad
             compatibility — no host SQLite extension support needed.
           - `sqlite_vec`: sqlite-vec extension. Requires host SQLite built
@@ -496,13 +497,9 @@ class ConfigurationWizard:
                 # or similar; user can edit cfg.yml to point at a remote Qdrant.
                 databases.qdrant_confs = {self.QDRANT_VECTOR_STORE_ID: QdrantConf()}
             case self.MILVUS_VECTOR_STORE_ID:
-                # Local file defaults use Milvus Lite. Users can edit cfg.yml
-                # to point at a Milvus server or Zilliz Cloud URI/token.
-                databases.milvus_confs = {
-                    self.MILVUS_VECTOR_STORE_ID: MilvusConf(
-                        uri="memmachine_milvus.db",
-                    )
-                }
+                # MilvusConf's default URI points at a local Milvus server; the
+                # user edits cfg.yml to point at another Milvus or Zilliz Cloud.
+                databases.milvus_confs = {self.MILVUS_VECTOR_STORE_ID: MilvusConf()}
             case self.SQLITE_VECTOR_STORE_ID:
                 databases.sqlite_vector_store_confs = {
                     self.SQLITE_VECTOR_STORE_ID: SQLiteVectorStoreConf(

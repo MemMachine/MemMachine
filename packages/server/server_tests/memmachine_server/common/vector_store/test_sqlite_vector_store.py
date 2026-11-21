@@ -1,15 +1,19 @@
 """Tests for SQLiteVectorStore."""
 
+import asyncio
 import math
+import sqlite3
 from datetime import UTC, datetime, timedelta, timezone
+from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import func, select, update
+from pydantic import ValidationError
+from sqlalchemy import func, inspect, select, update
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from memmachine_server.common.data_types import SimilarityMetric
+from memmachine_server.common.data_types import PropertyType, SimilarityMetric
 from memmachine_server.common.filter.filter_parser import (
     And,
     Comparison,
@@ -17,27 +21,43 @@ from memmachine_server.common.filter.filter_parser import (
     Not,
     Or,
 )
+from memmachine_server.common.sql import (
+    enable_sqlite_explicit_begin,
+    enable_sqlite_foreign_keys,
+)
 from memmachine_server.common.vector_store.data_types import (
     Record,
-    VectorStoreCollectionAlreadyExistsError,
-    VectorStoreCollectionConfig,
-    VectorStoreCollectionConfigMismatchError,
+    VectorStoreSchema,
+)
+from memmachine_server.common.vector_store.sqlite_properties import (
+    property_column_name,
 )
 from memmachine_server.common.vector_store.sqlite_vector_store import (
     IndexLoadError,
     SQLiteVectorStore,
-    SQLiteVectorStoreCollection,
     SQLiteVectorStoreParams,
-    _CollectionRow,
+    SQLiteVectorStorePartition,
+    _PartitionRow,
     _PendingOperationRow,
 )
 from memmachine_server.common.vector_store.vector_search_engine.usearch_engine import (
     USearchVectorSearchEngine,
 )
+from server_tests.memmachine_server.common.vector_store.declared_schema_contract import (
+    DeclaredSchemaContract,
+)
 
-NAMESPACE = "test_namespace"
-NAME = "test_name"
+VECTOR_STORE_NAME = "test_vector_store"
 VECTOR_DIM = 3
+_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
+
+INDEXED_PROPERTIES: dict[str, PropertyType] = {
+    "name": str,
+    "age": int,
+    "score": float,
+    "active": bool,
+    "created_at": datetime,
+}
 
 
 def _normalize(vector: list[float]) -> list[float]:
@@ -48,168 +68,238 @@ def _normalize(vector: list[float]) -> list[float]:
 def _make_record(
     *,
     uuid=None,
-    vector: list[float] | None = None,
+    vector: list[float],
     properties: dict | None = None,
 ) -> Record:
     return Record(
         uuid=uuid or uuid4(),
         vector=vector,
-        properties=properties,
+        properties=properties or {},
     )
+
+
+async def _stored(partition) -> dict[UUID, dict]:
+    """The records the partition's table holds, UUID to properties.
+
+    Read past the store, from the table itself, so the answer is exact
+    rather than a search engine's approximation. The partition's store
+    declares `INDEXED_PROPERTIES`.
+    """
+    table = partition._records_table
+    async with partition._create_session() as session:
+        rows = (await session.execute(select(table))).all()
+    return {
+        row.uuid: _declared_values(row._mapping, INDEXED_PROPERTIES) for row in rows
+    }
+
+
+def _declared_values(row, indexed_properties) -> dict:
+    """A row's declared properties that hold a value, a datetime as its instant in UTC."""
+    values = {}
+    for key, property_type in indexed_properties.items():
+        value = row[property_column_name(key)]
+        if value is None:
+            continue
+        if property_type is datetime:
+            value = _EPOCH + timedelta(microseconds=value)
+        values[key] = value
+    return values
 
 
 @pytest_asyncio.fixture
 async def store(tmp_path):
     db_path = tmp_path / "test.db"
     engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}")
-    params = SQLiteVectorStoreParams(
-        sqlalchemy_engine=engine,
-        vector_search_engine_factory=lambda ndim, metric: USearchVectorSearchEngine(
-            num_dimensions=ndim, similarity_metric=metric
-        ),
-    )
-    vector_store = SQLiteVectorStore(params)
+    enable_sqlite_explicit_begin(engine)
+    enable_sqlite_foreign_keys(engine)
+    vector_store = SQLiteVectorStore(_params(engine))
     await vector_store.startup()
     yield vector_store
     await vector_store.shutdown()
     await engine.dispose()
 
 
-@pytest_asyncio.fixture
-async def collection(store):
-    await store.create_collection(
-        namespace=NAMESPACE,
-        name=NAME,
-        config=VectorStoreCollectionConfig(
-            vector_dimensions=VECTOR_DIM,
-            similarity_metric=SimilarityMetric.COSINE,
-            indexed_properties_schema={
-                "name": str,
-                "age": int,
-                "score": float,
-                "active": bool,
-                "created_at": datetime,
-            },
-        ),
+def _engine_factory(ndim, metric):
+    return USearchVectorSearchEngine(num_dimensions=ndim, similarity_metric=metric)
+
+
+def _schema(**overrides) -> VectorStoreSchema:
+    fields: dict[str, Any] = {
+        "vector_dimensions": VECTOR_DIM,
+        "similarity_metric": SimilarityMetric.COSINE,
+        "indexed_properties": INDEXED_PROPERTIES,
+    }
+    fields.update(overrides)
+    return VectorStoreSchema(**fields)
+
+
+def _params(engine, **overrides) -> SQLiteVectorStoreParams:
+    params: dict[str, Any] = {
+        "sqlalchemy_engine": engine,
+        "vector_store_name": VECTOR_STORE_NAME,
+        "store_schema": _schema(),
+        "vector_search_engine_factory": _engine_factory,
+    }
+    params.update(overrides)
+    return SQLiteVectorStoreParams(**params)
+
+
+async def _store_with(store, vector_store_name: str, **overrides) -> SQLiteVectorStore:
+    """Another store over the fixture's engine: its own name, dimensions, or metric."""
+    other = SQLiteVectorStore(
+        _params(
+            store._sqlalchemy_engine,
+            vector_store_name=vector_store_name,
+            store_schema=_schema(**overrides),
+        )
     )
-    coll = await store.open_collection(namespace=NAMESPACE, name=NAME)
-    assert coll is not None
-    yield coll
-    await store.delete_collection(namespace=NAMESPACE, name=NAME)
+    await other.startup()
+    return other
 
 
-# ── Collection lifecycle ──
+async def _created(store: SQLiteVectorStore) -> SQLiteVectorStorePartition:
+    """A handle on a freshly created partition."""
+    partition_uuid = uuid4()
+    await store.create_partition(partition_uuid)
+    return await store.get_partition(partition_uuid)
 
 
-class TestCollectionLifecycle:
+async def _purge_and_drop(store: SQLiteVectorStore, partition_uuid: UUID) -> None:
+    """Purge a partition until a purge finds nothing, then drop it."""
+    while await store.purge_partition(partition_uuid):
+        pass
+    await store.drop_partition(partition_uuid)
+
+
+@pytest_asyncio.fixture
+async def partition(store):
+    return await _created(store)
+
+
+# ── Partition lifecycle ──
+
+
+class TestPartitionLifecycle:
     @pytest.mark.asyncio
-    async def test_create_open_delete(self, store):
-        await store.create_collection(
-            namespace=NAMESPACE,
-            name="lifecycle",
-            config=VectorStoreCollectionConfig(vector_dimensions=VECTOR_DIM),
+    async def test_a_created_partition_holds_its_records(self, store):
+        partition = await _created(store)
+        assert isinstance(partition, SQLiteVectorStorePartition)
+        record = _make_record(vector=_normalize([1.0, 0.0, 0.0]))
+
+        await partition.upsert(records=[record])
+
+        assert set(await _stored(partition)) == {record.uuid}
+        [result] = await partition.query(query_vectors=[record.vector], limit=5)
+        assert [match.record_uuid for match in result.matches] == [record.uuid]
+
+    @pytest.mark.asyncio
+    async def test_creating_a_partition_again_changes_nothing(self, tmp_path):
+        store, engine = await _fresh_store(
+            tmp_path / "test.db", tmp_path, save_threshold=1
         )
-        coll = await store.open_collection(namespace=NAMESPACE, name="lifecycle")
-        assert isinstance(coll, SQLiteVectorStoreCollection)
-        await store.delete_collection(namespace=NAMESPACE, name="lifecycle")
+        partition = await _created(store)
+        record = _make_record(vector=_normalize([1.0, 0.0, 0.0]))
+        await partition.upsert(records=[record])
+        assert await _get_index_saved(engine, partition._partition_uuid) is True
+
+        await store.create_partition(partition._partition_uuid)
+
+        assert await _get_index_saved(engine, partition._partition_uuid) is True
+        assert set(await _stored(partition)) == {record.uuid}
+        [result] = await partition.query(query_vectors=[record.vector], limit=5)
+        assert [match.record_uuid for match in result.matches] == [record.uuid]
+
+        await store.shutdown()
+        await engine.dispose()
 
     @pytest.mark.asyncio
-    async def test_open_returns_correct_type(self, store, collection):
-        coll = await store.open_collection(namespace=NAMESPACE, name=NAME)
-        assert isinstance(coll, SQLiteVectorStoreCollection)
-
-    @pytest.mark.asyncio
-    async def test_duplicate_name_raises(self, store, collection):
-        with pytest.raises(VectorStoreCollectionAlreadyExistsError):
-            await store.create_collection(
-                namespace=NAMESPACE,
-                name=NAME,
-                config=VectorStoreCollectionConfig(
-                    vector_dimensions=VECTOR_DIM,
-                    similarity_metric=SimilarityMetric.COSINE,
-                    indexed_properties_schema={
-                        "name": str,
-                        "age": int,
-                        "score": float,
-                        "active": bool,
-                        "created_at": datetime,
-                    },
-                ),
-            )
-
-    @pytest.mark.asyncio
-    async def test_delete_nonexistent_is_idempotent(self, store):
-        await store.delete_collection(namespace=NAMESPACE, name="nonexistent")
-
-    @pytest.mark.asyncio
-    async def test_open_or_create_creates_when_missing(self, store):
-        config = VectorStoreCollectionConfig(vector_dimensions=VECTOR_DIM)
-        coll = await store.open_or_create_collection(
-            namespace=NAMESPACE, name="new", config=config
+    async def test_partitions_are_isolated_from_one_another(self, store):
+        first = await _created(store)
+        second = await _created(store)
+        shared = _make_record(
+            vector=_normalize([1.0, 0.0, 0.0]), properties={"name": "first"}
         )
-        assert isinstance(coll, SQLiteVectorStoreCollection)
-        await store.delete_collection(namespace=NAMESPACE, name="new")
+        only_first = _make_record(vector=_normalize([1.0, 0.1, 0.0]))
+
+        await first.upsert(records=[shared, only_first])
+        await second.upsert(
+            records=[
+                _make_record(
+                    uuid=shared.uuid,
+                    vector=_normalize([0.0, 1.0, 0.0]),
+                    properties={"name": "second"},
+                )
+            ]
+        )
+
+        assert await _stored(first) == {
+            shared.uuid: {"name": "first"},
+            only_first.uuid: {},
+        }
+        assert await _stored(second) == {shared.uuid: {"name": "second"}}
+        [result] = await second.query(query_vectors=[shared.vector], limit=5)
+        assert [match.record_uuid for match in result.matches] == [shared.uuid]
 
     @pytest.mark.asyncio
-    async def test_open_or_create_opens_when_exists(self, store):
-        config = VectorStoreCollectionConfig(vector_dimensions=VECTOR_DIM)
-        await store.create_collection(
-            namespace=NAMESPACE, name="existing", config=config
+    async def test_drop_removes_what_the_partition_holds(self, tmp_path):
+        store, engine = await _fresh_store(
+            tmp_path / "test.db", tmp_path, save_threshold=2
         )
-        coll = await store.open_or_create_collection(
-            namespace=NAMESPACE, name="existing", config=config
+        baseline = await _table_names(engine)
+        partition = await _created(store)
+        partition_uuid = partition._partition_uuid
+        # The first upsert's operations reach the save threshold and write
+        # the index file; the second upsert's operation stays pending.
+        await partition.upsert(
+            records=[
+                _make_record(vector=_normalize([1.0, 0.0, 0.0])),
+                _make_record(vector=_normalize([0.0, 1.0, 0.0])),
+            ]
         )
-        assert isinstance(coll, SQLiteVectorStoreCollection)
-        await store.delete_collection(namespace=NAMESPACE, name="existing")
+        await partition.upsert(
+            records=[_make_record(vector=_normalize([0.0, 0.0, 1.0]))]
+        )
+        assert await _get_index_saved(engine, partition_uuid) is True
+        assert len(await _table_names(engine) - baseline) == 1
+        assert await _pending_operation_count(engine) == 1
+        assert len(list((tmp_path / "indexes").glob("*.idx"))) == 1
+
+        # The records live in the partition's own table and index, so the
+        # purge finds none in shared storage, and the drop removes them.
+        assert await store.purge_partition(partition_uuid) is False
+        await store.drop_partition(partition_uuid)
+
+        assert await _get_index_saved(engine, partition_uuid) is None
+        assert await _table_names(engine) == baseline
+        assert await _pending_operation_count(engine) == 0
+        assert list((tmp_path / "indexes").glob("*.idx")) == []
+        await store.drop_partition(partition_uuid)
+
+        await store.shutdown()
+        await engine.dispose()
 
     @pytest.mark.asyncio
-    async def test_open_or_create_raises_on_config_mismatch(self, store):
-        await store.create_collection(
-            namespace=NAMESPACE,
-            name="mismatch",
-            config=VectorStoreCollectionConfig(vector_dimensions=VECTOR_DIM),
-        )
-        with pytest.raises(VectorStoreCollectionConfigMismatchError):
-            await store.open_or_create_collection(
-                namespace=NAMESPACE,
-                name="mismatch",
-                config=VectorStoreCollectionConfig(vector_dimensions=VECTOR_DIM + 1),
-            )
-        await store.delete_collection(namespace=NAMESPACE, name="mismatch")
-
-    @pytest.mark.asyncio
-    async def test_open_nonexistent_returns_none(self, store):
-        assert await store.open_collection(namespace=NAMESPACE, name="nope") is None
+    async def test_an_unknown_partition_purges_nothing_and_drops(self, store):
+        assert await store.purge_partition(uuid4()) is False
+        await store.drop_partition(uuid4())
 
     @pytest.mark.asyncio
     async def test_unsupported_metric_raises(self, store):
         with pytest.raises(ValueError, match="does not support"):
-            await store.create_collection(
-                namespace=NAMESPACE,
-                name="bad_metric",
-                config=VectorStoreCollectionConfig(
-                    vector_dimensions=VECTOR_DIM,
-                    similarity_metric=SimilarityMetric.MANHATTAN,
-                ),
+            await _store_with(
+                store, "bad_metric", similarity_metric=SimilarityMetric.MANHATTAN
             )
 
-    @pytest.mark.asyncio
-    async def test_invalid_namespace_raises(self, store):
-        with pytest.raises(ValueError, match="Invalid namespace"):
-            await store.create_collection(
-                namespace="INVALID",
-                name="test",
-                config=VectorStoreCollectionConfig(vector_dimensions=VECTOR_DIM),
-            )
-
-    @pytest.mark.asyncio
-    async def test_invalid_name_raises(self, store):
-        with pytest.raises(ValueError, match="Invalid namespace"):
-            await store.create_collection(
-                namespace="valid",
-                name="INVALID",
-                config=VectorStoreCollectionConfig(vector_dimensions=VECTOR_DIM),
-            )
+    @pytest.mark.parametrize(
+        "vector_store_name",
+        ["", "Upper", "with-hyphen", "trailing_newline\n", "x" * 33],
+    )
+    def test_a_vector_store_name_outside_the_rule_is_refused(
+        self, tmp_path, vector_store_name
+    ):
+        engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'test.db'}")
+        with pytest.raises(ValidationError, match="Vector store name"):
+            _params(engine, vector_store_name=vector_store_name)
 
 
 # ── Upsert + Query ──
@@ -217,7 +307,7 @@ class TestCollectionLifecycle:
 
 class TestUpsertAndQuery:
     @pytest.mark.asyncio
-    async def test_upsert_and_query_basic(self, collection):
+    async def test_upsert_and_query_basic(self, partition):
         v1 = _normalize([1.0, 0.0, 0.0])
         v2 = _normalize([0.0, 1.0, 0.0])
         v3 = _normalize([1.0, 0.1, 0.0])
@@ -226,119 +316,109 @@ class TestUpsertAndQuery:
         r2 = _make_record(vector=v2, properties={"name": "b"})
         r3 = _make_record(vector=v3, properties={"name": "c"})
 
-        await collection.upsert(records=[r1, r2, r3])
+        await partition.upsert(records=[r1, r2, r3])
 
-        query_results = await collection.query(query_vectors=[v1], limit=3)
+        query_results = await partition.query(query_vectors=[v1], limit=3)
         matches = query_results[0].matches
 
         assert len(matches) == 3
-        assert matches[0].record.uuid == r1.uuid
+        assert matches[0].record_uuid == r1.uuid
         assert matches[0].score >= matches[1].score >= matches[2].score
 
     @pytest.mark.asyncio
-    async def test_upsert_update(self, collection):
+    async def test_upsert_update(self, partition):
         v1 = _normalize([1.0, 0.0, 0.0])
         record = _make_record(vector=v1, properties={"name": "original"})
-        await collection.upsert(records=[record])
+        await partition.upsert(records=[record])
 
         updated = Record(
             uuid=record.uuid,
             vector=_normalize([0.0, 1.0, 0.0]),
             properties={"name": "updated"},
         )
-        await collection.upsert(records=[updated])
+        await partition.upsert(records=[updated])
 
-        results = await collection.get(record_uuids=[record.uuid])
-        assert results[0].properties["name"] == "updated"
+        assert (await _stored(partition))[record.uuid]["name"] == "updated"
 
     @pytest.mark.asyncio
-    async def test_query_with_similarity_threshold(self, collection):
+    async def test_query_with_similarity_threshold(self, partition):
         v1 = _normalize([1.0, 0.0, 0.0])
         v2 = _normalize([0.0, 1.0, 0.0])
 
         r1 = _make_record(vector=v1)
         r2 = _make_record(vector=v2)
 
-        await collection.upsert(records=[r1, r2])
+        await partition.upsert(records=[r1, r2])
 
-        query_results = await collection.query(
+        query_results = await partition.query(
             query_vectors=[v1], limit=10, score_threshold=0.9
         )
         matches = query_results[0].matches
 
         assert len(matches) == 1
-        assert matches[0].record.uuid == r1.uuid
+        assert matches[0].record_uuid == r1.uuid
 
     @pytest.mark.asyncio
-    async def test_query_with_limit(self, collection):
+    async def test_query_with_limit(self, partition):
         vectors = [_normalize([1.0, float(index) * 0.01, 0.0]) for index in range(5)]
         records = [_make_record(vector=vector) for vector in vectors]
-        await collection.upsert(records=records)
+        await partition.upsert(records=records)
 
-        query_results = await collection.query(query_vectors=[vectors[0]], limit=2)
+        query_results = await partition.query(query_vectors=[vectors[0]], limit=2)
         assert len(query_results[0].matches) == 2
 
     @pytest.mark.asyncio
-    async def test_query_return_vector_false(self, collection):
-        v1 = _normalize([1.0, 0.0, 0.0])
-        r1 = _make_record(vector=v1, properties={"name": "test"})
-        await collection.upsert(records=[r1])
-
-        query_results = await collection.query(
-            query_vectors=[v1], limit=10, return_vector=False
-        )
-        matches = query_results[0].matches
-        assert len(matches) == 1
-        assert matches[0].record.vector is None
-        assert matches[0].record.properties is not None
-
-    @pytest.mark.asyncio
-    async def test_query_return_properties_false(self, collection):
-        v1 = _normalize([1.0, 0.0, 0.0])
-        r1 = _make_record(vector=v1, properties={"name": "test"})
-        await collection.upsert(records=[r1])
-
-        query_results = await collection.query(
-            query_vectors=[v1],
-            limit=10,
-            return_vector=True,
-            return_properties=False,
-        )
-        matches = query_results[0].matches
-        assert len(matches) == 1
-        assert matches[0].record.vector is not None
-        assert matches[0].record.properties is None
-
-    @pytest.mark.asyncio
-    async def test_query_batch_multiple_vectors(self, collection):
+    async def test_query_batch_multiple_vectors(self, partition):
         v1 = _normalize([1.0, 0.0, 0.0])
         v2 = _normalize([0.0, 1.0, 0.0])
 
         r1 = _make_record(vector=v1, properties={"name": "a"})
         r2 = _make_record(vector=v2, properties={"name": "b"})
-        await collection.upsert(records=[r1, r2])
+        await partition.upsert(records=[r1, r2])
 
-        all_results = await collection.query(query_vectors=[v1, v2], limit=1)
+        all_results = await partition.query(query_vectors=[v1, v2], limit=1)
 
         assert len(all_results) == 2
-        assert all_results[0].matches[0].record.uuid == r1.uuid
-        assert all_results[1].matches[0].record.uuid == r2.uuid
+        assert all_results[0].matches[0].record_uuid == r1.uuid
+        assert all_results[1].matches[0].record_uuid == r2.uuid
 
     @pytest.mark.asyncio
-    async def test_query_empty_vectors(self, collection):
-        all_results = await collection.query(query_vectors=[], limit=10)
+    async def test_query_empty_vectors(self, partition):
+        all_results = await partition.query(query_vectors=[], limit=10)
         assert len(all_results) == 0
 
     @pytest.mark.asyncio
-    async def test_upsert_empty_records(self, collection):
-        await collection.upsert(records=[])
+    async def test_upsert_empty_records(self, partition):
+        await partition.upsert(records=[])
+
+    @pytest.mark.asyncio
+    async def test_empty_writes_return_while_another_connection_holds_the_write_lock(
+        self, partition, tmp_path
+    ):
+        holder = sqlite3.connect(tmp_path / "test.db", isolation_level=None)
+        holder.execute("BEGIN IMMEDIATE")
+        try:
+            await partition.upsert(records=[])
+            await partition.delete(record_uuids=[])
+        finally:
+            holder.execute("ROLLBACK")
+            holder.close()
 
 
 # ── Filters ──
 
 
+class TestDeclaredSchema(DeclaredSchemaContract):
+    """The declared-schema contract, against this store."""
+
+    @staticmethod
+    async def settle(partition) -> None:
+        # A write commits before it returns, so reads reflect it already.
+        pass
+
+
 class TestFilters:
-    async def _setup(self, collection):
+    async def _setup(self, partition):
         v1 = _normalize([1.0, 0.0, 0.0])
         v2 = _normalize([1.0, 0.1, 0.0])
         v3 = _normalize([1.0, 0.2, 0.0])
@@ -354,20 +434,20 @@ class TestFilters:
             vector=v3,
             properties={"name": "carol", "age": 35, "score": 8.0, "active": True},
         )
-        await collection.upsert(records=[r1, r2, r3])
+        await partition.upsert(records=[r1, r2, r3])
         return r1, r2, r3, v1
 
-    async def _setup_floats(self, collection):
+    async def _setup_floats(self, partition):
         vectors = [_normalize([1.0, float(index) * 0.01, 0.0]) for index in range(5)]
         scores = [-1.5, 0.0, 0.5, 1.5, 2.0]
         records = [
             _make_record(vector=vector, properties={"score": score})
             for vector, score in zip(vectors, scores, strict=True)
         ]
-        await collection.upsert(records=records)
+        await partition.upsert(records=records)
         return records, vectors[0]
 
-    async def _setup_datetimes(self, collection):
+    async def _setup_datetimes(self, partition):
         vectors = [_normalize([1.0, float(index) * 0.01, 0.0]) for index in range(5)]
         datetimes = [
             datetime(2024, 1, 1, tzinfo=UTC),
@@ -383,60 +463,60 @@ class TestFilters:
             )
             for index, (vector, dt) in enumerate(zip(vectors, datetimes, strict=True))
         ]
-        await collection.upsert(records=records)
+        await partition.upsert(records=records)
         return records, vectors[0], datetimes
 
-    async def _query(self, collection, query_vector, field, op, value):
-        all_results = await collection.query(
+    async def _query(self, partition, query_vector, field, op, value):
+        all_results = await partition.query(
             query_vectors=[query_vector],
             limit=10,
             property_filter=Comparison(field=field, op=op, value=value),
         )
-        return {match.record.uuid for match in all_results[0].matches}
+        return {match.record_uuid for match in all_results[0].matches}
 
     # ── String / int ──
 
     @pytest.mark.asyncio
-    async def test_eq_str(self, collection):
-        r1, _r2, _r3, v1 = await self._setup(collection)
-        uuids = await self._query(collection, v1, "name", "=", "alice")
+    async def test_eq_str(self, partition):
+        r1, _r2, _r3, v1 = await self._setup(partition)
+        uuids = await self._query(partition, v1, "name", "=", "alice")
         assert r1.uuid in uuids
         assert len(uuids) == 1
 
     @pytest.mark.asyncio
-    async def test_ne_str(self, collection):
-        r1, r2, r3, v1 = await self._setup(collection)
-        uuids = await self._query(collection, v1, "name", "!=", "alice")
+    async def test_ne_str(self, partition):
+        r1, r2, r3, v1 = await self._setup(partition)
+        uuids = await self._query(partition, v1, "name", "!=", "alice")
         assert r1.uuid not in uuids
         assert r2.uuid in uuids
         assert r3.uuid in uuids
 
     @pytest.mark.asyncio
-    async def test_gt_int(self, collection):
-        _r1, _r2, r3, v1 = await self._setup(collection)
-        uuids = await self._query(collection, v1, "age", ">", 30)
+    async def test_gt_int(self, partition):
+        _r1, _r2, r3, v1 = await self._setup(partition)
+        uuids = await self._query(partition, v1, "age", ">", 30)
         assert len(uuids) == 1
         assert r3.uuid in uuids
 
     @pytest.mark.asyncio
-    async def test_gte_int(self, collection):
-        r1, _r2, r3, v1 = await self._setup(collection)
-        uuids = await self._query(collection, v1, "age", ">=", 30)
+    async def test_gte_int(self, partition):
+        r1, _r2, r3, v1 = await self._setup(partition)
+        uuids = await self._query(partition, v1, "age", ">=", 30)
         assert r1.uuid in uuids
         assert r3.uuid in uuids
         assert len(uuids) == 2
 
     @pytest.mark.asyncio
-    async def test_lt_int(self, collection):
-        _r1, r2, _r3, v1 = await self._setup(collection)
-        uuids = await self._query(collection, v1, "age", "<", 30)
+    async def test_lt_int(self, partition):
+        _r1, r2, _r3, v1 = await self._setup(partition)
+        uuids = await self._query(partition, v1, "age", "<", 30)
         assert len(uuids) == 1
         assert r2.uuid in uuids
 
     @pytest.mark.asyncio
-    async def test_lte_int(self, collection):
-        r1, r2, _r3, v1 = await self._setup(collection)
-        uuids = await self._query(collection, v1, "age", "<=", 30)
+    async def test_lte_int(self, partition):
+        r1, r2, _r3, v1 = await self._setup(partition)
+        uuids = await self._query(partition, v1, "age", "<=", 30)
         assert r1.uuid in uuids
         assert r2.uuid in uuids
         assert len(uuids) == 2
@@ -444,17 +524,17 @@ class TestFilters:
     # ── Bool ──
 
     @pytest.mark.asyncio
-    async def test_eq_bool(self, collection):
-        r1, r2, r3, v1 = await self._setup(collection)
-        uuids = await self._query(collection, v1, "active", "=", True)
+    async def test_eq_bool(self, partition):
+        r1, r2, r3, v1 = await self._setup(partition)
+        uuids = await self._query(partition, v1, "active", "=", True)
         assert r1.uuid in uuids
         assert r3.uuid in uuids
         assert r2.uuid not in uuids
 
     @pytest.mark.asyncio
-    async def test_ne_bool(self, collection):
-        r1, r2, r3, v1 = await self._setup(collection)
-        uuids = await self._query(collection, v1, "active", "!=", True)
+    async def test_ne_bool(self, partition):
+        r1, r2, r3, v1 = await self._setup(partition)
+        uuids = await self._query(partition, v1, "active", "!=", True)
         assert r2.uuid in uuids
         assert r1.uuid not in uuids
         assert r3.uuid not in uuids
@@ -462,24 +542,24 @@ class TestFilters:
     # ── Float ──
 
     @pytest.mark.asyncio
-    async def test_eq_float(self, collection):
-        records, query_vector = await self._setup_floats(collection)
-        uuids = await self._query(collection, query_vector, "score", "=", 0.5)
+    async def test_eq_float(self, partition):
+        records, query_vector = await self._setup_floats(partition)
+        uuids = await self._query(partition, query_vector, "score", "=", 0.5)
         assert records[2].uuid in uuids
         assert len(uuids) == 1
 
     @pytest.mark.asyncio
-    async def test_gt_float(self, collection):
-        records, query_vector = await self._setup_floats(collection)
-        uuids = await self._query(collection, query_vector, "score", ">", 0.5)
+    async def test_gt_float(self, partition):
+        records, query_vector = await self._setup_floats(partition)
+        uuids = await self._query(partition, query_vector, "score", ">", 0.5)
         assert records[3].uuid in uuids
         assert records[4].uuid in uuids
         assert records[2].uuid not in uuids
 
     @pytest.mark.asyncio
-    async def test_lt_float(self, collection):
-        records, query_vector = await self._setup_floats(collection)
-        uuids = await self._query(collection, query_vector, "score", "<", 0.5)
+    async def test_lt_float(self, partition):
+        records, query_vector = await self._setup_floats(partition)
+        uuids = await self._query(partition, query_vector, "score", "<", 0.5)
         assert records[0].uuid in uuids
         assert records[1].uuid in uuids
         assert records[2].uuid not in uuids
@@ -487,46 +567,45 @@ class TestFilters:
     # ── Datetime ──
 
     @pytest.mark.asyncio
-    async def test_datetime_roundtrip(self, collection):
+    async def test_datetime_roundtrip(self, partition):
         v1 = _normalize([1.0, 0.0, 0.0])
         dt = datetime(2024, 6, 15, 12, 30, 0, tzinfo=UTC)
         r1 = _make_record(vector=v1, properties={"name": "test", "created_at": dt})
-        await collection.upsert(records=[r1])
+        await partition.upsert(records=[r1])
 
-        results = await collection.get(record_uuids=[r1.uuid])
-        assert results[0].properties["created_at"] == dt
+        assert (await _stored(partition))[r1.uuid]["created_at"] == dt
 
     @pytest.mark.asyncio
-    async def test_eq_datetime(self, collection):
-        records, query_vector, datetimes = await self._setup_datetimes(collection)
+    async def test_eq_datetime(self, partition):
+        records, query_vector, datetimes = await self._setup_datetimes(partition)
         uuids = await self._query(
-            collection, query_vector, "created_at", "=", datetimes[2]
+            partition, query_vector, "created_at", "=", datetimes[2]
         )
         assert records[2].uuid in uuids
         assert len(uuids) == 1
 
     @pytest.mark.asyncio
-    async def test_gt_datetime(self, collection):
-        records, query_vector, datetimes = await self._setup_datetimes(collection)
+    async def test_gt_datetime(self, partition):
+        records, query_vector, datetimes = await self._setup_datetimes(partition)
         uuids = await self._query(
-            collection, query_vector, "created_at", ">", datetimes[2]
+            partition, query_vector, "created_at", ">", datetimes[2]
         )
         assert records[3].uuid in uuids
         assert records[4].uuid in uuids
         assert records[2].uuid not in uuids
 
     @pytest.mark.asyncio
-    async def test_lt_datetime(self, collection):
-        records, query_vector, datetimes = await self._setup_datetimes(collection)
+    async def test_lt_datetime(self, partition):
+        records, query_vector, datetimes = await self._setup_datetimes(partition)
         uuids = await self._query(
-            collection, query_vector, "created_at", "<", datetimes[2]
+            partition, query_vector, "created_at", "<", datetimes[2]
         )
         assert records[0].uuid in uuids
         assert records[1].uuid in uuids
         assert records[2].uuid not in uuids
 
     @pytest.mark.asyncio
-    async def test_eq_datetime_cross_timezone(self, collection):
+    async def test_eq_datetime_cross_timezone(self, partition):
         """Equality matches the same instant expressed in a different timezone."""
         v1 = _normalize([1.0, 0.0, 0.0])
         v2 = _normalize([1.0, 0.1, 0.0])
@@ -534,47 +613,46 @@ class TestFilters:
         dt_other = datetime(2024, 6, 15, 18, 0, 0, tzinfo=UTC)
         r1 = _make_record(vector=v1, properties={"name": "a", "created_at": dt_utc})
         r2 = _make_record(vector=v2, properties={"name": "b", "created_at": dt_other})
-        await collection.upsert(records=[r1, r2])
+        await partition.upsert(records=[r1, r2])
 
         plus5 = timezone(timedelta(hours=5))
         dt_filter = datetime(2024, 6, 15, 17, 0, 0, tzinfo=plus5)
-        uuids = await self._query(collection, v1, "created_at", "=", dt_filter)
+        uuids = await self._query(partition, v1, "created_at", "=", dt_filter)
         assert r1.uuid in uuids
         assert len(uuids) == 1
 
     @pytest.mark.asyncio
-    async def test_datetime_timezone_roundtrip(self, collection):
-        """Original timezone is preserved through storage."""
+    async def test_a_datetime_is_stored_as_its_instant_in_utc(self, partition):
+        """A datetime is stored as its instant, read back in UTC."""
         v1 = _normalize([1.0, 0.0, 0.0])
         est = timezone(timedelta(hours=-5))
         dt = datetime(2024, 6, 15, 7, 0, 0, tzinfo=est)
         r1 = _make_record(vector=v1, properties={"name": "tz", "created_at": dt})
-        await collection.upsert(records=[r1])
+        await partition.upsert(records=[r1])
 
-        results = await collection.get(record_uuids=[r1.uuid])
-        got = results[0].properties["created_at"]
+        got = (await _stored(partition))[r1.uuid]["created_at"]
         assert got == dt
-        assert got.utcoffset() == timedelta(hours=-5)
+        assert got.utcoffset() == timedelta(0)
 
     # ── In / And / Or / Not ──
 
     @pytest.mark.asyncio
-    async def test_in(self, collection):
-        r1, _r2, r3, v1 = await self._setup(collection)
-        query_results = await collection.query(
+    async def test_in(self, partition):
+        r1, _r2, r3, v1 = await self._setup(partition)
+        query_results = await partition.query(
             query_vectors=[v1],
             limit=10,
             property_filter=In(field="name", values=["alice", "carol"]),
         )
-        uuids = {match.record.uuid for match in query_results[0].matches}
+        uuids = {match.record_uuid for match in query_results[0].matches}
         assert r1.uuid in uuids
         assert r3.uuid in uuids
         assert len(uuids) == 2
 
     @pytest.mark.asyncio
-    async def test_and(self, collection):
-        _r1, _r2, r3, v1 = await self._setup(collection)
-        query_results = await collection.query(
+    async def test_and(self, partition):
+        _r1, _r2, r3, v1 = await self._setup(partition)
+        query_results = await partition.query(
             query_vectors=[v1],
             limit=10,
             property_filter=And(
@@ -584,12 +662,12 @@ class TestFilters:
         )
         matches = query_results[0].matches
         assert len(matches) == 1
-        assert matches[0].record.uuid == r3.uuid
+        assert matches[0].record_uuid == r3.uuid
 
     @pytest.mark.asyncio
-    async def test_or(self, collection):
-        r1, _r2, r3, v1 = await self._setup(collection)
-        query_results = await collection.query(
+    async def test_or(self, partition):
+        r1, _r2, r3, v1 = await self._setup(partition)
+        query_results = await partition.query(
             query_vectors=[v1],
             limit=10,
             property_filter=Or(
@@ -597,80 +675,23 @@ class TestFilters:
                 right=Comparison(field="name", op="=", value="carol"),
             ),
         )
-        uuids = {match.record.uuid for match in query_results[0].matches}
+        uuids = {match.record_uuid for match in query_results[0].matches}
         assert r1.uuid in uuids
         assert r3.uuid in uuids
         assert len(uuids) == 2
 
     @pytest.mark.asyncio
-    async def test_not(self, collection):
-        r1, r2, _r3, v1 = await self._setup(collection)
-        query_results = await collection.query(
+    async def test_not(self, partition):
+        r1, r2, _r3, v1 = await self._setup(partition)
+        query_results = await partition.query(
             query_vectors=[v1],
             limit=10,
             property_filter=Not(expr=Comparison(field="age", op=">", value=30)),
         )
-        uuids = {match.record.uuid for match in query_results[0].matches}
+        uuids = {match.record_uuid for match in query_results[0].matches}
         assert r1.uuid in uuids
         assert r2.uuid in uuids
         assert len(uuids) == 2
-
-
-# ── Get ──
-
-
-class TestGet:
-    @pytest.mark.asyncio
-    async def test_get_by_uuids(self, collection):
-        v1 = _normalize([1.0, 0.0, 0.0])
-        v2 = _normalize([0.0, 1.0, 0.0])
-
-        r1 = _make_record(vector=v1, properties={"name": "a"})
-        r2 = _make_record(vector=v2, properties={"name": "b"})
-        await collection.upsert(records=[r1, r2])
-
-        results = await collection.get(record_uuids=[r2.uuid, r1.uuid])
-        assert len(results) == 2
-        assert results[0].uuid == r2.uuid
-        assert results[1].uuid == r1.uuid
-
-    @pytest.mark.asyncio
-    async def test_get_missing_uuids(self, collection):
-        v1 = _normalize([1.0, 0.0, 0.0])
-        r1 = _make_record(vector=v1)
-        await collection.upsert(records=[r1])
-
-        missing = uuid4()
-        results = await collection.get(record_uuids=[r1.uuid, missing])
-        assert len(results) == 1
-        assert results[0].uuid == r1.uuid
-
-    @pytest.mark.asyncio
-    async def test_get_empty_list(self, collection):
-        results = await collection.get(record_uuids=[])
-        assert len(results) == 0
-
-    @pytest.mark.asyncio
-    async def test_get_return_vector_false(self, collection):
-        v1 = _normalize([1.0, 0.0, 0.0])
-        r1 = _make_record(vector=v1, properties={"name": "test"})
-        await collection.upsert(records=[r1])
-
-        results = await collection.get(record_uuids=[r1.uuid], return_vector=False)
-        assert results[0].vector is None
-        assert results[0].properties is not None
-
-    @pytest.mark.asyncio
-    async def test_get_return_properties_false(self, collection):
-        v1 = _normalize([1.0, 0.0, 0.0])
-        r1 = _make_record(vector=v1, properties={"name": "test"})
-        await collection.upsert(records=[r1])
-
-        results = await collection.get(
-            record_uuids=[r1.uuid], return_vector=True, return_properties=False
-        )
-        assert results[0].vector is not None
-        assert results[0].properties is None
 
 
 # ── Delete ──
@@ -678,36 +699,34 @@ class TestGet:
 
 class TestDelete:
     @pytest.mark.asyncio
-    async def test_delete_records(self, collection):
+    async def test_delete_records(self, partition):
         v1 = _normalize([1.0, 0.0, 0.0])
         v2 = _normalize([0.0, 1.0, 0.0])
 
         r1 = _make_record(vector=v1)
         r2 = _make_record(vector=v2)
 
-        await collection.upsert(records=[r1, r2])
-        await collection.delete(record_uuids=[r1.uuid])
+        await partition.upsert(records=[r1, r2])
+        await partition.delete(record_uuids=[r1.uuid])
 
-        results = await collection.get(record_uuids=[r1.uuid, r2.uuid])
-        assert len(results) == 1
-        assert results[0].uuid == r2.uuid
+        assert set(await _stored(partition)) == {r2.uuid}
 
     @pytest.mark.asyncio
-    async def test_delete_empty_list(self, collection):
-        await collection.delete(record_uuids=[])
+    async def test_delete_empty_list(self, partition):
+        await partition.delete(record_uuids=[])
 
     @pytest.mark.asyncio
-    async def test_delete_nonexistent_uuid(self, collection):
-        await collection.delete(record_uuids=[uuid4()])
+    async def test_delete_nonexistent_uuid(self, partition):
+        await partition.delete(record_uuids=[uuid4()])
 
     @pytest.mark.asyncio
-    async def test_delete_removes_from_query(self, collection):
+    async def test_delete_removes_from_query(self, partition):
         v1 = _normalize([1.0, 0.0, 0.0])
         r1 = _make_record(vector=v1)
-        await collection.upsert(records=[r1])
-        await collection.delete(record_uuids=[r1.uuid])
+        await partition.upsert(records=[r1])
+        await partition.delete(record_uuids=[r1.uuid])
 
-        query_results = await collection.query(query_vectors=[v1], limit=10)
+        query_results = await partition.query(query_vectors=[v1], limit=10)
         assert len(query_results[0].matches) == 0
 
 
@@ -716,146 +735,142 @@ class TestDelete:
 
 class TestPartitionIsolation:
     @pytest.mark.asyncio
-    async def test_query_only_returns_own_collection(self, store):
-        config = VectorStoreCollectionConfig(vector_dimensions=VECTOR_DIM)
-        await store.create_collection(
-            namespace=NAMESPACE, name="tenant_a", config=config
-        )
-        await store.create_collection(
-            namespace=NAMESPACE, name="tenant_b", config=config
-        )
-        coll_a = await store.open_collection(namespace=NAMESPACE, name="tenant_a")
-        coll_b = await store.open_collection(namespace=NAMESPACE, name="tenant_b")
-        assert coll_a is not None
-        assert coll_b is not None
+    async def test_query_only_returns_own_partition(self, store):
+        partition_a = await _created(store)
+        partition_b = await _created(store)
 
         v1 = _normalize([1.0, 0.0, 0.0])
         r1 = _make_record(vector=v1)
         r2 = _make_record(vector=v1)
 
-        await coll_a.upsert(records=[r1])
-        await coll_b.upsert(records=[r2])
+        await partition_a.upsert(records=[r1])
+        await partition_b.upsert(records=[r2])
 
-        results_a = await coll_a.query(query_vectors=[v1], limit=10)
-        results_b = await coll_b.query(query_vectors=[v1], limit=10)
+        results_a = await partition_a.query(query_vectors=[v1], limit=10)
+        results_b = await partition_b.query(query_vectors=[v1], limit=10)
 
-        uuids_a = {match.record.uuid for match in results_a[0].matches}
-        uuids_b = {match.record.uuid for match in results_b[0].matches}
+        uuids_a = {match.record_uuid for match in results_a[0].matches}
+        uuids_b = {match.record_uuid for match in results_b[0].matches}
         assert uuids_a == {r1.uuid}
         assert uuids_b == {r2.uuid}
 
-        await store.delete_collection(namespace=NAMESPACE, name="tenant_a")
-        await store.delete_collection(namespace=NAMESPACE, name="tenant_b")
-
     @pytest.mark.asyncio
-    async def test_get_only_returns_own_collection(self, store):
-        config = VectorStoreCollectionConfig(vector_dimensions=VECTOR_DIM)
-        await store.create_collection(
-            namespace=NAMESPACE, name="tenant_a", config=config
-        )
-        await store.create_collection(
-            namespace=NAMESPACE, name="tenant_b", config=config
-        )
-        coll_a = await store.open_collection(namespace=NAMESPACE, name="tenant_a")
-        coll_b = await store.open_collection(namespace=NAMESPACE, name="tenant_b")
-        assert coll_a is not None
-        assert coll_b is not None
+    async def test_a_query_returns_only_its_own_partitions_records(self, store):
+        partition_a = await _created(store)
+        partition_b = await _created(store)
 
         v1 = _normalize([1.0, 0.0, 0.0])
         r1 = _make_record(vector=v1)
         r2 = _make_record(vector=v1)
 
-        await coll_a.upsert(records=[r1])
-        await coll_b.upsert(records=[r2])
+        await partition_a.upsert(records=[r1])
+        await partition_b.upsert(records=[r2])
 
-        results = await coll_a.get(record_uuids=[r1.uuid, r2.uuid])
-        assert len(results) == 1
-        assert results[0].uuid == r1.uuid
-
-        await store.delete_collection(namespace=NAMESPACE, name="tenant_a")
-        await store.delete_collection(namespace=NAMESPACE, name="tenant_b")
+        [result] = await partition_a.query(query_vectors=[v1], limit=10)
+        assert [match.record_uuid for match in result.matches] == [r1.uuid]
 
     @pytest.mark.asyncio
-    async def test_delete_only_affects_own_collection(self, store):
-        config = VectorStoreCollectionConfig(vector_dimensions=VECTOR_DIM)
-        await store.create_collection(
-            namespace=NAMESPACE, name="tenant_a", config=config
-        )
-        await store.create_collection(
-            namespace=NAMESPACE, name="tenant_b", config=config
-        )
-        coll_a = await store.open_collection(namespace=NAMESPACE, name="tenant_a")
-        coll_b = await store.open_collection(namespace=NAMESPACE, name="tenant_b")
-        assert coll_a is not None
-        assert coll_b is not None
+    async def test_delete_only_affects_own_partition(self, store):
+        partition_a = await _created(store)
+        partition_b = await _created(store)
 
         v1 = _normalize([1.0, 0.0, 0.0])
         r1 = _make_record(vector=v1)
         r2 = _make_record(vector=v1)
 
-        await coll_a.upsert(records=[r1])
-        await coll_b.upsert(records=[r2])
+        await partition_a.upsert(records=[r1])
+        await partition_b.upsert(records=[r2])
 
-        await coll_a.delete(record_uuids=[r2.uuid])
+        await partition_a.delete(record_uuids=[r2.uuid])
 
-        results = await coll_b.get(record_uuids=[r2.uuid])
-        assert len(results) == 1
-        assert results[0].uuid == r2.uuid
-
-        await store.delete_collection(namespace=NAMESPACE, name="tenant_a")
-        await store.delete_collection(namespace=NAMESPACE, name="tenant_b")
+        assert set(await _stored(partition_b)) == {r2.uuid}
 
     @pytest.mark.asyncio
-    async def test_namespace_isolation(self, store):
-        config = VectorStoreCollectionConfig(vector_dimensions=VECTOR_DIM)
-        await store.create_collection(
-            namespace="namespace_a", name="coll", config=config
-        )
-        await store.create_collection(
-            namespace="namespace_b", name="coll", config=config
-        )
-        coll_a = await store.open_collection(namespace="namespace_a", name="coll")
-        coll_b = await store.open_collection(namespace="namespace_b", name="coll")
-        assert coll_a is not None
-        assert coll_b is not None
+    async def test_stores_on_one_engine_are_isolated(self, store):
+        """Two stores over one engine, named differently, never see each other's rows."""
+        other = await _store_with(store, "other_store")
+        partition_a = await _created(store)
+        partition_b = await _created(other)
 
         v1 = _normalize([1.0, 0.0, 0.0])
         r1 = _make_record(vector=v1)
         r2 = _make_record(vector=v1)
 
-        await coll_a.upsert(records=[r1])
-        await coll_b.upsert(records=[r2])
+        await partition_a.upsert(records=[r1])
+        await partition_b.upsert(records=[r2])
 
-        results_a = await coll_a.query(query_vectors=[v1], limit=10)
-        assert {match.record.uuid for match in results_a[0].matches} == {r1.uuid}
+        results_a = await partition_a.query(query_vectors=[v1], limit=10)
+        assert {match.record_uuid for match in results_a[0].matches} == {r1.uuid}
 
-        await store.delete_collection(namespace="namespace_a", name="coll")
-        await store.delete_collection(namespace="namespace_b", name="coll")
+        await _purge_and_drop(store, partition_a._partition_uuid)
+        assert set(await _stored(partition_b)) == {r2.uuid}
+        await other.shutdown()
 
     @pytest.mark.asyncio
-    async def test_delete_collection_does_not_affect_sibling(self, store):
-        """Deleting one collection doesn't break a sibling sharing tables."""
-        config = VectorStoreCollectionConfig(vector_dimensions=VECTOR_DIM)
-        coll_a = await store.open_or_create_collection(
-            namespace=NAMESPACE, name="sibling_a", config=config
+    async def test_stores_of_two_names_keep_their_records_in_separate_storage(
+        self, tmp_path
+    ):
+        """Stores of two names share no storage, even on one engine and index
+        directory and under one partition UUID."""
+        index_directory = tmp_path / "indexes"
+        store, engine = await _fresh_store(
+            tmp_path / "test.db", tmp_path, save_threshold=1
         )
-        coll_b = await store.open_or_create_collection(
-            namespace=NAMESPACE, name="sibling_b", config=config
+        other = SQLiteVectorStore(
+            _params(
+                engine,
+                vector_store_name="other_store",
+                index_directory=str(index_directory),
+                save_threshold=1,
+            )
         )
+        await other.startup()
+        partition_uuid = uuid4()
+        await store.create_partition(partition_uuid)
+        await other.create_partition(partition_uuid)
+        mine = await store.get_partition(partition_uuid)
+        theirs = await other.get_partition(partition_uuid)
+        vector = _normalize([1.0, 0.0, 0.0])
+        my_record = _make_record(vector=vector)
+
+        await mine.upsert(records=[my_record])
+
+        assert await _stored(theirs) == {}
+        [result] = await theirs.query(query_vectors=[vector], limit=10)
+        assert result.matches == []
+
+        their_record = _make_record(vector=vector)
+        await theirs.upsert(records=[their_record])
+        assert len(list(index_directory.glob("*.idx"))) == 2
+
+        await _purge_and_drop(store, partition_uuid)
+
+        assert set(await _stored(theirs)) == {their_record.uuid}
+        [result] = await theirs.query(query_vectors=[vector], limit=10)
+        assert [match.record_uuid for match in result.matches] == [their_record.uuid]
+        assert len(list(index_directory.glob("*.idx"))) == 1
+
+        await other.shutdown()
+        await store.shutdown()
+        await engine.dispose()
+
+    @pytest.mark.asyncio
+    async def test_dropping_a_partition_does_not_affect_sibling(self, store):
+        """Dropping one partition leaves a sibling's records searchable."""
+        partition_a = await _created(store)
+        partition_b = await _created(store)
 
         v1 = _normalize([1.0, 0.0, 0.0])
         r1 = _make_record(vector=v1)
         r2 = _make_record(vector=v1)
-        await coll_a.upsert(records=[r1])
-        await coll_b.upsert(records=[r2])
+        await partition_a.upsert(records=[r1])
+        await partition_b.upsert(records=[r2])
 
-        await store.delete_collection(namespace=NAMESPACE, name="sibling_a")
+        await _purge_and_drop(store, partition_a._partition_uuid)
 
-        results = await coll_b.query(query_vectors=[v1], limit=10)
+        results = await partition_b.query(query_vectors=[v1], limit=10)
         assert len(results[0].matches) == 1
-        assert results[0].matches[0].record.uuid == r2.uuid
-
-        await store.delete_collection(namespace=NAMESPACE, name="sibling_b")
+        assert results[0].matches[0].record_uuid == r2.uuid
 
 
 # ── Euclidean metric ──
@@ -864,41 +879,42 @@ class TestPartitionIsolation:
 class TestEuclideanMetric:
     @pytest.mark.asyncio
     async def test_euclidean_ordering(self, store):
-        config = VectorStoreCollectionConfig(
+        euclidean = await _store_with(
+            store,
+            "euclidean",
             vector_dimensions=2,
             similarity_metric=SimilarityMetric.EUCLIDEAN,
+            indexed_properties={},
         )
-        coll = await store.open_or_create_collection(
-            namespace=NAMESPACE, name="euclidean", config=config
-        )
+        partition = await _created(euclidean)
         r1 = _make_record(vector=[0.0, 0.0])
         r2 = _make_record(vector=[3.0, 4.0])
-        await coll.upsert(records=[r1, r2])
+        await partition.upsert(records=[r1, r2])
 
-        results = await coll.query(query_vectors=[[0.0, 0.0]], limit=2)
+        results = await partition.query(query_vectors=[[0.0, 0.0]], limit=2)
         # Euclidean: lower distance = better match; best match is first
         assert results[0].matches[0].score < results[0].matches[1].score
 
-        await store.delete_collection(namespace=NAMESPACE, name="euclidean")
+        await euclidean.shutdown()
 
 
-# ── No-properties collection ──
+# ── No-properties store ──
 
 
 class TestNoProperties:
     @pytest.mark.asyncio
-    async def test_collection_without_properties(self, store):
-        config = VectorStoreCollectionConfig(vector_dimensions=2)
-        coll = await store.open_or_create_collection(
-            namespace=NAMESPACE, name="no_props", config=config
+    async def test_partition_without_properties(self, store):
+        bare = await _store_with(
+            store, "no_props", vector_dimensions=2, indexed_properties={}
         )
+        partition = await _created(bare)
         r1 = _make_record(vector=[1.0, 0.0])
-        await coll.upsert(records=[r1])
+        await partition.upsert(records=[r1])
 
-        results = await coll.query(query_vectors=[[1.0, 0.0]], limit=1)
+        results = await partition.query(query_vectors=[[1.0, 0.0]], limit=1)
         assert len(results[0].matches) == 1
 
-        await store.delete_collection(namespace=NAMESPACE, name="no_props")
+        await bare.shutdown()
 
 
 # ── USearch-specific: dot product metric ──
@@ -908,45 +924,100 @@ class TestDotProductMetric:
     @pytest.mark.asyncio
     async def test_dot_product_supported(self, store):
         """Dot product is supported by USearch but not sqlite-vec."""
-        config = VectorStoreCollectionConfig(
-            vector_dimensions=VECTOR_DIM,
-            similarity_metric=SimilarityMetric.DOT,
-        )
-        coll = await store.open_or_create_collection(
-            namespace=NAMESPACE, name="dot", config=config
-        )
+        dot = await _store_with(store, "dot", similarity_metric=SimilarityMetric.DOT)
+        partition = await _created(dot)
         v1 = _normalize([1.0, 0.0, 0.0])
         v2 = _normalize([0.0, 1.0, 0.0])
         r1 = _make_record(vector=v1)
         r2 = _make_record(vector=v2)
-        await coll.upsert(records=[r1, r2])
+        await partition.upsert(records=[r1, r2])
 
-        results = await coll.query(query_vectors=[v1], limit=2)
+        results = await partition.query(query_vectors=[v1], limit=2)
         assert len(results[0].matches) == 2
 
-        await store.delete_collection(namespace=NAMESPACE, name="dot")
+        await dot.shutdown()
 
 
 # ── Input validation ──
 
 
 class TestInputValidation:
-    @pytest.mark.asyncio
-    async def test_upsert_rejects_none_vector(self, collection):
-        record = _make_record(vector=None)
-        with pytest.raises(ValueError, match="vector=None"):
-            await collection.upsert(records=[record])
+    def test_record_requires_a_vector(self):
+        with pytest.raises(ValidationError):
+            Record.model_validate({"uuid": uuid4()})
+
+    def test_record_defaults_properties_to_empty(self):
+        record = Record(uuid=uuid4(), vector=_normalize([1.0, 0.0, 0.0]))
+        assert record.properties == {}
 
     @pytest.mark.asyncio
-    async def test_upsert_none_properties_treated_as_empty(self, collection):
-        v1 = _normalize([1.0, 0.0, 0.0])
-        record = _make_record(vector=v1, properties=None)
-        await collection.upsert(records=[record])
-        fetched = await collection.get(
-            record_uuids=[record.uuid], return_properties=True
-        )
-        assert len(fetched) == 1
-        assert fetched[0].properties == {}
+    async def test_upsert_accepts_a_record_without_properties(self, partition):
+        record = Record(uuid=uuid4(), vector=_normalize([1.0, 0.0, 0.0]))
+        await partition.upsert(records=[record])
+        assert await _stored(partition) == {record.uuid: {}}
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("key", "value"),
+        [("age", "old"), ("age", 30.5), ("age", True), ("score", 3), ("score", "high")],
+    )
+    async def test_a_declared_property_of_another_type_is_refused(
+        self, partition, key, value
+    ):
+        with pytest.raises(ValueError, match=f"{key!r} is declared"):
+            await partition.upsert(
+                records=[
+                    _make_record(
+                        vector=_normalize([1.0, 0.0, 0.0]), properties={key: value}
+                    )
+                ]
+            )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "dimensions", [VECTOR_DIM - 1, VECTOR_DIM + 1], ids=["too_short", "too_long"]
+    )
+    async def test_a_vector_of_another_width_is_refused(self, partition, dimensions):
+        vector = [1.0] * dimensions
+        with pytest.raises(ValueError, match="dimensions"):
+            await partition.upsert(records=[_make_record(vector=vector)])
+        with pytest.raises(ValueError, match="dimensions"):
+            await partition.query(query_vectors=[vector], limit=1)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("coordinate", [math.nan, math.inf], ids=["nan", "inf"])
+    async def test_a_query_vector_with_a_coordinate_that_is_not_finite_is_refused(
+        self, partition, coordinate
+    ):
+        with pytest.raises(ValueError, match="not finite"):
+            await partition.query(
+                query_vectors=[[coordinate] + [1.0] * (VECTOR_DIM - 1)], limit=1
+            )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("threshold", [math.nan, math.inf, -math.inf])
+    async def test_a_score_threshold_that_is_not_finite_is_refused(
+        self, partition, threshold
+    ):
+        with pytest.raises(ValueError, match="not finite"):
+            await partition.query(
+                query_vectors=[_normalize([1.0, 0.0, 0.0])],
+                limit=1,
+                score_threshold=threshold,
+            )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("limit", [0, -1])
+    @pytest.mark.parametrize(
+        "query_vectors",
+        [[_normalize([1.0, 0.0, 0.0])], []],
+        ids=["one_vector", "no_vectors"],
+    )
+    async def test_a_limit_that_is_not_positive_is_refused(
+        self, partition, limit, query_vectors
+    ):
+        with pytest.raises(ValueError, match="not positive"):
+            await partition.query(query_vectors=query_vectors, limit=limit)
 
 
 # ── Score semantics ──
@@ -954,37 +1025,92 @@ class TestInputValidation:
 
 class TestScoreSemantics:
     @pytest.mark.asyncio
-    async def test_cosine_higher_is_better(self, collection):
+    async def test_cosine_higher_is_better(self, partition):
         v1 = _normalize([1.0, 0.0, 0.0])
         v2 = _normalize([0.0, 1.0, 0.0])
         r1 = _make_record(vector=v1)
         r2 = _make_record(vector=v2)
-        await collection.upsert(records=[r1, r2])
+        await partition.upsert(records=[r1, r2])
 
-        results = await collection.query(query_vectors=[v1], limit=2)
+        results = await partition.query(query_vectors=[v1], limit=2)
         scores = [m.score for m in results[0].matches]
         assert scores[0] > scores[1]
 
     @pytest.mark.asyncio
     async def test_euclidean_lower_is_better(self, store):
-        config = VectorStoreCollectionConfig(
+        euclidean = await _store_with(
+            store,
+            "euclidean_score",
             vector_dimensions=2,
             similarity_metric=SimilarityMetric.EUCLIDEAN,
+            indexed_properties={},
         )
-        coll = await store.open_or_create_collection(
-            namespace=NAMESPACE, name="euclidean_score", config=config
-        )
+        partition = await _created(euclidean)
         r1 = _make_record(vector=[0.0, 0.0])
         r2 = _make_record(vector=[3.0, 4.0])
-        await coll.upsert(records=[r1, r2])
+        await partition.upsert(records=[r1, r2])
 
-        results = await coll.query(query_vectors=[[0.0, 0.0]], limit=2)
+        results = await partition.query(query_vectors=[[0.0, 0.0]], limit=2)
         scores = [m.score for m in results[0].matches]
         assert scores[0] < scores[1]
         assert scores[0] == pytest.approx(0.0, abs=0.01)
         assert scores[1] == pytest.approx(5.0, abs=0.01)
 
-        await store.delete_collection(namespace=NAMESPACE, name="euclidean_score")
+        await euclidean.shutdown()
+
+
+# A query, and vectors that each metric ranks in its own order, with no two
+# tied under any metric.
+_THRESHOLD_QUERY = [1.0, 0.0, 0.0]
+_THRESHOLD_VECTORS = [
+    [3.0, 3.0, 0.0],
+    [1.0, 0.2, 0.0],
+    [1.4, 0.4, 0.0],
+    [1.6, 0.0, 0.0],
+    [0.5, 0.05, 0.0],
+]
+
+
+class TestScoreThreshold:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "metric",
+        [SimilarityMetric.COSINE, SimilarityMetric.DOT, SimilarityMetric.EUCLIDEAN],
+    )
+    async def test_a_threshold_keeps_a_match_scoring_exactly_it(self, store, metric):
+        """A score threshold equal to a match's reported score keeps the
+        match; one a step better than that score drops it."""
+        name = f"edge_{metric.value}"
+        edged = await _store_with(
+            store, name, vector_dimensions=VECTOR_DIM, similarity_metric=metric
+        )
+        partition = await _created(edged)
+        records = [_make_record(vector=vector) for vector in _THRESHOLD_VECTORS]
+        await partition.upsert(records=records)
+        [ranked] = await partition.query(
+            query_vectors=[_THRESHOLD_QUERY], limit=len(records)
+        )
+        edge = ranked.matches[2]
+        better = math.inf if metric.higher_is_better else -math.inf
+
+        [at_edge] = await partition.query(
+            query_vectors=[_THRESHOLD_QUERY],
+            limit=len(records),
+            score_threshold=edge.score,
+        )
+        [past_edge] = await partition.query(
+            query_vectors=[_THRESHOLD_QUERY],
+            limit=len(records),
+            score_threshold=math.nextafter(edge.score, better),
+        )
+
+        assert [match.record_uuid for match in at_edge.matches] == [
+            match.record_uuid for match in ranked.matches[:3]
+        ]
+        assert [match.record_uuid for match in past_edge.matches] == [
+            match.record_uuid for match in ranked.matches[:2]
+        ]
+        await edged.shutdown()
 
 
 # ── Upsert behavior ──
@@ -992,30 +1118,26 @@ class TestScoreSemantics:
 
 class TestUpsertBehavior:
     @pytest.mark.asyncio
-    async def test_upsert_replaces_vector_and_properties(self, collection):
+    async def test_upsert_replaces_vector_and_properties(self, partition):
         v1 = _normalize([1.0, 0.0, 0.0])
         v2 = _normalize([0.0, 1.0, 0.0])
         record_uuid = uuid4()
 
-        await collection.upsert(
+        await partition.upsert(
             records=[
                 _make_record(uuid=record_uuid, vector=v1, properties={"name": "alice"})
             ]
         )
-        await collection.upsert(
+        await partition.upsert(
             records=[
                 _make_record(uuid=record_uuid, vector=v2, properties={"name": "bob"})
             ]
         )
 
-        fetched = await collection.get(
-            record_uuids=[record_uuid], return_vector=True, return_properties=True
-        )
-        assert len(fetched) == 1
-        assert fetched[0].properties["name"] == "bob"
+        assert await _stored(partition) == {record_uuid: {"name": "bob"}}
 
-        results = await collection.query(query_vectors=[v2], limit=1)
-        assert results[0].matches[0].record.uuid == record_uuid
+        results = await partition.query(query_vectors=[v2], limit=1)
+        assert results[0].matches[0].record_uuid == record_uuid
         assert results[0].matches[0].score == pytest.approx(1.0, abs=0.01)
 
 
@@ -1024,7 +1146,7 @@ class TestUpsertBehavior:
 
 class TestConcurrentAsync:
     @pytest.mark.asyncio
-    async def test_concurrent_upserts(self, collection):
+    async def test_concurrent_upserts(self, partition):
         """Multiple concurrent upserts should not error and all records should be persisted."""
         import asyncio
 
@@ -1036,7 +1158,7 @@ class TestConcurrentAsync:
                 for i in range(start, start + 10)
             ]
             all_uuids.extend(r.uuid for r in records)
-            await collection.upsert(records=records)
+            await partition.upsert(records=records)
 
         await asyncio.gather(
             upsert_batch(0),
@@ -1045,22 +1167,21 @@ class TestConcurrentAsync:
         )
 
         # Verify all records were persisted (deterministic, not ANN-dependent).
-        fetched = await collection.get(record_uuids=all_uuids)
-        assert len(fetched) == 30
+        assert set(await _stored(partition)) == set(all_uuids)
 
     @pytest.mark.asyncio
-    async def test_concurrent_upsert_and_query(self, collection):
+    async def test_concurrent_upsert_and_query(self, partition):
         """Query during upsert should not error (eventual consistency)."""
         import asyncio
 
         records = [
             _make_record(vector=_normalize([float(i), 1.0, 0.0])) for i in range(20)
         ]
-        await collection.upsert(records=records)
+        await partition.upsert(records=records)
 
         async def query_loop() -> None:
             for _ in range(5):
-                await collection.query(
+                await partition.query(
                     query_vectors=[_normalize([1.0, 1.0, 0.0])], limit=10
                 )
 
@@ -1069,30 +1190,45 @@ class TestConcurrentAsync:
                 _make_record(vector=_normalize([float(i), 0.0, 1.0]))
                 for i in range(20, 30)
             ]
-            await collection.upsert(records=more_records)
+            await partition.upsert(records=more_records)
 
         await asyncio.gather(query_loop(), upsert_more())
+
+    @pytest.mark.asyncio
+    async def test_concurrent_first_get_partition_calls_share_one_search_engine(
+        self, tmp_path
+    ):
+        db_path = tmp_path / "test.db"
+        creator, creator_engine = await _fresh_store(db_path, tmp_path)
+        partition_uuid = (await _created(creator))._partition_uuid
+        await creator.shutdown()
+        await creator_engine.dispose()
+
+        # A restarted store, whose first get_partition calls load the saved index.
+        store, engine = await _fresh_store(db_path, tmp_path)
+        first, second = await asyncio.gather(
+            store.get_partition(partition_uuid),
+            store.get_partition(partition_uuid),
+        )
+        record = _make_record(vector=_normalize([1.0, 0.0, 0.0]))
+        await first.upsert(records=[record])
+        [result] = await second.query(query_vectors=[record.vector], limit=1)
+        assert [match.record_uuid for match in result.matches] == [record.uuid]
+
+        await store.shutdown()
+        await engine.dispose()
 
 
 # ── Crash recovery & pending operations ──
 
 
-def _engine_factory(ndim, metric):
-    return USearchVectorSearchEngine(num_dimensions=ndim, similarity_metric=metric)
-
-
-CONFIG = VectorStoreCollectionConfig(
-    vector_dimensions=VECTOR_DIM,
-    similarity_metric=SimilarityMetric.COSINE,
-)
-
-
 async def _fresh_store(db_path, tmp_path, *, save_threshold=1000):
     """Create a new SQLiteVectorStore against the same DB file."""
     engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}")
-    params = SQLiteVectorStoreParams(
-        sqlalchemy_engine=engine,
-        vector_search_engine_factory=_engine_factory,
+    enable_sqlite_explicit_begin(engine)
+    enable_sqlite_foreign_keys(engine)
+    params = _params(
+        engine,
         index_directory=str(tmp_path / "indexes"),
         save_threshold=save_threshold,
     )
@@ -1119,6 +1255,20 @@ async def _set_all_pending_operations_unapplied(engine) -> None:
         await session.execute(update(_PendingOperationRow).values(applied=False))
 
 
+async def _unapplied_operation_counts(engine) -> dict[str, int]:
+    """Count unapplied pending operations by the vector store they belong to."""
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with session_factory() as session:
+        rows = (
+            await session.execute(
+                select(_PendingOperationRow.vector_store_name, func.count())
+                .where(_PendingOperationRow.applied.is_(False))
+                .group_by(_PendingOperationRow.vector_store_name)
+            )
+        ).all()
+    return {row[0]: row[1] for row in rows}
+
+
 class TestCrashRecovery:
     """Tests for pending operations replay on startup."""
 
@@ -1128,24 +1278,21 @@ class TestCrashRecovery:
         db_path = tmp_path / "test.db"
         store1, engine1 = await _fresh_store(db_path, tmp_path)
 
-        coll = await store1.open_or_create_collection(
-            namespace=NAMESPACE, name=NAME, config=CONFIG
-        )
+        partition = await _created(store1)
         records = [
             _make_record(vector=_normalize([1.0, 0.0, 0.0])),
             _make_record(vector=_normalize([0.0, 1.0, 0.0])),
         ]
-        await coll.upsert(records=records)
+        await partition.upsert(records=records)
 
         # Simulate crash: dispose without shutdown (pending ops remain).
         await engine1.dispose()
 
         # Restart with fresh in-memory engines.
         store2, engine2 = await _fresh_store(db_path, tmp_path)
-        coll2 = await store2.open_collection(namespace=NAMESPACE, name=NAME)
-        assert coll2 is not None
+        partition_2 = await store2.get_partition(partition._partition_uuid)
 
-        results = await coll2.query(
+        results = await partition_2.query(
             query_vectors=[_normalize([1.0, 0.0, 0.0])], limit=10
         )
         assert len(results[0].matches) == 2
@@ -1159,14 +1306,12 @@ class TestCrashRecovery:
         db_path = tmp_path / "test.db"
         store1, engine1 = await _fresh_store(db_path, tmp_path)
 
-        coll = await store1.open_or_create_collection(
-            namespace=NAMESPACE, name=NAME, config=CONFIG
-        )
+        partition = await _created(store1)
         records = [
             _make_record(vector=_normalize([1.0, 0.0, 0.0])),
             _make_record(vector=_normalize([0.0, 1.0, 0.0])),
         ]
-        await coll.upsert(records=records)
+        await partition.upsert(records=records)
 
         # Simulate crash between SQLite commit and engine apply:
         # mark all pending ops as unapplied.
@@ -1175,13 +1320,33 @@ class TestCrashRecovery:
 
         # Restart: replay should re-apply unapplied ops to the engine.
         store2, engine2 = await _fresh_store(db_path, tmp_path)
-        coll2 = await store2.open_collection(namespace=NAMESPACE, name=NAME)
-        assert coll2 is not None
+        partition_2 = await store2.get_partition(partition._partition_uuid)
 
-        results = await coll2.query(
+        results = await partition_2.query(
             query_vectors=[_normalize([1.0, 0.0, 0.0])], limit=10
         )
         assert len(results[0].matches) == 2
+
+        await store2.shutdown()
+        await engine2.dispose()
+
+    @pytest.mark.asyncio
+    async def test_replay_applies_only_its_own_stores_operations(self, tmp_path):
+        """A store's startup replays its own partitions' operations, not another store's."""
+        db_path = tmp_path / "test.db"
+        store1, engine1 = await _fresh_store(db_path, tmp_path)
+        other = await _store_with(store1, "other_store")
+        for vector_store in (store1, other):
+            partition = await _created(vector_store)
+            await partition.upsert(
+                records=[_make_record(vector=_normalize([1.0, 0.0, 0.0]))]
+            )
+
+        await _set_all_pending_operations_unapplied(engine1)
+        await engine1.dispose()
+
+        store2, engine2 = await _fresh_store(db_path, tmp_path)
+        assert await _unapplied_operation_counts(engine2) == {"other_store": 1}
 
         await store2.shutdown()
         await engine2.dispose()
@@ -1192,28 +1357,24 @@ class TestCrashRecovery:
         db_path = tmp_path / "test.db"
         store1, engine1 = await _fresh_store(db_path, tmp_path)
 
-        coll = await store1.open_or_create_collection(
-            namespace=NAMESPACE, name=NAME, config=CONFIG
-        )
+        partition = await _created(store1)
         r1 = _make_record(vector=_normalize([1.0, 0.0, 0.0]))
         r2 = _make_record(vector=_normalize([0.0, 1.0, 0.0]))
-        await coll.upsert(records=[r1, r2])
-        await coll.delete(record_uuids=[r1.uuid])
+        await partition.upsert(records=[r1, r2])
+        await partition.delete(record_uuids=[r1.uuid])
 
         # Simulate crash.
         await engine1.dispose()
 
         store2, engine2 = await _fresh_store(db_path, tmp_path)
-        coll2 = await store2.open_collection(namespace=NAMESPACE, name=NAME)
-        assert coll2 is not None
+        partition_2 = await store2.get_partition(partition._partition_uuid)
 
-        results = await coll2.query(
+        results = await partition_2.query(
             query_vectors=[_normalize([1.0, 0.0, 0.0])], limit=10
         )
         assert len(results[0].matches) == 1
 
-        fetched = await coll2.get(record_uuids=[r1.uuid])
-        assert len(fetched) == 0
+        assert r1.uuid not in await _stored(partition_2)
 
         await store2.shutdown()
         await engine2.dispose()
@@ -1224,32 +1385,25 @@ class TestCrashRecovery:
         db_path = tmp_path / "test.db"
         store1, engine1 = await _fresh_store(db_path, tmp_path)
 
-        coll = await store1.open_or_create_collection(
-            namespace=NAMESPACE, name=NAME, config=CONFIG
-        )
+        partition = await _created(store1)
         r1 = _make_record(vector=_normalize([1.0, 0.0, 0.0]))
         r2 = _make_record(vector=_normalize([0.0, 1.0, 0.0]))
         r3 = _make_record(vector=_normalize([0.0, 0.0, 1.0]))
-        await coll.upsert(records=[r1, r2, r3])
-        await coll.delete(record_uuids=[r2.uuid])
+        await partition.upsert(records=[r1, r2, r3])
+        await partition.delete(record_uuids=[r2.uuid])
 
         # Simulate crash.
         await engine1.dispose()
 
         store2, engine2 = await _fresh_store(db_path, tmp_path)
-        coll2 = await store2.open_collection(namespace=NAMESPACE, name=NAME)
-        assert coll2 is not None
+        partition_2 = await store2.get_partition(partition._partition_uuid)
 
-        results = await coll2.query(
+        results = await partition_2.query(
             query_vectors=[_normalize([1.0, 0.0, 0.0])], limit=10
         )
         assert len(results[0].matches) == 2
 
-        fetched = await coll2.get(record_uuids=[r1.uuid, r2.uuid, r3.uuid])
-        fetched_uuids = {r.uuid for r in fetched}
-        assert r1.uuid in fetched_uuids
-        assert r2.uuid not in fetched_uuids
-        assert r3.uuid in fetched_uuids
+        assert set(await _stored(partition_2)) == {r1.uuid, r3.uuid}
 
         await store2.shutdown()
         await engine2.dispose()
@@ -1260,18 +1414,16 @@ class TestCrashRecovery:
         db_path = tmp_path / "test.db"
         store1, engine1 = await _fresh_store(db_path, tmp_path, save_threshold=2)
 
-        coll = await store1.open_or_create_collection(
-            namespace=NAMESPACE, name=NAME, config=CONFIG
-        )
+        partition = await _created(store1)
 
         # Upsert 1 record: below threshold, pending op should remain.
         r1 = _make_record(vector=_normalize([1.0, 0.0, 0.0]))
-        await coll.upsert(records=[r1])
+        await partition.upsert(records=[r1])
         assert await _pending_operation_count(engine1) == 1
 
         # Upsert 1 more: reaches threshold of 2, should trigger save + cleanup.
         r2 = _make_record(vector=_normalize([0.0, 1.0, 0.0]))
-        await coll.upsert(records=[r2])
+        await partition.upsert(records=[r2])
         assert await _pending_operation_count(engine1) == 0
 
         await store1.shutdown()
@@ -1279,21 +1431,19 @@ class TestCrashRecovery:
 
     @pytest.mark.asyncio
     async def test_cascade_deletes_pending_ops(self, tmp_path):
-        """Deleting a collection cascades to its pending operations."""
+        """Dropping a partition cascades to its pending operations."""
         db_path = tmp_path / "test.db"
         store1, engine1 = await _fresh_store(db_path, tmp_path)
 
-        coll = await store1.open_or_create_collection(
-            namespace=NAMESPACE, name=NAME, config=CONFIG
-        )
+        partition = await _created(store1)
         records = [
             _make_record(vector=_normalize([1.0, 0.0, 0.0])),
             _make_record(vector=_normalize([0.0, 1.0, 0.0])),
         ]
-        await coll.upsert(records=records)
+        await partition.upsert(records=records)
         assert await _pending_operation_count(engine1) == 2
 
-        await store1.delete_collection(namespace=NAMESPACE, name=NAME)
+        await _purge_and_drop(store1, partition._partition_uuid)
         assert await _pending_operation_count(engine1) == 0
 
         await store1.shutdown()
@@ -1304,21 +1454,18 @@ class TestCrashRecovery:
         """Store methods raise RuntimeError before startup."""
         db_path = tmp_path / "test.db"
         engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}")
-        store = SQLiteVectorStore(
-            SQLiteVectorStoreParams(
-                sqlalchemy_engine=engine,
-                vector_search_engine_factory=_engine_factory,
-            )
-        )
+        enable_sqlite_explicit_begin(engine)
+        enable_sqlite_foreign_keys(engine)
+        store = SQLiteVectorStore(_params(engine))
 
         with pytest.raises(RuntimeError, match="startup"):
-            await store.open_collection(namespace=NAMESPACE, name=NAME)
+            await store.create_partition(uuid4())
 
         with pytest.raises(RuntimeError, match="startup"):
-            await store.create_collection(namespace=NAMESPACE, name=NAME, config=CONFIG)
+            await store.get_partition(uuid4())
 
         with pytest.raises(RuntimeError, match="startup"):
-            await store.delete_collection(namespace=NAMESPACE, name=NAME)
+            await store.drop_partition(uuid4())
 
         await engine.dispose()
 
@@ -1326,14 +1473,15 @@ class TestCrashRecovery:
 # ── Index file durability contract ──
 
 
-async def _get_index_saved(engine, namespace, name) -> bool | None:
+async def _get_index_saved(engine, partition_uuid: UUID) -> bool | None:
+    """The index_saved flag of the test store's partition, or None if it has no row."""
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     async with session_factory() as session:
         return (
             await session.execute(
-                select(_CollectionRow.index_saved).where(
-                    _CollectionRow.namespace == namespace,
-                    _CollectionRow.name == name,
+                select(_PartitionRow.index_saved).where(
+                    _PartitionRow.vector_store_name == VECTOR_STORE_NAME,
+                    _PartitionRow.partition_uuid == partition_uuid,
                 )
             )
         ).scalar_one_or_none()
@@ -1344,14 +1492,12 @@ class TestIndexFileDurability:
 
     @pytest.mark.asyncio
     async def test_saved_flag_starts_false(self, tmp_path):
-        """A freshly created collection has index_saved=False."""
+        """A freshly created partition has index_saved=False."""
         db_path = tmp_path / "test.db"
         store, engine = await _fresh_store(db_path, tmp_path)
-        await store.open_or_create_collection(
-            namespace=NAMESPACE, name=NAME, config=CONFIG
-        )
+        partition = await _created(store)
 
-        assert await _get_index_saved(engine, NAMESPACE, NAME) is False
+        assert await _get_index_saved(engine, partition._partition_uuid) is False
 
         await store.shutdown()
         await engine.dispose()
@@ -1362,12 +1508,12 @@ class TestIndexFileDurability:
         db_path = tmp_path / "test.db"
         store, engine = await _fresh_store(db_path, tmp_path, save_threshold=1)
 
-        coll = await store.open_or_create_collection(
-            namespace=NAMESPACE, name=NAME, config=CONFIG
+        partition = await _created(store)
+        await partition.upsert(
+            records=[_make_record(vector=_normalize([1.0, 0.0, 0.0]))]
         )
-        await coll.upsert(records=[_make_record(vector=_normalize([1.0, 0.0, 0.0]))])
 
-        assert await _get_index_saved(engine, NAMESPACE, NAME) is True
+        assert await _get_index_saved(engine, partition._partition_uuid) is True
 
         await store.shutdown()
         await engine.dispose()
@@ -1378,16 +1524,41 @@ class TestIndexFileDurability:
         db_path = tmp_path / "test.db"
         store, engine = await _fresh_store(db_path, tmp_path, save_threshold=1000)
 
-        coll = await store.open_or_create_collection(
-            namespace=NAMESPACE, name=NAME, config=CONFIG
+        partition = await _created(store)
+        await partition.upsert(
+            records=[_make_record(vector=_normalize([1.0, 0.0, 0.0]))]
         )
-        await coll.upsert(records=[_make_record(vector=_normalize([1.0, 0.0, 0.0]))])
 
         # Below save_threshold, so _maybe_save_index has not flipped the flag yet.
-        assert await _get_index_saved(engine, NAMESPACE, NAME) is False
+        assert await _get_index_saved(engine, partition._partition_uuid) is False
 
         await store.shutdown()
-        assert await _get_index_saved(engine, NAMESPACE, NAME) is True
+        assert await _get_index_saved(engine, partition._partition_uuid) is True
+
+        await engine.dispose()
+
+    @pytest.mark.asyncio
+    async def test_shutdown_closes_the_connections_a_filtered_query_opened(
+        self, tmp_path
+    ):
+        db_path = tmp_path / "test.db"
+        store, engine = await _fresh_store(db_path, tmp_path)
+
+        partition = await _created(store)
+        vector = _normalize([1.0, 0.0, 0.0])
+        await partition.upsert(
+            records=[_make_record(vector=vector, properties={"name": "alice"})]
+        )
+        await partition.query(
+            query_vectors=[vector],
+            limit=1,
+            property_filter=Comparison(field="name", op="=", value="alice"),
+        )
+        pool = store._sync_sqlalchemy_engine.pool
+        assert pool.checkedin() == 1
+
+        await store.shutdown()
+        assert pool.checkedin() == 0
 
         await engine.dispose()
 
@@ -1397,10 +1568,10 @@ class TestIndexFileDurability:
         db_path = tmp_path / "test.db"
         store1, engine1 = await _fresh_store(db_path, tmp_path)
 
-        coll = await store1.open_or_create_collection(
-            namespace=NAMESPACE, name=NAME, config=CONFIG
+        partition = await _created(store1)
+        await partition.upsert(
+            records=[_make_record(vector=_normalize([1.0, 0.0, 0.0]))]
         )
-        await coll.upsert(records=[_make_record(vector=_normalize([1.0, 0.0, 0.0]))])
         await store1.shutdown()
         await engine1.dispose()
 
@@ -1410,13 +1581,13 @@ class TestIndexFileDurability:
         assert len(idx_files) == 1
         idx_files[0].unlink()
 
-        # Restart: open_collection must surface the failure, not return an
-        # engine silently rebuilt empty.
+        # Restart: get_partition raises the load failure instead of
+        # returning an engine rebuilt empty.
         store2, engine2 = await _fresh_store(db_path, tmp_path)
         with pytest.raises(IndexLoadError) as exc_info:
-            await store2.open_collection(namespace=NAMESPACE, name=NAME)
-        assert exc_info.value.namespace == NAMESPACE
-        assert exc_info.value.name == NAME
+            await store2.get_partition(partition._partition_uuid)
+        assert exc_info.value.vector_store_name == VECTOR_STORE_NAME
+        assert exc_info.value.partition_uuid == partition._partition_uuid
         assert exc_info.value.__cause__ is not None
 
         await store2.shutdown()
@@ -1428,10 +1599,10 @@ class TestIndexFileDurability:
         db_path = tmp_path / "test.db"
         store1, engine1 = await _fresh_store(db_path, tmp_path)
 
-        coll = await store1.open_or_create_collection(
-            namespace=NAMESPACE, name=NAME, config=CONFIG
+        partition = await _created(store1)
+        await partition.upsert(
+            records=[_make_record(vector=_normalize([1.0, 0.0, 0.0]))]
         )
-        await coll.upsert(records=[_make_record(vector=_normalize([1.0, 0.0, 0.0]))])
         await store1.shutdown()
         await engine1.dispose()
 
@@ -1442,9 +1613,9 @@ class TestIndexFileDurability:
 
         store2, engine2 = await _fresh_store(db_path, tmp_path)
         with pytest.raises(IndexLoadError) as exc_info:
-            await store2.open_collection(namespace=NAMESPACE, name=NAME)
-        assert exc_info.value.namespace == NAMESPACE
-        assert exc_info.value.name == NAME
+            await store2.get_partition(partition._partition_uuid)
+        assert exc_info.value.vector_store_name == VECTOR_STORE_NAME
+        assert exc_info.value.partition_uuid == partition._partition_uuid
         assert exc_info.value.__cause__ is not None
 
         await store2.shutdown()
@@ -1456,10 +1627,8 @@ class TestIndexFileDurability:
         db_path = tmp_path / "test.db"
         store1, engine1 = await _fresh_store(db_path, tmp_path, save_threshold=1000)
 
-        coll = await store1.open_or_create_collection(
-            namespace=NAMESPACE, name=NAME, config=CONFIG
-        )
-        await coll.upsert(
+        partition = await _created(store1)
+        await partition.upsert(
             records=[
                 _make_record(vector=_normalize([1.0, 0.0, 0.0])),
                 _make_record(vector=_normalize([0.0, 1.0, 0.0])),
@@ -1473,13 +1642,141 @@ class TestIndexFileDurability:
         )
 
         store2, engine2 = await _fresh_store(db_path, tmp_path)
-        coll2 = await store2.open_collection(namespace=NAMESPACE, name=NAME)
-        assert coll2 is not None
+        partition_2 = await store2.get_partition(partition._partition_uuid)
 
-        results = await coll2.query(
+        results = await partition_2.query(
             query_vectors=[_normalize([1.0, 0.0, 0.0])], limit=10
         )
         assert len(results[0].matches) == 2
 
         await store2.shutdown()
         await engine2.dispose()
+
+
+# ── Partition resources ──
+
+
+async def _table_names(engine) -> set[str]:
+    async with engine.connect() as connection:
+        return set(
+            await connection.run_sync(
+                lambda sync_connection: inspect(sync_connection).get_table_names()
+            )
+        )
+
+
+class TestPartitionResources:
+    """A partition's tables and index file exist until it is dropped."""
+
+    @pytest.mark.asyncio
+    async def test_dropping_a_partition_leaves_no_tables_or_index_files(self, tmp_path):
+        store, engine = await _fresh_store(
+            tmp_path / "test.db", tmp_path, save_threshold=1
+        )
+        baseline = await _table_names(engine)
+        partition = await _created(store)
+        await partition.upsert(
+            records=[_make_record(vector=_normalize([1.0, 0.0, 0.0]))]
+        )
+        assert len(await _table_names(engine) - baseline) == 1
+        assert len(list((tmp_path / "indexes").glob("*.idx"))) == 1
+
+        await _purge_and_drop(store, partition._partition_uuid)
+
+        assert await _table_names(engine) == baseline
+        assert list((tmp_path / "indexes").glob("*.idx")) == []
+
+        await store.shutdown()
+        await engine.dispose()
+
+    @pytest.mark.asyncio
+    async def test_a_get_partition_call_that_loses_a_race_leaves_the_winners_engine(
+        self, tmp_path
+    ):
+        """Both handles' records survive a restart, saved from the one engine they hold."""
+        db_path = tmp_path / "test.db"
+        store1, engine1 = await _fresh_store(db_path, tmp_path)
+        partition_uuid = uuid4()
+        await store1.create_partition(partition_uuid)
+        partitions = await asyncio.gather(
+            store1.get_partition(partition_uuid),
+            store1.get_partition(partition_uuid),
+        )
+        records = [
+            _make_record(vector=_normalize([1.0, 0.0, 0.0])),
+            _make_record(vector=_normalize([0.0, 1.0, 0.0])),
+        ]
+        for partition, record in zip(partitions, records, strict=True):
+            await partition.upsert(records=[record])
+        await store1.shutdown()
+        await engine1.dispose()
+
+        store2, engine2 = await _fresh_store(db_path, tmp_path)
+        partition = await store2.get_partition(partition_uuid)
+        [found] = await partition.query(query_vectors=[records[0].vector], limit=5)
+        assert {match.record_uuid for match in found.matches} == {
+            record.uuid for record in records
+        }
+
+        await store2.shutdown()
+        await engine2.dispose()
+
+    @pytest.mark.asyncio
+    async def test_concurrent_creations_of_a_partition_leave_one_table(self, store):
+        engine = store._sqlalchemy_engine
+        baseline = await _table_names(engine)
+        partition_uuid = uuid4()
+
+        await asyncio.gather(
+            store.create_partition(partition_uuid),
+            store.create_partition(partition_uuid),
+        )
+
+        assert len(await _table_names(engine) - baseline) == 1
+        await _purge_and_drop(store, partition_uuid)
+        assert await _table_names(engine) == baseline
+
+    @pytest.mark.asyncio
+    async def test_a_save_that_a_drop_overtakes_leaves_no_index_file(self, tmp_path):
+        """A save that finds its partition dropped removes the file it wrote."""
+        stores: list[SQLiteVectorStore] = []
+        partition_uuid = uuid4()
+
+        class _DroppedWhileSaving(USearchVectorSearchEngine):
+            async def save(self, path: str) -> None:
+                await _purge_and_drop(stores[0], partition_uuid)
+                await super().save(path)
+
+        engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'test.db'}")
+        enable_sqlite_explicit_begin(engine)
+        enable_sqlite_foreign_keys(engine)
+        store = SQLiteVectorStore(
+            _params(
+                engine,
+                index_directory=str(tmp_path / "indexes"),
+                save_threshold=1,
+                vector_search_engine_factory=lambda ndim, metric: _DroppedWhileSaving(
+                    num_dimensions=ndim, similarity_metric=metric
+                ),
+            )
+        )
+        stores.append(store)
+        await store.startup()
+        await store.create_partition(partition_uuid)
+        partition = await store.get_partition(partition_uuid)
+
+        # Crossing the save threshold saves the index, and the drop commits
+        # while the file is written.
+        await partition.upsert(
+            records=[_make_record(vector=_normalize([1.0, 0.0, 0.0]))]
+        )
+
+        assert list((tmp_path / "indexes").glob("*.idx")) == []
+
+        await store.shutdown()
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_the_store_answers_the_schema_it_was_built_with(store):
+    assert store.store_schema == _schema()

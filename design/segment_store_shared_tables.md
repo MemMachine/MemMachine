@@ -1,34 +1,30 @@
-# Segment store: shared tables with incarnation-scoped tenant keys
-
-Status: accepted 2026-08-31. Supersedes the per-tenant partitioned layout of
-the SQLAlchemy segment store on all dialects.
+# Segment store: shared tables keyed by partition UUID
 
 ## Problem
 
-On PostgreSQL, every partition (tenant) had its own pair of child tables
-under LIST-partitioned parents, created and dropped by per-tenant DDL. That
-layout produced a family of defects, each diagnosed and measured on the way
-here:
+On PostgreSQL, giving every partition (tenant) its own pair of child tables
+under LIST-partitioned parents, created and dropped by per-tenant DDL,
+produces a family of defects, each diagnosed and measured:
 
-- `DROP ... CASCADE` of one tenant's child tables removed the store-wide
+- `DROP ... CASCADE` of one tenant's child tables removes the store-wide
   parent-level foreign key, ending referential integrity for every other
   tenant (#1544).
-- Any statement with the partition key as a bind parameter switched to a
+- Any statement with the partition key as a bind parameter switches to a
   cached generic plan after five executions, and a generic plan locks every
   child partition per execution: 9 locks per read with a custom plan, 319
   with the generic plan at 316 partitions, and HTTP 500 `out of shared
   memory` under 128-way concurrency (#1546).
 - PostgreSQL's foreign-key integrity triggers address the partitioned
-  parents internally, so writes and deletes kept a per-backend lock spike
-  proportional to partition count even after the client statements were
-  fixed (10 -> 166 -> 10 locks across the generic-plan attempt).
-- Create and delete DDL against the shared parents deadlocked with writers
-  and with each other, on upstream and on every intermediate fix.
-- Each fix added machinery: detach-before-drop, a store-wide management
-  lock, per-partition ORM entities with a memoized cache, statement-cache
-  tuning.
+  parents internally, so writes and deletes keep a per-backend lock spike
+  proportional to partition count even with custom plans for the client
+  statements (10 -> 166 -> 10 locks across the generic-plan attempt).
+- Create and delete DDL against the shared parents deadlocks with writers
+  and with each other, in every variant of the layout measured.
+- Each workaround adds machinery: detach-before-drop, a store-wide
+  management lock, per-partition ORM entities with a memoized cache,
+  statement-cache tuning.
 
-Two scaling requirements then ruled out every per-tenant-table layout:
+Two scaling requirements rule out every per-tenant-table layout:
 tenant creation must stay cheap up to hundreds of thousands to millions of
 tenants (a per-tenant table costs about 5 catalog relations plus disk
 files, which PostgreSQL does not survive at those counts), and a single
@@ -38,180 +34,251 @@ tenant may hold tens of thousands to tens of millions of rows.
 
 One physical schema on every dialect; the ORM models are the tables.
 
-- `segment_store_pt`, the tenant registry: one row per live tenant, holding
-  the logical partition key (primary key), an `incarnation` (a random UUID
-  minted at creation, unique-constrained), and the payload codec config.
+The store holds no tenant names. Its owner's [partition
+registry](partition_registry.md) names each tenant's partition and mints its
+`partition_uuid` (a random UUID), a new one each time the name is created
+again; the store addresses everything by partition UUID.
+
+- `segment_store_pt`: one row per created partition, holding its payload
+  codec config and, while the partition is purged, the purge's cursor, the
+  last segment key purged.
 - `segment_store_sg` and `segment_store_dv_ln`, the segment and
   derivative-link tables, shared by all tenants and not partitioned. Rows
-  carry no logical key; they are keyed by the incarnation alone, so a data
-  query cannot be built without resolving the registry first, and
+  carry no tenant name; they are keyed by the partition's UUID alone, so
   addressing the wrong tenant is structurally impossible rather than
   guarded against. A 16-byte UUID also keeps index entries narrower than a
   composite string key, and random UUIDs are unique across nodes without
   coordination, so a tenant's rows move between databases verbatim.
-- `segment_store_gc`, the purge queue: one row per dead incarnation, with
-  the logical key kept for forensics and the purge's cursor, the last
-  segment key purged.
 
 The link table keeps its foreign key to the segment table (`ON DELETE
-CASCADE`), both sides keyed by incarnation. The segment table has no
-foreign key to the registry: registry rows and data rows are decoupled so
-that registry deletion is O(1), and the rows left behind are exactly what
-the purge queue tracks.
+CASCADE`), both sides keyed by partition UUID. The segment table has no
+foreign key to the partition's row: the purge deletes a partition's
+segments in batches, and the drop deletes its row once the purge finds
+none.
 
-An incarnation value cannot be reused while any trace of it remains. A
-collision with a live incarnation violates the registry's unique
-constraint. A collision with one whose garbage is still awaiting purge is
-caught by re-checking the purge queue inside the mint transaction, after
-the registry insert: a concurrent deletion moving the colliding row to the
-queue is visible by the time the insert's unique-index wait resolves, and
-no new queue entry for the minted value can appear before commit, because
-the only registry row carrying it is the uncommitted one. The queue's
-primary key rejects double enqueueing. Across databases, uniqueness rests
-on random-UUID collision resistance.
-
-"Incarnation" is the established term for a per-lifetime random identifier
-(cf. Kafka's broker incarnation ID). It is deliberately not "generation" or
-"epoch", which would imply ordered, comparable values.
+A name with a UUID minted for each object created under it is the pattern
+of a Kubernetes object's name and UID, and of a Kafka topic's name and topic
+ID: an object deleted and created again under the same name is a new object
+with a new UUID.
 
 ### Tenant lifecycle
 
-- **Create**: validate the logical key, mint an incarnation, insert the
-  registry row and re-check the purge queue in one transaction. No DDL, no
-  management lock, microseconds. A committed row under the key raises the
-  partition-exists error. Any other integrity rejection, or a minted
-  incarnation found in the purge queue, is retried with a fresh incarnation
-  up to `_MAX_MINT_ATTEMPTS`; a persistent failure raises
-  `SegmentStoreAttemptsExhaustedError` with the database error chained.
-- **Open**: read the registry row. The handle captures the logical key, the
-  incarnation, and the codec.
-- **Delete**: one transaction: lock the registry row (`SELECT ... FOR
-  UPDATE`, which waits out in-flight writers holding `FOR SHARE` pins),
-  insert the incarnation into the purge queue, delete the registry row.
-  O(1) regardless of tenant size, and the tenant is unreachable at once
-  because every operation resolves the registry first.
-- **Re-create**: a new registry row with a fresh incarnation, safe at any
-  time; the old incarnation's rows are invisible to the successor even
-  while the purger is still sweeping them.
-- **Purge**: `purge_deleted_partitions() -> bool` on the `SegmentStore`
-  ABC, the sweeper: it claims the oldest entry across all keys, returns
-  True while more work may remain, and the caller's whole protocol is
-  "call until False"; how much one call does is implementation policy. The caller is promised only that a call
-  does not noticeably degrade concurrent request serving, and every bound
-  below exists to keep that promise. The deletion contract is "unreachable
-  immediately, erased asynchronously".
+- **Create**: insert the partition's row with the store's codec config. No
+  DDL, no lock beyond the row. Creating again with the same config changes
+  nothing; a different config raises the config-mismatch error.
+- **Get**: read the partition's row. The handle captures the partition's
+  UUID and the codec.
+- **Delete** is the owner's: deleting the tenant's name in its registry is
+  O(1) regardless of tenant size, and the tenant is unreachable at once. The
+  store is not called.
+- **Re-create**: the owner creates a new partition under the name, under a
+  fresh UUID its registry mints, safe at any time; the old partition's rows
+  are invisible to the new partition even while the purge sweeps them.
+- **Purge and drop**: `purge_partition(partition_uuid) -> bool` and
+  `drop_partition(partition_uuid)`, the `PartitionedStore` steps. The
+  owner's partition manager calls the purge for a deleted partition once
+  the retention has passed, round after round, and calls the drop, which
+  deletes the partition's row, once no store's purge finds records. How much
+  one call does is the store's choice. This store bounds each call so that
+  it does not noticeably degrade concurrent request serving, and every bound
+  below exists for that. The deletion contract is "unreachable immediately,
+  erased asynchronously".
 
   - One transaction per call, committing its progress or nothing, so
     committed progress survives interruption.
   - Segment rows are deleted in batches of up to
     `SQLAlchemySegmentStoreParams.purge_max_segments` per call. A batch
-    continues from the entry's cursor: it reads the next keys after
-    `purged_through` in primary-key order, deletes that key range, and
-    records its last key in the same transaction. No batch reads a row an
-    earlier batch deleted; PostgreSQL keeps deleted rows in the table and
-    its indexes until vacuum, and a batch that started from the
-    incarnation's first key would step over all of them, making each
-    batch, and the call that finds the incarnation empty, cost in
-    proportion to what was already purged. The cursor relies on no row
-    being written into an incarnation once it is enqueued, which the write
-    fence guarantees (below). The link table follows by cascade, measured
-    faster than deleting link rows manually at one and at four links per
-    segment. Cascade deletion
-    saturates around 3M link rows/s as density grows (380k segments/s at
-    one link per segment, 46k at 64), so heavily linked partitions still
-    purge in sub-second calls. Link fan-out is set by the deriver, not
-    something the store can reject after derivation.
-  - Queue entries carry their own bound,
-    `SQLAlchemySegmentStoreParams.purge_max_partitions`, because their cost
-    is round trips rather than rows: empty partitions are cheap to create
-    and delete, and a backlog of them must not turn one call into an
-    unbounded transaction. Both bounds are set once at construction; the
-    server currently uses the defaults, and wiring them into server
-    configuration is future work.
-  - Entries are claimed oldest-first (enqueue time stamped by the database
-    clock, so every server's entries order on one clock, at its
-    resolution) with `FOR UPDATE
-    SKIP LOCKED`, one at a time, so a call neither materializes nor locks
-    the rest of the backlog. Concurrent purgers, from any process, share
-    the queue instead of contending, and only the claiming call touches a
-    dead incarnation's rows (writers cannot, since the fence pins live
-    incarnations only), so reclamation is deadlock-free by construction.
-  - The delete path does not purge. An inline drain was tried twice,
-    first of the global queue and then scoped to the deleted key, and
-    removed: prompt physical erasure is not a promise the store can keep
-    on every dialect (on SQLite any writer past the busy timeout fails),
-    and a global drain made one deletion pay for other tenants' backlog.
-    A deleted partition is unreachable at once and its rows are reclaimed
-    in the background, at the sweeper's pace (below). Waking the sweeper
-    from the delete path is future work with the tenant lifecycle layer.
-  - An entry is retired only when the retiring call's own deletes found
-    fewer rows than its remaining budget. Link rows go with their segments
-    by the foreign key's cascade and nothing else: the store requires
-    foreign-key enforcement of its engine (on SQLite, per connection) and
-    does not verify it, so an engine without enforcement leaves link rows
-    behind.
-  - On SQLite, which drops locking clauses and defers BEGIN to the first
-    DML, the claim is an UPDATE of the queue row, the write fence's
-    primitive: it opens the write transaction, so purgers serialize at the
-    claim and each reads the cursor its predecessor committed. With a
-    plain-read claim, a second purger could plan its batch from a cursor
-    the first has since advanced, delete nothing, and retire the entry with
-    rows left.
-  - The store never schedules purging; when and how often is the caller's
-    policy, and implementations whose deletes reclaim physically return
-    False. In the server, the resource manager runs one background task
-    per store: bounded calls a short pause apart while the store reports
-    more work (the pause yields the database to request serving), a full
-    tick apart otherwise; failures are logged and retried next tick, and
-    the task is cancelled on close. `LongTermMemory` does not purge on
-    session drop; a deployment must run the sweeper somewhere, and the
-    ABC says so.
-  - The sweeper's pacing, not deletion speed, bounds how fast a backlog
-    drains: a call deletes at most `purge_max_segments` segment rows and
-    the resource manager pauses between busy calls, so one process
-    drains fewer than `purge_max_segments` rows per pause (under 10,000
-    rows per second at the defaults, so upwards of 17 minutes for a
-    ten-million-row tenant). Deletion itself measured about 147k rows/s
-    on the benchmark box.
+    continues from the partition's cursor: it reads the next keys after
+    `purged_through` in primary-key order, deletes that key range, and,
+    when it found a full batch, records its last key in the same
+    transaction. PostgreSQL keeps deleted rows in the table and its
+    indexes until vacuum, and a batch that started from the partition's
+    first key would step over all of them, making each batch cost in
+    proportion to what was already purged; a batch that continues from
+    the cursor reads no row an earlier batch deleted. A walk from the
+    cursor that reaches the end clears it, and only a call that searches
+    from the partition's first key answers that nothing remains, so a row
+    that lands behind the cursor is still found. A search from the first
+    key steps over the deleted rows vacuum has not yet removed, so the
+    call that finds the partition empty costs in proportion to them. Link
+    rows are deleted by cascade from their segments, measured faster than
+    deleting them manually at one and at four links per segment. A call's
+    transaction therefore also scales with the links per segment, which
+    the deriver sets and the store cannot reject after derivation.
+  - A call returns False only when it searched from the partition's first
+    key and found nothing, so a call that returns False proves the
+    partition's segments gone from the store. Link rows are deleted with
+    their segments by the foreign key's cascade and by nothing else: the
+    store requires foreign-key enforcement of its engine (on SQLite, per
+    connection) and does not verify it, so an engine without enforcement
+    leaves link rows behind.
+  - Purgers of one partition, from any process, serialize on its row's
+    lock (`FOR UPDATE`) while the row exists, so each reads the cursor its
+    predecessor committed. On SQLite, which drops locking clauses, the call
+    holds the database's write lock from BEGIN instead. With a cursor read
+    before the lock is taken, a second purger could plan its batch from a
+    cursor the first has since advanced and read again the rows the first
+    deleted.
+  - The store never schedules purging; its owner's purge rounds call it,
+    and the server's resource manager runs those rounds (see
+    [the sweeper](vector_store_purge.md#the-sweeper)).
+  - Pacing, not deletion speed, bounds how fast a backlog drains: a call
+    deletes at most `purge_max_segments` segment rows and the resource
+    manager pauses between busy rounds, so one process drains at most
+    `purge_max_segments` rows per pause.
 
-### Fencing (resolves #1549)
+### Fencing
 
-Every write pins the registry row with `SELECT ... WHERE incarnation =
-:incarnation FOR SHARE` and raises a stale-handle error when no row
-matches. Reads add the same predicate to their data statement as an
-`EXISTS`, so one statement (one snapshot) checks liveness and reads: a
-stale handle reads nothing, at no extra round trip, and a read that returns
-no rows issues the registry check on its own to tell an empty partition
-from a stale handle. Windowed reads span several statements, each with its
-own snapshot, so they end with one registry read; a deletion committing
-between their statements raises instead of returning seeds with empty
-context.
-
-On SQLite the driver defers BEGIN until the first write, so a SELECT-only
-fence would run outside the write transaction. The proper primitive, BEGIN
-IMMEDIATE, means taking over transaction management for the whole engine in
-SQLAlchemy (`isolation_level=None` plus a begin-event hook), which the store
-cannot do to a caller-owned, possibly shared engine. The write fence is
-therefore a self-checking UPDATE of the registry row: it takes the same
-write lock, scoped to the transaction, and its match count is the staleness
-check. Deletion opens its transaction the same way, so racing deletions
-serialize.
-
-A handle held across delete, or across delete and re-create, fails loudly
-instead of operating on the successor tenant, on every dialect. SQLite
-previously had no mechanism for this at all.
+The store checks nothing about whether a partition is still live. Its
+owner fences each operation by the partition's registration (see
+[fencing](partition_registry.md#fencing)): an operation begun after the
+tenant's deletion raises, and a write that lands in a deleted partition is
+reclaimed by the purge, which starts only after the retention.
 
 ### Locking model
 
-Row locks only. Writers hold `FOR SHARE` on their registry row for the
-write transaction; deletion takes `FOR UPDATE` on the same row; the purger
-claims queue rows with `FOR UPDATE SKIP LOCKED` and never waits; the mint's
-queue re-check takes `FOR SHARE` on a queue row only in the collision case.
-No table-level lock, no DDL, and no lock upgrade anywhere in the store,
-which removes the measured deadlock classes at the root: writers and
-lifecycle operations share no lockable object except one tenant's registry
-row, where blocking is the intended semantics, and reclamation touches only
-rows no other operation can reach.
+Row locks only. Writers lock nothing beyond the rows they write;
+`delete_segments` deletes its segments one statement each in key order, so
+every deletion takes its row locks in that order; the purge takes
+`FOR UPDATE` on its partition's row, which only the purgers and the drop of
+the same partition contend for. No table-level lock, no DDL,
+and no lock upgrade anywhere in the store, which removes the measured
+deadlock classes at the root: reclamation touches only rows of a partition
+no request can reach. On SQLite, which drops locking clauses, every write
+transaction of the store takes the database's write lock at BEGIN
+(`BEGIN IMMEDIATE`, through the `enable_sqlite_explicit_begin` setup the
+store requires of its engine), which stands in for the row locks.
+
+The order of `delete_segments`'s row locks is the order in which its
+statements reach PostgreSQL. PostgreSQL documents its part: it runs a
+session's statements in the order received, each to completion, and a
+`DELETE` locks the row it deletes. The client's part has no documented
+guarantee. The store hands SQLAlchemy the statement once with the
+parameter sets in key order, SQLAlchemy hands them to the driver, and each
+keeps the list's order without stating that it does. A client that sent
+them in another order would let two deletions of overlapping segments
+deadlock, which PostgreSQL ends by failing one of them, and the store's
+test of concurrent overlapping deletions fails on such a client. Sending
+each statement in its own round trip would rest on documented behavior
+alone, and was not chosen for its cost: 19 ms against 2.5 for 100 segments
+and 166 against 10 for 1,000, measured on a local PostgreSQL 18.6 with a
+0.34 ms round trip.
+
+### Lookups by key
+
+A statement that reads a partition's rows for a list of keys (seed segments
+by UUID, segments by event UUID, links by segment UUID or by derivative
+UUID) costs in proportion to the number of keys on PostgreSQL, whatever the
+partition's size, with one exception given below. It is one statement: the
+keys are one array parameter,
+and each joins a `LATERAL` subquery selecting that key's rows, so the index
+is searched once per key, as an `IN` list searches it under a plan built
+for the partition. The subquery's `OFFSET 0` keeps the planner from merging
+it into the statement; it is a constant, which PostgreSQL plans no node
+for. `delete_segments` runs one `DELETE` per segment on every dialect.
+
+Given the keys as one `IN` list, PostgreSQL chooses between an index lookup
+per key and one scan of the partition's whole range of an index led by the
+partition UUID, filtered by the list. It prices that scan by the number of
+rows it estimates the partition to hold. It has that number only for the
+partitions among the column's most common values (100 at the default
+statistics target), and only in a plan built for the statement's parameter
+values. For any other partition, and in the generic plan a prepared
+statement switches to after five executions, it uses the average over all
+partitions. Where most tenants are small, it prices the scan below the
+lookups once the list holds more than a few keys, and on a large tenant the
+scan reads every row the tenant has.
+
+Measured on PostgreSQL 18.6 (0.6 to 6 million rows, statistics from
+`ANALYZE`, data in memory; times are the server's mean execution time over
+1,500 executions):
+
+- With one 100,000-segment tenant among 500,000 tenants of one segment
+  each, the generic plan for the segments of 40 events read 100,748 blocks
+  in 61 ms; the statement above read 280 blocks in 0.09 ms, as the `IN`
+  list did under a plan built for the tenant. The seed read did the same
+  (101,471 blocks in 45 ms against 160 in 0.06 ms), and the link reads read
+  a tenant whole in a like distribution (about 100,700 blocks).
+- With one 1,000,000-segment tenant among 20,000 tenants of 48, the generic
+  plan read 14,713 blocks against 20 for the segments of 5 events, and
+  16,326 against 2,000 for 500 seed segments.
+- A plan built for the parameter values chose the scan as well for a large
+  tenant outside the most common values (4,973 blocks against 80 for 20
+  events of a 5,000-segment tenant, at `random_page_cost` 1.1), so
+  `plan_cache_mode = force_custom_plan` corrects only the listed tenants.
+- In these distributions the cost of the scan grew in proportion to the
+  tenant, and the cost of the statement above with the number of keys
+  alone: up to 3 µs of execution per key.
+
+For one key, the index on the partition UUID and the key answers in one
+lookup at any estimate, and no scan of the partition's range is priced
+below it. Where the planner estimates the partition at two rows or more, it
+prices the scan above the lookup, so the plan depends on neither the
+partition's size nor the plan mode. It held in every case measured on
+PostgreSQL 18: seven distributions of tenant sizes, 1 to 500 keys, plans
+built for the values and generic plans, with and without statistics, at
+`random_page_cost` 4 and 1.1. It held for three of the distributions on
+PostgreSQL 16 as well. The statement's text is also the same for any number
+of keys, so one prepared statement serves them all.
+
+The exception is a partition that the planner estimates at one row. The
+planner counts rows in whole numbers, so an estimate below one and a half
+is one row, and a scan of the partition's range of any index led by the
+partition UUID is then priced the same as the lookup. The planner may
+choose the scan, which reads the partition's whole range for each key,
+where the `IN` list reads it once. A statement that names one key outright
+is priced the same way, and each `DELETE` of `delete_segments` is such a
+statement. The estimate is that low where almost every partition holds one
+row. Measured on PostgreSQL 18.6 under generic plans, with one
+10,000-segment partition among 1,000,000 partitions of one segment each (an
+estimate of 1.3 to 1.4 rows per partition):
+
+- The seed read of 20 segments read 202,060 blocks against 10,103 for the
+  `IN` list, the link read for 20 derivative UUIDs 199,720 against 9,986,
+  and the deletion of 20 segments 202,119. The reads by event UUID and by
+  segment UUID kept their lookups. PostgreSQL 16.15 read as many blocks in
+  the first three.
+- With the estimate set to 1.4 rows per partition, the lookup of one
+  segment was priced the same through each of the segment table's three
+  indexes. Set to 1.6, both scans were priced above the lookup.
+- With 600,000 partitions of one segment and 200,000 of two (an estimate of
+  1.7 to 1.8), every statement kept its lookup.
+- Setting the `n_distinct` of the partition UUID column for an estimate of
+  five rows per partition gave every statement its lookup in that table,
+  and gave the scan to plans built for the values in a table of 100
+  partitions of 9,000 segments and 60 of 5,000. Such a plan estimates a
+  partition outside the most common values from the rows the most common
+  ones leave, which came to one row, and the seed read of 20 segments of a
+  5,000-segment partition read 99,560 blocks against 80. The statistics
+  are left as `ANALYZE` computes them.
+
+Against an `IN` list under a plan built for the partition, the statement
+reads the same blocks up to 100 keys spread over a large tenant and about a
+third more at 500, in the same time to a third more. It costs more where
+the list's one scan passes the keys together: up to about two and a half
+times the time where the keys are neighbors in the index, and, for a tenant
+of 48 segments, whose whole range is one page, 44 µs against 17 for 40 keys
+and 0.3 ms against 0.03 for 500.
+
+Rewrites that keep the keys as one list (`= ANY` of an array, a plain join
+to the unnested array) leave the planner the same choice, and it chose the
+scan for large tenants there too. SQLite chooses the index on both columns
+for an `IN` list of any length measured, with and without statistics, so it
+keeps the list.
+
+The statement's cost rests on three planner behaviors that no documentation
+guarantees. None of them changes what the statement returns.
+
+- An `OFFSET` keeps a subquery from being merged into its statement.
+  PostgreSQL's manual names "`OFFSET 0` as an optimization fence" in a
+  workaround on the `postgres_fdw` page and promises nothing about it.
+- A constant zero `OFFSET` gets no plan node.
+- The planner estimates the lookup of one key to cost less than a scan of
+  the partition, with the exception above. That is its cost model, measured
+  here on PostgreSQL 16 and 18.
+
+Were any of them to change, a read by a list of keys could again cost in
+proportion to the partition.
 
 ## Alternatives considered
 
@@ -241,37 +308,38 @@ requirement excludes.
 
 ## Consequences
 
-- Removed: partitioned parents, per-tenant DDL, detach machinery, the
-  store-wide management lock, per-partition ORM entities and their cache,
-  the compiled-statement-cache tuning. Generic plans are benign on
-  unpartitioned tables (a plan references one table), so no plan-mode
-  tuning is needed.
+- No partitioned parents, per-tenant DDL, detach machinery, store-wide
+  management lock, per-partition ORM entities or their cache, or
+  compiled-statement-cache tuning. A generic plan references one table,
+  so its locks do not grow with the tenant count. It prices a statement
+  for an average tenant, so the statements whose best plan depends on the
+  tenant's size take a form with one plan (see [lookups by
+  key](#lookups-by-key)), and no plan-mode tuning is needed.
 - One architecture on every dialect. The remaining dialect splits are the
-  LATERAL-vs-loop read strategy, the PostgreSQL-only ordered row locks in
-  `delete_segments` (SQLAlchemy drops locking clauses on SQLite), and
-  SQLite's foreign-key pragma. The pragma is per-connection state that the
-  engine's owner registers at engine creation. The store requires it and
-  does not verify it, which is the reference practice for SQLite foreign
-  keys (SQLAlchemy's dialect docs, Django's and Rails' adapters); a
-  listener added later by the store would miss connections already in the
-  pool. An engine without the pragma leaves link rows that outlive their
-  segments, and nothing reclaims them: the purge relies on the same
-  cascade.
-- Replication and sharding: four ordinary tables. Logical replication
+  LATERAL-vs-loop read strategy, the lookup per key on PostgreSQL, and
+  SQLite's engine setup: the foreign-key pragma, and transactions begun
+  explicitly, a write transaction with `BEGIN IMMEDIATE`. Both are
+  per-connection state that the engine's owner registers at engine
+  creation. The store requires the pragma and does not verify it, which is
+  the reference practice for SQLite foreign keys (SQLAlchemy's dialect
+  docs, Django's and Rails' adapters); a listener added later by the store
+  would miss connections already in the pool. An engine without the pragma
+  leaves link rows that outlive their segments, and nothing reclaims them:
+  the purge relies on the same cascade.
+- Replication and sharding: three ordinary tables. Logical replication
   covers new tenants automatically (they are rows, not relations), and
-  moving a tenant between nodes is an indexed row copy plus a registry
-  insert whose fresh incarnation fences all stale handles.
+  moving a tenant's rows between nodes is an indexed row copy: they keep
+  the partition UUID its registry holds.
 - Tenant deletion is O(rows) physically, in the background: a deleted
   partition is unreachable at once, and its rows are reclaimed by the
-  sweeper in the background, at the pace its bounds and pause set. A
-  deployment must run the sweeper.
-- No migration from the partitioned layout is provided (the event backend
-  is opt-in and pre-GA); existing databases recreate their schema.
+  registry's purge rounds, at the pace their bounds and pause set. A
+  deployment must run the purge rounds.
+- No schema migration is provided; existing databases recreate their
+  schema.
 - Datetime convention: filter nodes normalize datetime values to UTC-aware
   instants at construction (`FilterExpr`'s contract), so every consumer
-  sees instants. The Neo4j compiler's `datetime.timestamp()` used to read
-  a naive value in the server's local zone; it now parses ISO-string
-  filter values and applies the naive-means-UTC rule the rest of the
+  sees instants. The Neo4j compiler parses ISO-string filter values and
+  applies the naive-means-UTC rule the rest of the
   codebase uses. The in-memory short-term evaluator tags a naive stored
   metadata datetime the same way at comparison time, since stored user
   data is not rewritten. Storage write paths spell

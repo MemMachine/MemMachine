@@ -1,43 +1,43 @@
-"""
-Abstract base class for a vector store.
-
-Defines the interface for adding, querying, and deleting records.
-"""
+"""Abstract base class for a vector store."""
 
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Sequence
 from uuid import UUID
 
+from pydantic import BaseModel, Field, field_validator
+
 from memmachine_server.common.filter.filter_parser import (
     FilterExpr,
 )
+from memmachine_server.common.partition_registry import PartitionedStore
 
 from .data_types import (
     QueryResult,
     Record,
-    VectorStoreCollectionConfig,
+    VectorStoreSchema,
+    validate_vector_store_name,
 )
 
 
-class VectorStoreCollection(ABC):
+class VectorStorePartition(ABC):
     """
-    A logical collection in a vector store.
+    A handle on one partition's records in a vector store.
 
-    Identified by a (namespace, name) pair.
-    All data operations are scoped to this logical collection.
+    All data operations are scoped to the partition: a record's UUID names it
+    in this partition only, and the same UUID in another partition names
+    another record. The handle owns nothing, so handles may be built with
+    `VectorStore.get_partition` and dropped at will. A handle reads and
+    writes its partition without checking whether the partition was deleted.
 
-    Implementations must support storing, filtering on, and returning
-    record properties not declared in the configured indexed properties schema.
+    An `upsert` or `delete` is durable once it returns; queries may not
+    reflect it right away. A store that guarantees more states it.
 
-    The schema exists to support indexing on fixed-type record properties.
-    Record properties not declared in the schema may have mixed-type values.
+    A partition stores the properties its store's schema declares, typed
+    and indexed for filtering during a search, and no others: a record or a
+    filter naming an undeclared key is rejected, so an undeclared key never
+    exists in the store, neither stored write-only nor scanned for. Every
+    store evaluates the whole filter language during a search.
     """
-
-    @property
-    @abstractmethod
-    def config(self) -> VectorStoreCollectionConfig:
-        """The configuration for this collection."""
-        raise NotImplementedError
 
     @abstractmethod
     async def upsert(
@@ -46,17 +46,25 @@ class VectorStoreCollection(ABC):
         records: Iterable[Record],
     ) -> None:
         """
-        Upsert records in the collection.
+        Upsert records in the partition.
 
-        Insert records with new UUIDs,
-        and update records with existing UUIDs.
+        Insert records with new UUIDs, and replace records with existing UUIDs:
+        a replaced record holds only the vector and properties it is upserted
+        with.
 
         Args:
             records (Iterable[Record]):
                 Iterable of records to upsert.
-                Records containing properties
-                not in the indexed properties schema
-                are allowed.
+
+        Raises:
+            PropertyTypeMismatchError:
+                If a record's value is not of its key's declared type;
+                raised before anything is sent.
+            UndeclaredPropertyKeyError:
+                If a record carries a key the store has not declared;
+                raised before anything is sent.
+            ValueError:
+                If a record's vector does not have the store's dimensions.
         """
         raise NotImplementedError
 
@@ -68,63 +76,41 @@ class VectorStoreCollection(ABC):
         limit: int,
         score_threshold: float | None = None,
         property_filter: FilterExpr | None = None,
-        return_vector: bool = False,
-        return_properties: bool = True,
     ) -> list[QueryResult]:
         """
         Query for records matching the criteria by query vectors.
+
+        Each match holds a record's UUID and score.
 
         Args:
             query_vectors (Iterable[Sequence[float]]):
                 The vectors to compare against.
             limit (int):
-                Maximum number of matching records to return per query vector.
+                Maximum number of matching records to return per query vector;
+                positive. A filtered search returns fewer when the filter
+                admits fewer.
             score_threshold (float | None):
-                Score threshold to consider a match
-                (default: None).
+                The worst score a match may have, by the store's
+                similarity metric; a match scoring exactly the threshold is
+                returned (default: None).
             property_filter (FilterExpr | None):
-                Filter expression tree.
-                If None or empty, no property filtering is applied
+                Filter expression tree over declared keys, evaluated during
+                the search.
+                If None, no property filtering is applied
                 (default: None).
-            return_vector (bool):
-                Whether to include the vector in the returned records
-                (default: False).
-            return_properties (bool):
-                Whether to include the properties in the returned records
-                (default: True).
 
         Returns:
             list[QueryResult]:
                 Results for each query vector,
                 ordered as in the input iterable.
-        """
-        raise NotImplementedError
 
-    @abstractmethod
-    async def get(
-        self,
-        *,
-        record_uuids: Iterable[UUID],
-        return_vector: bool = False,
-        return_properties: bool = True,
-    ) -> list[Record]:
-        """
-        Get records from the collection by their UUIDs.
-
-        Args:
-            record_uuids (Iterable[UUID]):
-                Iterable of UUIDs of the records to retrieve.
-            return_vector (bool):
-                Whether to include the vector in the returned records
-                (default: False).
-            return_properties (bool):
-                Whether to include the properties in the returned records
-                (default: True).
-
-        Returns:
-            list[Record]:
-                Iterable of records with the specified UUIDs,
-                ordered as in the input iterable.
+        Raises:
+            UndeclaredPropertyKeyError:
+                If the filter names a key the store has not declared.
+            ValueError:
+                If the limit is not positive, a query vector does not have
+                the store's dimensions or has a coordinate that is not
+                finite, or the score threshold is not finite.
         """
         raise NotImplementedError
 
@@ -135,7 +121,7 @@ class VectorStoreCollection(ABC):
         record_uuids: Iterable[UUID],
     ) -> None:
         """
-        Delete records from the collection by their UUIDs.
+        Delete records from the partition by their UUIDs.
 
         Args:
             record_uuids (Iterable[UUID]):
@@ -144,27 +130,34 @@ class VectorStoreCollection(ABC):
         raise NotImplementedError
 
 
-class VectorStore(ABC):
+class VectorStore(PartitionedStore):
     """
     Abstract base class for a vector store.
 
-    A given logical collection identified by a (namespace, name) pair
-    must be managed by at most one process at a time.
-    The consumer is responsible for sharding names across processes.
+    A store is constructed with a name and a schema: a dimensionality, a
+    similarity metric, and declared properties. Every record it holds has a
+    vector of that dimensionality, and any declared property it carries has
+    its declared type. Stores of different names hold separate records.
+    The schema is fixed for the life of the store's data: changing it is a
+    migration.
 
-    Different namespaces are fully independent (separate native collections).
-    Multiple logical collections with the same (namespace, vector dimensions, similarity metric, indexed properties schema)
-    may share a native collection to reduce overhead.
+    The store holds each partition's records under the partition's UUID.
 
     Naming constraints:
-        - Namespaces, names, and property keys must match `[a-z0-9_]+`
-          (lowercase alphanumeric and underscores only).
-        - Each identifier must be at most 32 bytes.
+        - Vector store names and property keys must match `[a-z0-9_]+`
+          (lowercase alphanumeric and underscores only) and be at most 32
+          bytes. Every such name works on every backend.
     """
+
+    @property
+    @abstractmethod
+    def store_schema(self) -> VectorStoreSchema:
+        """The schema the store was built with, which every partition's records and queries follow."""
+        raise NotImplementedError
 
     @abstractmethod
     async def startup(self) -> None:
-        """Startup."""
+        """Start the store, creating idempotently what must exist before a partition is created."""
         raise NotImplementedError
 
     @abstractmethod
@@ -173,107 +166,44 @@ class VectorStore(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def create_collection(
-        self,
-        *,
-        namespace: str,
-        name: str,
-        config: VectorStoreCollectionConfig,
-    ) -> None:
+    async def get_partition(self, partition_uuid: UUID) -> VectorStorePartition | None:
         """
-        Create a logical collection in the vector store and return a handle to it.
-
-        A (namespace, name) pair uniquely identifies a collection.
-        The configuration (dimensions, similarity metric, schema)
-        is fixed at creation time.
+        Get a handle on a created partition.
 
         Args:
-            namespace (str):
-                Groups related collections and guarantees storage
-                isolation at the native collection level.
-            name (str):
-                Name to identify the collection within a namespace.
-            config (VectorStoreCollectionConfig):
-                Configuration for the collection.
-
-        Raises:
-            VectorStoreCollectionAlreadyExistsError: If a collection with the same
-                (namespace, name) already exists.
-        """
-        raise NotImplementedError
-
-    @abstractmethod
-    async def open_or_create_collection(
-        self,
-        *,
-        namespace: str,
-        name: str,
-        config: VectorStoreCollectionConfig,
-    ) -> VectorStoreCollection:
-        """
-        Open the collection if it exists, or create it if it does not.
-
-        Args:
-            namespace (str):
-                Groups related collections and guarantees storage
-                isolation at the native collection level.
-            name (str):
-                Name to identify the collection within a namespace.
-            config (VectorStoreCollectionConfig):
-                Configuration for the collection.
+            partition_uuid (UUID):
+                The partition's UUID.
 
         Returns:
-            VectorStoreCollection:
-                A handle to the opened or created collection.
-
-        Raises:
-            VectorStoreCollectionConfigMismatchError: If a collection with the same
-                (namespace, name) already exists with a different configuration.
+            VectorStorePartition | None:
+                A handle bound to the partition, or None when the store finds
+                nothing under the UUID: the partition was never created, or
+                was dropped. A store may return a handle without checking.
         """
         raise NotImplementedError
 
-    @abstractmethod
-    async def open_collection(
-        self, *, namespace: str, name: str
-    ) -> VectorStoreCollection | None:
-        """
-        Get a handle to a logical collection in the vector store.
 
-        Args:
-            namespace (str):
-                Namespace of the collection.
-            name (str):
-                Name of the collection within the namespace.
+class VectorStoreParams(BaseModel):
+    """
+    The parameters every vector store is constructed with.
 
-        Returns:
-            VectorStoreCollection | None:
-                A handle to the opened collection, or None if it does not exist.
-        """
-        raise NotImplementedError
+    Attributes:
+        vector_store_name (str):
+            The name of this store.
+        store_schema (VectorStoreSchema):
+            The shape of this store's records and the metric its queries score by.
+    """
 
-    @abstractmethod
-    async def close_collection(self, *, collection: VectorStoreCollection) -> None:
-        """
-        Close a collection handle.
+    vector_store_name: str = Field(..., description="The name of this store")
+    store_schema: VectorStoreSchema = Field(
+        ...,
+        description=(
+            "The shape of this store's records and the metric its queries score by"
+        ),
+    )
 
-        Args:
-            collection (Collection):
-                The handle of the collection to close.
-        """
-        raise NotImplementedError
-
-    @abstractmethod
-    async def delete_collection(self, *, namespace: str, name: str) -> None:
-        """
-        Delete a logical collection from the vector store.
-
-        This will delete all data in the collection.
-        It is idempotent.
-
-        Args:
-            namespace (str):
-                Namespace of the collection.
-            name (str):
-                Name of the collection within the namespace.
-        """
-        raise NotImplementedError
+    @field_validator("vector_store_name")
+    @classmethod
+    def _validate_vector_store_name(cls, vector_store_name: str) -> str:
+        validate_vector_store_name(vector_store_name)
+        return vector_store_name

@@ -30,14 +30,32 @@ keeps event segments in a relational database. Configure the VectorStore under
 `episodic_memory.long_term_memory.vector_store`.
 
 Supported VectorStore providers include Qdrant, Milvus, SQLiteVectorStore, and
-SQLiteVecVectorStore. Milvus supports three deployment shapes through the same
-configuration fields:
+SQLiteVecVectorStore. The event backend keeps one store, with the vector
+store name `event_memory`, and each session's data is a partition of it; a
+Milvus collection is named `sys_` followed by the vector store name. Event
+memory keeps the registry of its partitions in the relational database that
+`episodic_memory.long_term_memory.partition_registry` names, so any number of
+server processes can share one Qdrant or Milvus backend; the SQLite stores are
+bound to one node. The registry mints each partition's UUID, a random UUID
+under which the vector store and the segment store keep the partition's data,
+so every process that shares event memory's stores must name the same
+registry database, and deployments with separate registries can share a
+backend without sharing data. Deployments that name the same registry
+database must configure the same vector store and segment store for event
+memory: any of them may purge a session another deleted, and a purge that
+finds nothing of that session in its own stores leaves the other
+deployment's data in place. A deployment with other stores needs a registry
+database of its own, which one database server can hold.
 
-- **Milvus Lite:** set `uri` to a local `.db` path such as
-  `./memmachine_milvus.db`.
+Milvus supports two deployment shapes through the same configuration fields:
+
 - **Milvus server:** set `uri` to a server endpoint such as
   `http://localhost:19530`.
 - **Zilliz Cloud:** set `uri` to the cloud endpoint and set `token`.
+
+The Milvus store needs Milvus 2.6.8 or later. Milvus
+Lite is not supported: it is a separate embedded engine that does not behave
+like the server. For a local, single-node deployment, use SQLiteVectorStore.
 
 Example:
 
@@ -47,17 +65,27 @@ resources:
     milvus_vector_store:
       provider: milvus
       config:
-        uri: ./memmachine_milvus.db
+        uri: http://localhost:19530
         # token: $MILVUS_TOKEN
         # db_name: default
-        consistency_level: Session
+        request_timeout_seconds: 30
 
 episodic_memory:
   long_term_memory:
     backend: event
     vector_store: milvus_vector_store
     segment_store: profile_storage
+    partition_registry: profile_storage
 ```
+
+Upgrading does not carry existing vector store data over. The stores name
+their native collections by vector store name, which no earlier release did,
+so an existing Qdrant or Milvus collection stays as it is: no search reads it
+and no purge reaches it. Drop the existing collections, before or after
+upgrading, to free their space. The sqlite-vec store's tables are named anew
+too, so its existing data is likewise left in place. SQLiteVectorStore's
+pending-operations table keeps its name with new columns, so SQLiteVectorStore
+does not start on a database file from an earlier release: give it a new file.
 
 ## neo4j
 Neo4j is a leading **graph database**, which means it's specially designed to store and manage highly connected data. Instead of rows and columns, Neo4j works with three fundamental building blocks:

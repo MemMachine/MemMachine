@@ -1,0 +1,295 @@
+"""
+The partition lifecycle contract the remote vector stores satisfy.
+
+A store's test module mixes `PartitionLifecycleContract` into a test class
+and supplies a `store` fixture and three hooks: `count_stored` and
+`stored_uuids` read the backend directly, and `settle` returns once the
+store's reads reflect every write so far. The backend may persist across
+tests, so each test uses fresh partition UUIDs and counts against the records
+the store held when the test began.
+"""
+
+import asyncio
+import math
+import random
+from uuid import UUID, uuid4
+
+import pytest
+
+from memmachine_server.common.vector_store import Record
+
+# Purge calls a drain makes before failing the test: far more than purging a
+# test's records takes, so only a purge that keeps finding records reaches the
+# limit.
+_MAX_PURGE_CALLS = 1000
+
+
+def _unit(vector: list[float]) -> list[float]:
+    magnitude = math.sqrt(sum(x * x for x in vector))
+    return [x / magnitude for x in vector]
+
+
+def _records(count: int) -> list[Record]:
+    return [
+        Record(uuid=uuid4(), vector=_unit([1.0, 0.01 * index, 0.0]))
+        for index in range(count)
+    ]
+
+
+async def _created(store, partition_uuid: UUID):
+    """A handle on a freshly created partition."""
+    await store.create_partition(partition_uuid)
+    return await store.get_partition(partition_uuid)
+
+
+async def _purge(store, partition_uuid: UUID) -> int:
+    """Purge a partition until the store finds nothing of it, and return the number of calls that found something."""
+    for calls in range(_MAX_PURGE_CALLS):
+        if not await store.purge_partition(partition_uuid):
+            return calls
+    pytest.fail(
+        f"partition UUID {partition_uuid} still held records after "
+        f"{_MAX_PURGE_CALLS} purge calls"
+    )
+
+
+class PartitionLifecycleContract:
+    """Mixed into a store's test class, which supplies a `store` fixture and the `count_stored`, `stored_uuids`, and `settle` hooks."""
+
+    @staticmethod
+    async def count_stored(store) -> int:
+        """Count the records the backend holds for the store under every partition UUID, purged ones included."""
+        raise NotImplementedError
+
+    @staticmethod
+    async def stored_uuids(partition) -> set[UUID]:
+        """Record UUIDs the backend holds under the handle's partition UUID."""
+        raise NotImplementedError
+
+    @staticmethod
+    async def settle(partition) -> None:
+        """Return once the store's reads reflect every write made so far."""
+        raise NotImplementedError
+
+    @pytest.mark.asyncio
+    async def test_a_created_partition_holds_its_records(self, store):
+        partition = await _created(store, uuid4())
+        records = _records(3)
+
+        await partition.upsert(records=records)
+        await self.settle(partition)
+
+        assert await self.stored_uuids(partition) == {record.uuid for record in records}
+
+    @pytest.mark.asyncio
+    async def test_creating_a_partition_again_changes_nothing(self, store):
+        partition_uuid = uuid4()
+        partition = await _created(store, partition_uuid)
+        records = _records(2)
+        await partition.upsert(records=records)
+
+        await store.create_partition(partition_uuid)
+        await self.settle(partition)
+
+        assert await self.stored_uuids(partition) == {record.uuid for record in records}
+
+    @pytest.mark.asyncio
+    async def test_partitions_are_isolated_from_one_another(self, store):
+        first = await _created(store, uuid4())
+        second = await _created(store, uuid4())
+        shared = _records(1)[0]
+        only_first = _records(1)[0]
+
+        await first.upsert(records=[shared, only_first])
+        await second.upsert(
+            records=[Record(uuid=shared.uuid, vector=_unit([0.0, 1.0, 0.0]))]
+        )
+        await self.settle(first)
+        await self.settle(second)
+
+        assert await self.stored_uuids(first) == {shared.uuid, only_first.uuid}
+        assert await self.stored_uuids(second) == {shared.uuid}
+        [result] = await second.query(query_vectors=[shared.vector], limit=10)
+        assert [match.record_uuid for match in result.matches] == [shared.uuid]
+
+    @pytest.mark.asyncio
+    async def test_purge_removes_a_partitions_records(self, store):
+        partition_uuid = uuid4()
+        partition = await _created(store, partition_uuid)
+        baseline = await self.count_stored(store)
+        await partition.upsert(records=_records(5))
+        await self.settle(partition)
+        assert await self.count_stored(store) == baseline + 5
+
+        assert await _purge(store, partition_uuid) >= 1
+
+        assert await self.count_stored(store) == baseline
+        assert await store.purge_partition(partition_uuid) is False
+
+    @pytest.mark.asyncio
+    async def test_purge_leaves_other_partitions_alone(self, store):
+        kept_partition_uuid = uuid4()
+        purged_partition_uuid = uuid4()
+        kept = await _created(store, kept_partition_uuid)
+        purged = await _created(store, purged_partition_uuid)
+        kept_records = _records(3)
+        await kept.upsert(records=kept_records)
+        await purged.upsert(records=_records(3))
+        await self.settle(kept)
+        await self.settle(purged)
+
+        await _purge(store, purged_partition_uuid)
+
+        assert await self.stored_uuids(kept) == {record.uuid for record in kept_records}
+
+    @pytest.mark.asyncio
+    async def test_purging_an_unknown_partition_finds_nothing(self, store):
+        assert await store.purge_partition(uuid4()) is False
+
+    @pytest.mark.asyncio
+    async def test_a_purged_partition_drops_and_holds_nothing(self, store):
+        partition_uuid = uuid4()
+        partition = await _created(store, partition_uuid)
+        baseline = await self.count_stored(store)
+        await partition.upsert(records=_records(3))
+        await self.settle(partition)
+        await _purge(store, partition_uuid)
+
+        await store.drop_partition(partition_uuid)
+        await store.drop_partition(partition_uuid)
+
+        assert await self.count_stored(store) == baseline
+        assert await store.purge_partition(partition_uuid) is False
+
+    @pytest.mark.asyncio
+    async def test_dropping_a_partition_leaves_other_partitions_alone(self, store):
+        kept = await _created(store, uuid4())
+        dropped_partition_uuid = uuid4()
+        await _created(store, dropped_partition_uuid)
+        kept_records = _records(2)
+        await kept.upsert(records=kept_records)
+        await self.settle(kept)
+
+        await _purge(store, dropped_partition_uuid)
+        await store.drop_partition(dropped_partition_uuid)
+
+        assert await self.stored_uuids(kept) == {record.uuid for record in kept_records}
+
+    @pytest.mark.asyncio
+    async def test_a_write_landing_after_a_purge_is_reclaimed_by_the_next(self, store):
+        partition_uuid = uuid4()
+        partition = await _created(store, partition_uuid)
+        baseline = await self.count_stored(store)
+        await _purge(store, partition_uuid)
+
+        await partition.upsert(records=_records(2))
+        await self.settle(partition)
+        assert await self.count_stored(store) == baseline + 2
+
+        assert await _purge(store, partition_uuid) >= 1
+        assert await self.count_stored(store) == baseline
+
+    @pytest.mark.asyncio
+    async def test_purges_racing_writes_to_live_partitions_reclaim_the_deleted_alone(
+        self, store
+    ):
+        """Two purgers for each deleted partition purge while live partitions
+        take upserts and deletes, and then until they find nothing. Each live
+        partition then holds what its writes leave, and each deleted partition
+        holds nothing."""
+        rng = random.Random(_RACE_SEED)
+        # Every partition holds records under the same record UUIDs, and the
+        # race writes under half of them in the live partitions.
+        pool = [uuid4() for _ in range(_RACE_POOL_SIZE)]
+        deleted_uuids = [uuid4() for _ in range(_RACE_PARTITIONS)]
+        deleted = [
+            await _created(store, partition_uuid) for partition_uuid in deleted_uuids
+        ]
+        live = [await _created(store, uuid4()) for _ in range(_RACE_PARTITIONS)]
+        for partition in deleted + live:
+            await partition.upsert(records=_records_under(rng, pool))
+        # A purge may miss a record written just before it, so the deleted
+        # partitions' records are settled before the race.
+        for partition in deleted:
+            await self.settle(partition)
+        steps = [_race_steps(rng, pool[: _RACE_POOL_SIZE // 2]) for _ in live]
+        writes_done = asyncio.Event()
+
+        async def write_all() -> None:
+            try:
+                await asyncio.gather(
+                    *(
+                        _write(partition, partition_steps)
+                        for partition, partition_steps in zip(live, steps, strict=True)
+                    )
+                )
+            finally:
+                writes_done.set()
+
+        async def purge_while_writing(partition_uuid: UUID) -> None:
+            while not writes_done.is_set():
+                await store.purge_partition(partition_uuid)
+            await _purge(store, partition_uuid)
+
+        await asyncio.gather(
+            write_all(),
+            *(
+                purge_while_writing(partition_uuid)
+                for partition_uuid in deleted_uuids
+                for _ in range(2)
+            ),
+        )
+
+        for partition, partition_steps in zip(live, steps, strict=True):
+            await self.settle(partition)
+            assert await self.stored_uuids(partition) == _held_after(
+                set(pool), partition_steps
+            )
+        for partition in deleted:
+            await self.settle(partition)
+            assert await self.stored_uuids(partition) == set()
+
+
+# The race's seeded writes, its partitions of each kind, and the record UUIDs
+# every partition holds.
+_RACE_SEED = 1031
+_RACE_STEPS = 12
+_RACE_PARTITIONS = 3
+_RACE_POOL_SIZE = 8
+
+
+def _records_under(rng: random.Random, record_uuids: list[UUID]) -> list[Record]:
+    """Records under the UUIDs, with seeded vectors."""
+    return [
+        Record(uuid=record_uuid, vector=_unit([1.0, rng.random(), rng.random()]))
+        for record_uuid in record_uuids
+    ]
+
+
+def _race_steps(
+    rng: random.Random, record_uuids: list[UUID]
+) -> list[tuple[list[Record], list[UUID]]]:
+    """Seeded writes to one partition, each step upserting records under some of the UUIDs and then deleting some of the UUIDs, held or not."""
+    return [
+        (
+            _records_under(rng, rng.sample(record_uuids, k=rng.randint(1, 3))),
+            rng.sample(record_uuids, k=rng.randint(1, 2)),
+        )
+        for _ in range(_RACE_STEPS)
+    ]
+
+
+def _held_after(
+    held: set[UUID], steps: list[tuple[list[Record], list[UUID]]]
+) -> set[UUID]:
+    """The record UUIDs a partition holding `held` holds after the steps."""
+    for upserts, deletes in steps:
+        held = (held | {record.uuid for record in upserts}) - set(deletes)
+    return held
+
+
+async def _write(partition, steps: list[tuple[list[Record], list[UUID]]]) -> None:
+    """Make the steps in order, each step's upsert before its delete."""
+    for upserts, deletes in steps:
+        await partition.upsert(records=upserts)
+        await partition.delete(record_uuids=deletes)
