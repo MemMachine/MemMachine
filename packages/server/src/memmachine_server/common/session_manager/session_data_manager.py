@@ -7,21 +7,11 @@ from pydantic import BaseModel, JsonValue
 
 from memmachine_server.common.configuration.episodic_config import EpisodicMemoryConf
 from memmachine_server.common.data_types import PropertyValue
-from memmachine_server.common.lifecycle import Lifecycle
+from memmachine_server.common.lifecycle import Lifecycle, Preparable
 
 
-class SessionDataManager(Lifecycle):
+class SessionDataManager(Preparable, Lifecycle):
     """Interface for managing session data and short-term memory."""
-
-    @abstractmethod
-    async def prepare(self) -> None:
-        """
-        Create the manager's durable resources, starting from none.
-
-        The caller runs it before the manager serves, while no other process
-        uses the manager. Run again on what it created, it changes nothing.
-        """
-        raise NotImplementedError
 
     @abstractmethod
     async def drop_tables(self) -> None:

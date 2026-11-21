@@ -20,7 +20,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
-from memmachine_server.common.lifecycle import Lifecycle
+from memmachine_server.common.lifecycle import Lifecycle, Preparable
 from memmachine_server.common.sql import write_connection
 
 _metadata = MetaData()
@@ -50,7 +50,7 @@ class StoredLease:
     fencing_token: int
 
 
-class SQLLeaseStore(Lifecycle):
+class SQLLeaseStore(Preparable, Lifecycle):
     """Serialize exclusive lease changes through one row per resource."""
 
     def __init__(self, engine: AsyncEngine) -> None:
@@ -59,7 +59,6 @@ class SQLLeaseStore(Lifecycle):
         self._engine = engine
 
     async def prepare(self) -> None:
-        """Create the lock and durable fencing counter tables."""
         # It reads the schema before it writes, and on SQLite a transaction
         # that has read cannot wait for another connection's write lock.
         async with write_connection(self._engine) as conn:

@@ -9,7 +9,7 @@ from collections.abc import Iterable, Mapping
 from uuid import UUID
 
 from memmachine_server.common.filter.filter_parser import FilterExpr
-from memmachine_server.common.lifecycle import Lifecycle
+from memmachine_server.common.lifecycle import Lifecycle, Preparable
 from memmachine_server.common.partition_registry import PartitionedStore
 from memmachine_server.episodic_memory.event_memory.data_types import (
     Segment,
@@ -156,7 +156,7 @@ class SegmentStorePartition(ABC):
         raise NotImplementedError
 
 
-class SegmentStore(PartitionedStore, Lifecycle):
+class SegmentStore(PartitionedStore, Preparable, Lifecycle):
     """
     Abstract base class for a segment store.
 
@@ -165,16 +165,6 @@ class SegmentStore(PartitionedStore, Lifecycle):
     on the partition uses. Creating the partition again with a different
     configuration raises SegmentStorePartitionConfigMismatchError.
     """
-
-    @abstractmethod
-    async def prepare(self) -> None:
-        """
-        Create the store's durable resources, starting from none.
-
-        The caller runs it before `start`, while no other process uses the
-        store. Run again on what it created, it changes nothing.
-        """
-        raise NotImplementedError
 
     @abstractmethod
     async def get_partition(self, partition_uuid: UUID) -> SegmentStorePartition | None:

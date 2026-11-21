@@ -11,21 +11,11 @@ from memmachine_server.common.episode_store.episode_model import (
     EpisodeEntry,
 )
 from memmachine_server.common.filter.filter_parser import FilterExpr
-from memmachine_server.common.lifecycle import Lifecycle
+from memmachine_server.common.lifecycle import Lifecycle, Preparable
 
 
-class EpisodeStorage(Lifecycle):
+class EpisodeStorage(Preparable, Lifecycle):
     """Abstract interface for persisting and retrieving episodic history."""
-
-    @abstractmethod
-    async def prepare(self) -> None:
-        """
-        Create the storage's durable resources, starting from none.
-
-        The caller runs it before `start`, while no other process uses the
-        storage. Run again on what it created, it changes nothing.
-        """
-        raise NotImplementedError
 
     @abstractmethod
     async def delete_all(self) -> None:
