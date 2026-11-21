@@ -76,7 +76,8 @@ async def _registry(
             base_purge_retry_backoff_seconds=base_purge_retry_backoff_seconds,
         ),
     )
-    await registry.startup()
+    await registry.prepare()
+    await registry.start()
     return registry
 
 
@@ -780,7 +781,8 @@ async def test_the_backoff_stops_doubling_at_its_maximum(
             max_purge_retry_backoff_seconds=120,
         ),
     )
-    await registry.startup()
+    await registry.prepare()
+    await registry.start()
     partition_uuid = (await registry._reserve("a")).partition_uuid
     await registry.unregister("a")
     await _age_deletion(registry, partition_uuid)

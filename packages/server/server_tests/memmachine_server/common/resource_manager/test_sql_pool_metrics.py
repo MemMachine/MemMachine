@@ -55,7 +55,7 @@ async def test_the_pool_reports_its_checked_out_connections(tmp_path):
             assert _sample("db_client_connection_count", labels) == 2
         assert _sample("db_client_connection_count", labels) == 0
     finally:
-        await manager.close()
+        await manager.stop()
 
 
 @pytest.mark.asyncio
@@ -74,4 +74,4 @@ async def test_a_checkout_reports_how_long_it_waited_for_a_connection(tmp_path):
         assert _sample("db_client_connection_wait_time_seconds_count", labels) == 2
         assert _sample("db_client_connection_wait_time_seconds_sum", labels) >= 0.2
     finally:
-        await manager.close()
+        await manager.stop()

@@ -15,8 +15,11 @@ class DummySemanticConfigStorage:
         self.register_set_id_set_type_calls = 0
         self._configs: dict[str, SemanticConfigStorage.Config] = {}
 
-    async def startup(self) -> None:
+    async def start(self) -> None:
         return None
+
+    async def stop(self) -> None:
+        pass
 
     async def delete_all(self) -> None:
         self._configs.clear()

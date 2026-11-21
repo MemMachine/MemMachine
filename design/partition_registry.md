@@ -142,14 +142,13 @@ name for that alone.
 ### Interface
 
 ```python
-class PartitionRegistry(ABC):
-    async def startup(self) -> None: ...
+class PartitionRegistry(Preparable, Lifecycle):
     async def reserve(self, partition_name: str) -> Reservation: ...
     async def resolve(self, partition_name: str) -> Registration | None: ...
     async def unregister(self, partition_name: str) -> None: ...
     async def claim_tombstone(self) -> TombstoneClaim | None: ...
 
-    # Supplied by an implementation, with startup and claim_tombstone.
+    # Supplied by an implementation, with prepare, start, stop, and claim_tombstone.
     async def _reserve(self, partition_name: str) -> Reservation: ...
     async def _resolve(self, partition_name: str) -> UUID | None: ...
     def _registration(
@@ -424,8 +423,8 @@ afterwards.
   once the reservation is canceled or the partition is deleted. Every
   creation makes a new partition under a new UUID, so nothing deletes and
   creates storage in place. The storage a store's partitions share is
-  prepared at startup, each step idempotent, so a startup that failed part
-  way is completed by the next (the
+  created by `prepare`, each step idempotent, so a preparation that failed
+  part way is completed by the next (the
   [Qdrant](qdrant_vector_store.md) and [Milvus](milvus_vector_store.md)
   documents say how).
 - A partition deleted while the stores create it is not marked live, since
@@ -644,8 +643,9 @@ differs where a store is remote:
   caller that gets or creates waits for it. A creation that stopped part way
   stays pending until its caller deletes the name: the registry offers the
   deletion and holds no policy on when to give up.
-- **`startup` creates the registry's tables when missing**, as every store's
-  startup creates its own durable resources idempotently.
+- **`prepare` creates the registry's tables when missing**, as every store's
+  `prepare` creates its own durable resources idempotently; `start`
+  creates nothing.
 
 ## Alternatives considered
 
@@ -725,7 +725,7 @@ differs where a store is remote:
 - **Storage first, registry last**, with no pending state. Storage named by a
   partition's UUID cannot be made before the registry mints the UUID, so a
   partition's own storage is created after its reservation, and the storage
-  a store's partitions share is prepared at startup. The cost is a pending
+  a store's partitions share is created by `prepare`. The cost is a pending
   row a crash leaves, deleted like any other.
 - **One registry class addressing partitions by name and by UUID**, with
   `mark_live(partition_uuid)`, `unregister_partition(partition_uuid)`, and a

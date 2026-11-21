@@ -63,9 +63,9 @@ async def test_migrate_pickle_to_json(sqlalchemy_engine: AsyncEngine) -> None:
         )
 
     # Initialize the SessionDataManagerSQL
-    # This should trigger the migration in create_tables
+    # This should trigger the migration in migrate
     manager = SessionDataManagerSQL(sqlalchemy_engine)
-    await manager.create_tables()
+    await manager.prepare()
 
     # Verify the migration
     # 1. Check that we can retrieve the session info (which implies successful JSON deserialization)
@@ -87,7 +87,7 @@ async def test_migrate_pickle_to_json(sqlalchemy_engine: AsyncEngine) -> None:
         await conn.run_sync(check_column)
 
     await manager.drop_tables()
-    await manager.close()
+    await manager.stop()
     await sqlalchemy_engine.dispose()
 
 
@@ -130,9 +130,9 @@ async def test_migrate_add_status_column(sqlalchemy_engine: AsyncEngine) -> None
         )
 
     # Initialize the SessionDataManagerSQL
-    # This should trigger the migration in create_tables
+    # This should trigger the migration in migrate
     manager = SessionDataManagerSQL(sqlalchemy_engine)
-    await manager.create_tables()
+    await manager.prepare()
 
     # Verify the migration
     # 1. Check that we can retrieve the session info and status is active
@@ -151,5 +151,5 @@ async def test_migrate_add_status_column(sqlalchemy_engine: AsyncEngine) -> None
         await conn.run_sync(check_column)
 
     await manager.drop_tables()
-    await manager.close()
+    await manager.stop()
     await sqlalchemy_engine.dispose()

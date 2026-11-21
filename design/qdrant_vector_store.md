@@ -31,9 +31,9 @@ registry](partition_registry.md),
   whose value is of another type than its key declares matches nothing; the
   store answers it with a filter no point satisfies, since the server would
   refuse it for the field's index.
-- **Startup converges:** the collection and each payload index are created at
-  startup under separate already-exists guards, so a startup that failed
-  between them is completed by the next.
+- **Preparation converges:** `prepare` creates the collection and each payload
+  index under separate already-exists guards, so a preparation that failed
+  between them is completed by the next. `start` creates nothing.
 - **Client:** `AsyncQdrantClient`, with `request_timeout_seconds` as its
   timeout.
 - **Oversized upserts are halved.** Qdrant's REST API refuses a request over

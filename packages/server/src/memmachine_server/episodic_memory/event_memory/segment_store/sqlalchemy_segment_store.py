@@ -931,12 +931,16 @@ class SQLAlchemySegmentStore(SegmentStore):
     # Lifecycle
 
     @override
-    async def startup(self) -> None:
-        async with self._tracker("startup"), self._engine.begin() as connection:
+    async def prepare(self) -> None:
+        async with self._tracker("prepare"), self._engine.begin() as connection:
             await connection.run_sync(BaseSegmentStore.metadata.create_all)
 
     @override
-    async def shutdown(self) -> None:
+    async def start(self) -> None:
+        pass
+
+    @override
+    async def stop(self) -> None:
         pass
 
     # Partitions

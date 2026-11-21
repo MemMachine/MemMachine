@@ -104,7 +104,7 @@ async def test_semantic_manager_builds_vector_store_backend(sqlalchemy_sqlite_en
     vector_store.get_partition.assert_awaited_once_with(registration.partition_uuid)
     assert storage._vector_partition is vector_store.get_partition.return_value
 
-    await storage.cleanup()
+    await storage.stop()
 
 
 @pytest.fixture
@@ -125,7 +125,8 @@ async def partition_registry(
             tombstone_retention_seconds=0,
         ),
     )
-    await registry.startup()
+    await registry.prepare()
+    await registry.start()
     return registry
 
 

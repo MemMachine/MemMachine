@@ -30,11 +30,14 @@ class MockSemanticStorage(SemanticStorage):
         self.mark_messages_ingested_mock = AsyncMock()
         self.delete_features_mock = AsyncMock()
 
-    async def startup(self):
+    async def prepare(self):
         raise NotImplementedError
 
-    async def cleanup(self):
+    async def start(self):
         raise NotImplementedError
+
+    async def stop(self) -> None:
+        pass
 
     async def delete_all(self):
         raise NotImplementedError

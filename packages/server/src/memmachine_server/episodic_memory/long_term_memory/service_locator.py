@@ -19,6 +19,7 @@ from memmachine_server.common.configuration.episodic_config import (
     WholeTextDeriverConf,
 )
 from memmachine_server.common.data_types import PropertyType
+from memmachine_server.common.embedder import Embedder
 from memmachine_server.common.errors import ConfigurationError
 from memmachine_server.common.partition_registry import (
     PartitionAlreadyExistsError,
@@ -267,6 +268,38 @@ async def _event_memory_partition_registry(
     )
 
 
+async def prepare_event_memory_storage(
+    resource_manager: InstanceOf[CommonResourceManager],
+) -> None:
+    """
+    Create the missing durable resources of the deployment's event memory stores and partition registry.
+
+    Does nothing when the deployment configures no event memory.
+    """
+    try:
+        vector_store_id, segment_store_id, embedder_id = deployment_event_memory_ids(
+            resource_manager.config
+        )
+    except ConfigurationError:
+        return
+    deployment = resource_manager.config.episodic_memory.long_term_memory
+    assert deployment is not None
+    assert deployment.partition_registry is not None
+    await resource_manager.prepare_segment_store(segment_store_id)
+    embedder = await resource_manager.get_embedder(embedder_id)
+    await resource_manager.prepare_vector_store(
+        vector_store_id,
+        vector_store_name=_EVENT_MEMORY_VECTOR_STORE_NAME,
+        store_schema=_event_backend_store_schema(embedder),
+    )
+    partition_registry = await resource_manager.build_partition_registry(
+        deployment.partition_registry,
+        partition_namespace=_EVENT_MEMORY_PARTITION_NAMESPACE,
+        tombstone_retention_seconds=deployment.tombstone_retention_seconds,
+    )
+    await partition_registry.prepare()
+
+
 def deployment_event_memory_ids(configuration: Configuration) -> tuple[str, str, str]:
     """
     The deployment's event memory vector store, segment store, and embedder ids.
@@ -303,11 +336,16 @@ async def event_backend_vector_store(
     return await resource_manager.get_vector_store(
         vector_store_id,
         vector_store_name=_EVENT_MEMORY_VECTOR_STORE_NAME,
-        store_schema=VectorStoreSchema(
-            vector_dimensions=embedder.dimensions,
-            similarity_metric=embedder.similarity_metric,
-            indexed_properties=event_backend_indexed_properties(),
-        ),
+        store_schema=_event_backend_store_schema(embedder),
+    )
+
+
+def _event_backend_store_schema(embedder: Embedder) -> VectorStoreSchema:
+    """The schema of the event backend's vector store, for its embedder."""
+    return VectorStoreSchema(
+        vector_dimensions=embedder.dimensions,
+        similarity_metric=embedder.similarity_metric,
+        indexed_properties=event_backend_indexed_properties(),
     )
 
 

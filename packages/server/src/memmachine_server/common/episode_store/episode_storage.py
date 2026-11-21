@@ -1,6 +1,6 @@
 """Abstract storage interface for episodic history."""
 
-from abc import ABC, abstractmethod
+from abc import abstractmethod
 from collections.abc import Iterable
 from uuid import UUID
 
@@ -11,14 +11,11 @@ from memmachine_server.common.episode_store.episode_model import (
     EpisodeEntry,
 )
 from memmachine_server.common.filter.filter_parser import FilterExpr
+from memmachine_server.common.lifecycle import Lifecycle, Preparable
 
 
-class EpisodeStorage(ABC):
+class EpisodeStorage(Preparable, Lifecycle):
     """Abstract interface for persisting and retrieving episodic history."""
-
-    @abstractmethod
-    async def startup(self) -> None:
-        raise NotImplementedError
 
     @abstractmethod
     async def delete_all(self) -> None:

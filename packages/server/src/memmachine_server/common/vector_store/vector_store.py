@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field, field_validator
 from memmachine_server.common.filter.filter_parser import (
     FilterExpr,
 )
+from memmachine_server.common.lifecycle import Lifecycle, Preparable
 from memmachine_server.common.partition_registry import PartitionedStore
 
 from .data_types import (
@@ -130,7 +131,7 @@ class VectorStorePartition(ABC):
         raise NotImplementedError
 
 
-class VectorStore(PartitionedStore):
+class VectorStore(PartitionedStore, Preparable, Lifecycle):
     """
     Abstract base class for a vector store.
 
@@ -153,16 +154,6 @@ class VectorStore(PartitionedStore):
     @abstractmethod
     def store_schema(self) -> VectorStoreSchema:
         """The schema the store was built with, which every partition's records and queries follow."""
-        raise NotImplementedError
-
-    @abstractmethod
-    async def startup(self) -> None:
-        """Start the store, creating idempotently what must exist before a partition is created."""
-        raise NotImplementedError
-
-    @abstractmethod
-    async def shutdown(self) -> None:
-        """Shutdown."""
         raise NotImplementedError
 
     @abstractmethod

@@ -3,8 +3,8 @@ Vector store backed by SQLite + pluggable vector search engine.
 
 Each partition gets its own records table, vector search engine, and index
 file. A pending operations table tracks search engine operations for crash
-recovery: on a store's startup, its partitions' unfinalized operations are
-replayed.
+recovery: when a store starts, it replays its partitions' operations that no
+saved index file holds into their search engines.
 """
 
 import asyncio
@@ -118,8 +118,10 @@ class _PendingOperationRow(BaseSQLiteVectorStore):
     1. Inserted in the same SQLite transaction as the records table change.
     2. Marked `applied=True` after the search engine processes the operation.
     3. Applied operations are deleted after the search engine is saved to disk.
-    4. On a store's startup, its partitions' remaining rows (applied or not)
-       are replayed.
+    4. When a store starts, its partitions' remaining rows (applied or not)
+       are replayed into their search engines, which marks nothing: a row
+       replayed while unapplied stays unapplied, and is replayed again on each
+       start, until a later operation on its record replaces it.
     """
 
     __tablename__ = "vector_store_sqlite_pd_op"
@@ -663,9 +665,7 @@ class SQLiteVectorStore(VectorStore):
 
     def _require_started(self) -> None:
         if not self._started:
-            raise RuntimeError(
-                "VectorStore has not been started. Call startup() first."
-            )
+            raise RuntimeError("VectorStore has not been started. Call start() first.")
 
     @property
     @override
@@ -673,14 +673,14 @@ class SQLiteVectorStore(VectorStore):
         return self._store_schema
 
     @override
-    async def startup(self) -> None:
-        if self._started:
-            return
-
+    async def prepare(self) -> None:
         if self._index_directory is not None:
             self._index_directory.mkdir(parents=True, exist_ok=True)
         async with self._sqlalchemy_engine.begin() as connection:
             await connection.run_sync(BaseSQLiteVectorStore.metadata.create_all)
+
+    @override
+    async def start(self) -> None:
         await self._replay_pending_operations()
 
         self._started = True
@@ -741,31 +741,9 @@ class SQLiteVectorStore(VectorStore):
         if upserted_vectors:
             await search_engine.add(upserted_vectors)
 
-        async with write_session(self._create_session) as session:
-            await session.execute(
-                update(_PendingOperationRow)
-                .where(
-                    _PendingOperationRow.vector_store_name == self._vector_store_name,
-                    _PendingOperationRow.partition_uuid == partition_uuid,
-                    _PendingOperationRow.record_row_id.in_(all_row_ids),
-                )
-                .values(applied=True)
-            )
-
     @override
-    async def shutdown(self) -> None:
+    async def stop(self) -> None:
         self._require_started()
-        if self._index_directory is not None:
-            for partition_uuid, search_engine in self._search_engines.items():
-                path = self._index_path(partition_uuid)
-                assert path is not None
-                await _save_partition_index(
-                    create_session=self._create_session,
-                    vector_store_name=self._vector_store_name,
-                    partition_uuid=partition_uuid,
-                    search_engine=search_engine,
-                    path=str(path),
-                )
         self._search_engines.clear()
         self._sync_sqlalchemy_engine.dispose()
         self._started = False

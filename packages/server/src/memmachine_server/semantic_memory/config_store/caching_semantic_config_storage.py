@@ -47,8 +47,14 @@ class CachingSemanticConfigStorage(SemanticConfigStorage):
         self._set_type_categories_cache: dict[str, list[SemanticCategory]] = {}
         self._set_type_ids_cache: dict[str, list[SetTypeEntry]] = {}
 
-    async def startup(self) -> None:
-        await self._wrapped.startup()
+    async def prepare(self) -> None:
+        await self._wrapped.prepare()
+
+    async def start(self) -> None:
+        await self._wrapped.start()
+
+    async def stop(self) -> None:
+        await self._wrapped.stop()
 
     async def delete_all(self) -> None:
         await self._wrapped.delete_all()
