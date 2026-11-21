@@ -1762,6 +1762,107 @@ async def test_concurrent_purges_of_one_partition_reclaim_everything(
     assert await _row_counts(store, PARTITION_UUID) == (0, 0)
 
 
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_pg_segment_deletes_wait_for_a_purge_of_their_partition(
+    pg_store: SQLAlchemySegmentStore,
+) -> None:
+    """A `delete_segments` call waits for a purge of its partition in progress.
+
+    A deletion and a purge that ran at once would lock the partition's
+    segments in different orders, could each wait for the other, and
+    PostgreSQL would fail one of them.
+    """
+    partition = await _created(pg_store)
+    segments = [_seg(ts_offset_seconds=index) for index in range(3)]
+    await partition.add_segments(_links(*segments))
+    held = asyncio.Event()
+
+    async def delete_once_the_purge_is_held() -> None:
+        await held.wait()
+        await partition.delete_segments([segment.uuid for segment in segments])
+
+    with _held_at_the_next_segment_delete_until_a_lock_wait(
+        pg_store._engine, held
+    ) as waited:
+        await asyncio.wait_for(
+            asyncio.gather(
+                pg_store.purge_partition(PARTITION_UUID),
+                delete_once_the_purge_is_held(),
+            ),
+            60,
+        )
+
+    assert waited == [True]
+    assert await _row_counts(pg_store, PARTITION_UUID) == (0, 0)
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_pg_a_purge_waits_for_segment_deletes_of_its_partition(
+    pg_store: SQLAlchemySegmentStore,
+) -> None:
+    """A purge waits for a `delete_segments` call on its partition in progress."""
+    partition = await _created(pg_store)
+    segments = [_seg(ts_offset_seconds=index) for index in range(3)]
+    await partition.add_segments(_links(*segments))
+    held = asyncio.Event()
+
+    async def purge_once_the_deletion_is_held() -> None:
+        await held.wait()
+        await pg_store.purge_partition(PARTITION_UUID)
+
+    with _held_at_the_next_segment_delete_until_a_lock_wait(
+        pg_store._engine, held
+    ) as waited:
+        await asyncio.wait_for(
+            asyncio.gather(
+                partition.delete_segments([segment.uuid for segment in segments]),
+                purge_once_the_deletion_is_held(),
+            ),
+            60,
+        )
+
+    assert waited == [True]
+    assert await _row_counts(pg_store, PARTITION_UUID) == (0, 0)
+
+
+@contextlib.contextmanager
+def _held_at_the_next_segment_delete_until_a_lock_wait(
+    engine: AsyncEngine, held: asyncio.Event
+) -> Generator[list[bool], None, None]:
+    """Hold the engine's next delete of segment rows until another transaction waits for a lock, and yield whether one did.
+
+    Sets `held` when the hold begins, and gives up after two seconds.
+    """
+    entered: list[bool] = []
+    waited: list[bool] = []
+
+    def _hold(connection, clauseelement, *_args) -> None:
+        if entered or not (
+            isinstance(clauseelement, Delete)
+            and clauseelement.table.name == SegmentRow.__tablename__
+        ):
+            return
+        entered.append(True)
+        held.set()
+        for _ in range(200):
+            if connection.execute(
+                text("SELECT count(*) FROM pg_locks WHERE NOT granted")
+            ).scalar_one():
+                waited.append(True)
+                return
+            connection.execute(text("SELECT pg_sleep(0.01)"))
+        waited.append(False)
+
+    event.listen(engine.sync_engine, "before_execute", _hold)
+    try:
+        yield waited
+    finally:
+        event.remove(engine.sync_engine, "before_execute", _hold)
+    assert entered, "no segment delete ran"
+
+
 @pytest.mark.asyncio
 async def test_purge_reclaims_a_write_that_lands_after_the_partition_is_dropped(
     store: SQLAlchemySegmentStore,
@@ -1777,6 +1878,23 @@ async def test_purge_reclaims_a_write_that_lands_after_the_partition_is_dropped(
     assert await store.purge_partition(PARTITION_UUID) is True
     assert await _row_counts(store, PARTITION_UUID) == (0, 0)
     assert await store.purge_partition(PARTITION_UUID) is False
+
+
+@pytest.mark.asyncio
+async def test_deleting_segments_of_a_dropped_partition_leaves_them_to_the_purge(
+    store: SQLAlchemySegmentStore,
+) -> None:
+    """`delete_segments` on a dropped partition deletes nothing, and the purge reclaims its segments."""
+    partition = await _created(store)
+    segment = _seg()
+    await partition.add_segments(_links(segment))
+    await store.drop_partition(PARTITION_UUID)
+
+    await partition.delete_segments([segment.uuid])
+
+    assert await _row_counts(store, PARTITION_UUID) == (1, 1)
+    assert await store.purge_partition(PARTITION_UUID) is True
+    assert await _row_counts(store, PARTITION_UUID) == (0, 0)
 
 
 @pytest.mark.asyncio
