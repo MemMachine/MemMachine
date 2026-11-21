@@ -99,7 +99,7 @@ qdrant:
 
 memmachine:
   image: docker.io/memmachine/memmachine
-  tag: latest-cpu
+  tag: latest
   pullPolicy: IfNotPresent
   resources:
     requests:

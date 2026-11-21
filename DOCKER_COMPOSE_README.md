@@ -34,7 +34,7 @@ cp sample_configs/configuration.event.yml configuration.yml
 ```
 
 For the `declarative` backend, start from `sample_configs/episodic_memory_config.cpu.sample`
-(or `.gpu.sample`) and update:
+and update:
 - Replace `<YOUR_API_KEY>` with your OpenAI API key
 - Change database hosts from `localhost` to the service names `postgres` and `neo4j`
 - Under `profile_storage` (PostgreSQL), match `POSTGRES_*` in `.env`: set

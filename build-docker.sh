@@ -11,7 +11,7 @@
 #   ./build-local.sh --push-only
 #
 # Non-Interactive Build Example:
-#   ./build-local.sh --type gpu --arch both --version v0.1.1 --push --user myuser --token mytoken
+#   ./build-local.sh --arch both --version v0.1.1 --push --user myuser --token mytoken
 #
 
 # --- Strict Mode ---
@@ -50,7 +50,6 @@ show_usage() {
     echo "  --push-only               Detect local images and prompt to push them."
     echo ""
     echo "Build Options (ignored if --push-only is used):"
-    echo "  --type <cpu|gpu|both>   Specify the image type to build."
     echo "  --arch <amd64|arm64|both> Specify the architecture."
     echo "  --version <tag>           Set the version tag (e.g., v0.1.1)."
     echo "  --latest                  Apply 'latest' tags to the build."
@@ -107,8 +106,6 @@ handle_docker_login() {
 
 # --- Global variables for build choices ---
 ACTION_MODE="build"
-BUILD_CPU=false
-BUILD_GPU=false
 PLATFORMS=""
 VERSION=""
 PUSH_LATEST=false
@@ -123,7 +120,6 @@ parse_args() {
     while [[ $# -gt 0 ]]; do
         case $1 in
             --push-only) ACTION_MODE="push-only"; shift 1 ;;
-            --type) BUILD_TYPE="$2"; shift 2 ;;
             --arch) ARCH_TYPE="$2"; shift 2 ;;
             --version) VERSION="$2"; shift 2 ;;
             --latest) PUSH_LATEST=true; shift 1 ;;
@@ -136,12 +132,6 @@ parse_args() {
     done
 
     if [[ "$ACTION_MODE" == "build" && "$INTERACTIVE" == "false" ]]; then
-        # Validate and set build type
-        case "${BUILD_TYPE:-}" in
-            cpu) BUILD_CPU=true ;; gpu) BUILD_GPU=true ;; both) BUILD_CPU=true; BUILD_GPU=true ;;
-            "") error "--type is a required argument for non-interactive mode.";;
-            *) error "Invalid value for --type: ${BUILD_TYPE}";;
-        esac
         # Validate and set architecture
         case "${ARCH_TYPE:-}" in
             amd64) PLATFORMS="linux/amd64" ;; arm64) PLATFORMS="linux/arm64" ;; both) PLATFORMS="linux/amd64,linux/arm64" ;;
@@ -155,12 +145,6 @@ parse_args() {
 
 get_interactive_choices() {
     msg "Select build options:"
-    read -p "Which image type to build? (1: CPU, 2: GPU, 3: Both) [3]: " build_choice
-    case "${build_choice:-3}" in
-        1) BUILD_CPU=true ;; 2) BUILD_GPU=true ;; 3) BUILD_CPU=true; BUILD_GPU=true ;;
-        *) error "Invalid build type choice." ;;
-    esac
-
     read -p "Which architectures? (1: amd64, 2: arm64, 3: Both) [3]: " arch_choice
     case "${arch_choice:-3}" in
         1) PLATFORMS="linux/amd64" ;; 2) PLATFORMS="linux/arm64" ;; 3) PLATFORMS="linux/amd64,linux/arm64" ;;
@@ -184,7 +168,7 @@ get_interactive_choices() {
         if [[ -z "$VERSION" ]]; then error "Version tag cannot be empty."; fi
     fi
 
-    msg "A 'latest' tag (e.g., 'latest-cpu') acts as a pointer to the newest stable release."
+    msg "A 'latest' tag acts as a pointer to the newest stable release."
     read -p "Apply 'latest' tag for this version? (Y/n): " push_latest_choice
     if [[ ! "$push_latest_choice" =~ ^[nN]$ ]]; then PUSH_LATEST=true; fi
 
@@ -199,12 +183,7 @@ print_summary_and_confirm() {
     # Sanitize VERSION for Docker tagging (replace '+' with '_')
     VERSION="${VERSION//+/_}"
 
-    local build_types=""
-    if [[ "$BUILD_CPU" == true ]]; then build_types="CPU "; fi
-    if [[ "$BUILD_GPU" == true ]]; then build_types+="GPU"; fi
-    
     msg "--- BUILD SUMMARY ---"
-    echo -e "Image Types: \t ${build_types}"
     echo -e "Version: \t\t ${VERSION}"
     echo -e "Architectures: \t ${PLATFORMS}"
     echo -e "Apply 'latest' tags: \t ${PUSH_LATEST}"
@@ -218,16 +197,10 @@ print_summary_and_confirm() {
 }
 
 build_image() {
-    local build_type="$1"
-    local build_type_upper=$(echo "$build_type" | tr '[:lower:]' '[:upper:]')
-    msg "Preparing to build ${build_type_upper} image..."
-    local build_args=""; if [[ "$build_type" == "gpu" ]]; then build_args="--build-arg GPU=true"; fi
+    msg "Preparing to build image..."
 
-    local docker_tags=(); docker_tags+=("--tag" "${IMAGE_NAME}:${VERSION}-${build_type}")
-    if [[ "$PUSH_LATEST" == "true" ]]; then
-        docker_tags+=("--tag" "${IMAGE_NAME}:latest-${build_type}")
-        if [[ "$build_type" == "cpu" ]]; then docker_tags+=("--tag" "${IMAGE_NAME}:latest"); fi
-    fi
+    local docker_tags=(); docker_tags+=("--tag" "${IMAGE_NAME}:${VERSION}")
+    if [[ "$PUSH_LATEST" == "true" ]]; then docker_tags+=("--tag" "${IMAGE_NAME}:latest"); fi
     
     local final_args=()
     if [[ "$ACTION" == "Local Build" ]]; then
@@ -239,14 +212,13 @@ build_image() {
 
     local scm_version; scm_version=$(git describe --tags --always 2>/dev/null | sed -E 's/^v//;s/-([0-9]+)-g([0-9a-f]+)/.dev\1+g\2/' || echo "$VERSION")
 
-    # shellcheck disable=SC2086
-    docker buildx build --platform "${PLATFORMS}" ${build_args} --build-arg SCM_VERSION="${scm_version}" "${docker_tags[@]}" "${final_args[@]}" . || error "Docker build for ${build_type_upper} failed."
+    docker buildx build --platform "${PLATFORMS}" --build-arg SCM_VERSION="${scm_version}" "${docker_tags[@]}" "${final_args[@]}" . || error "Docker build failed."
 
     if [[ "$ACTION" == "Local Build" ]]; then
-        success "${build_type_upper} image built successfully!"
-        msg "To test it, run: docker run -it --rm ${IMAGE_NAME}:${VERSION}-${build_type} bash"
+        success "Image built successfully!"
+        msg "To test it, run: docker run -it --rm ${IMAGE_NAME}:${VERSION} bash"
     else
-        success "${build_type_upper} image build and push completed successfully!"
+        success "Image build and push completed successfully!"
     fi
 }
 
@@ -316,8 +288,7 @@ main() {
         setup_buildx
         print_summary_and_confirm
         if [[ "$ACTION" == "Build and Push" ]]; then handle_docker_login; fi
-        if [[ "$BUILD_CPU" == true ]]; then build_image "cpu"; fi
-        if [[ "$BUILD_GPU" == true ]]; then build_image "gpu"; fi
+        build_image
     fi
     success "All selected operations are complete."
 }

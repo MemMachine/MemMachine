@@ -563,24 +563,8 @@ check_config_file() {
         print_warning "configuration.yml file not found. Creating from template..."
         sleep 1
 
-        # Ask user for CPU or GPU configuration, defaulting to CPU
-        print_prompt
-        read -p "Which configuration would you like to use for the Docker Image? (CPU/GPU) [CPU]: " config_type_input
-        local config_type=$(echo "${config_type_input:-CPU}" | tr '[:lower:]' '[:upper:]')
-
-        if [ "$config_type" = "GPU" ]; then
-            CONFIG_SOURCE="sample_configs/episodic_memory_config.gpu.sample"
-            MEMMACHINE_IMAGE="memmachine/memmachine:latest-gpu"
-            print_info "GPU configuration selected."
-        else
-            if [ -n "$config_type_input" ] && [ "$config_type" != "CPU" ]; then
-                print_warning "Invalid selection. Defaulting to CPU."
-            else
-                print_info "CPU configuration selected."
-            fi
-            CONFIG_SOURCE="sample_configs/episodic_memory_config.cpu.sample"
-            MEMMACHINE_IMAGE="memmachine/memmachine:latest-cpu"
-        fi
+        CONFIG_SOURCE="sample_configs/episodic_memory_config.cpu.sample"
+        MEMMACHINE_IMAGE="memmachine/memmachine:latest"
 
         # Ask user for provider path (OpenAI, Bedrock, Ollama or OpenAI-compatible)
         print_prompt
@@ -990,49 +974,7 @@ show_service_info() {
 }
 
 build_image() {
-    local name=""
-    local force="false"
-    local gpu="false" # default to false
-    local reply=""
-    local key=""
-    local value=""
-
-    while [[ $# -gt 0 ]]; do
-        # This section splits the key and value if they are separated by an "=" sign
-        if [[ "$1" == --* ]]; then
-            if [[ "$1" == *=* ]]; then
-                key=$(echo "$1" | cut -d '=' -f 1)
-                value=$(echo "$1" | cut -d '=' -f 2-)
-                shift
-            else
-                key="$1"
-                value="$2"
-                if [[ "$#" -ge 2 ]]; then
-                    shift 2
-                else
-                    print_error "Missing value for argument: $1"
-                    exit 1
-                fi
-            fi
-        else 
-            # If no leading "--", then this is not an option, so just use put the argument in $key
-            key="$1"
-            value=""
-            shift
-        fi
-
-        case "$key" in
-            --gpu)
-                gpu="$value"
-                ;;
-            -f|--force)
-                force="true"
-                ;;
-            *)
-                name="$key"
-                ;;
-        esac
-    done
+    local name="${1:-}"
 
     if [[ -z "$name" ]]; then
         print_info "No name specified."
@@ -1040,19 +982,6 @@ build_image() {
         name="memmachine/memmachine:latest"
     fi
 
-    if [[ "$force" == "false" ]]; then
-        print_prompt
-        read -p "Building $name with '--build-arg GPU=[true|false]' (default: false): " reply
-        gpu=$(echo "${reply:-false}" | tr '[:upper:]' '[:lower:]')
-        if [[ "$gpu" != "true" && "$gpu" != "false" ]]; then
-            print_error "Invalid value for GPU: $gpu"
-            exit 1
-        fi
-    else
-        print_info "Building $name with '--build-arg GPU=$gpu'"
-    fi
-
-    # Proceed with build after validation passes
     name="${name//+/_}"
     
     # Generate PEP 440 compliant version from git describe
@@ -1071,8 +1000,8 @@ build_image() {
     # Step 3: Ensure we have a valid version (fallback to 0.0.0 if empty)
     scm_version="${scm_version:-0.0.0}"
     
-    print_info "Building $name with GPU=$gpu (SCM_VERSION: $scm_version)"
-    docker build --build-arg GPU=$gpu --build-arg SCM_VERSION="$scm_version" -t "$name" .
+    print_info "Building $name (SCM_VERSION: $scm_version)"
+    docker build --build-arg SCM_VERSION="$scm_version" -t "$name" .
 }
 
 # Configure reranker settings
@@ -1085,20 +1014,9 @@ configure_reranker() {
         return
     fi
 
-    local is_gpu=false
-    if [[ "$MEMMACHINE_IMAGE" == *"latest-gpu"* ]]; then
-        is_gpu=true
-    fi
-
-    if [ "$is_gpu" = true ]; then
-        print_info "Default reranker: RRF hybrid (identity + BM25 + cross-encoder)"
-        print_prompt
-        read -p "Replace cross-encoder provider? (None/Cohere/AWS) [None]: " reranker_choice
-    else
-        print_info "Default reranker: RRF hybrid (identity + BM25)"
-        print_prompt
-        read -p "Add optional neural reranker? (None/Cohere/AWS) [None]: " reranker_choice
-    fi
+    print_info "Default reranker: RRF hybrid (identity + BM25)"
+    print_prompt
+    read -p "Add optional neural reranker? (None/Cohere/AWS) [None]: " reranker_choice
 
     local reranker=$(echo "${reranker_choice:-None}" | tr '[:lower:]' '[:upper:]')
 
@@ -1122,13 +1040,9 @@ configure_reranker() {
             cohere_model=${cohere_model:-rerank-english-v3.0}
             safe_sed_inplace "/cohere_reranker_id:/,/model:/ s|model: .*|model: \"$cohere_model\"|" configuration.yml
 
-            if [ "$is_gpu" = true ]; then
-                safe_sed_inplace "s|- ce_ranker_id|- cohere_reranker_id|" configuration.yml
-            else
-                if ! grep -q "cohere_reranker_id" <(awk '/my_reranker_id:/,/^    [a-zA-Z]/' configuration.yml); then
-                    safe_sed_inplace "/reranker_ids:/,/^    [a-zA-Z]/ { /- bm_ranker_id/a\\          - cohere_reranker_id
-                    }" configuration.yml
-                fi
+            if ! grep -q "cohere_reranker_id" <(awk '/my_reranker_id:/,/^    [a-zA-Z]/' configuration.yml); then
+                safe_sed_inplace "/reranker_ids:/,/^    [a-zA-Z]/ { /- bm_ranker_id/a\\          - cohere_reranker_id
+                }" configuration.yml
             fi
             print_success "Added Cohere reranker to hybrid configuration"
             ;;
@@ -1152,13 +1066,9 @@ configure_reranker() {
             safe_sed_inplace "/aws_reranker_id:/,/model_id:/ s|model_id: .*|model_id: \"$aws_model\"|" configuration.yml
             print_success "Set AWS Bedrock reranker credentials in configuration.yml"
 
-            if [ "$is_gpu" = true ]; then
-                safe_sed_inplace "s|- ce_ranker_id|- aws_reranker_id|" configuration.yml
-            else
-                if ! grep -q "aws_reranker_id" <(awk '/my_reranker_id:/,/^    [a-zA-Z]/' configuration.yml); then
-                    safe_sed_inplace "/reranker_ids:/,/^    [a-zA-Z]/ { /- bm_ranker_id/a\\          - aws_reranker_id
-                    }" configuration.yml
-                fi
+            if ! grep -q "aws_reranker_id" <(awk '/my_reranker_id:/,/^    [a-zA-Z]/' configuration.yml); then
+                safe_sed_inplace "/reranker_ids:/,/^    [a-zA-Z]/ { /- bm_ranker_id/a\\          - aws_reranker_id
+                }" configuration.yml
             fi
             print_success "Added AWS Bedrock reranker to hybrid configuration"
             ;;
@@ -1231,7 +1141,7 @@ case "${1:-}" in
         echo "  restart                                                Restart MemMachine services"
         echo "  logs                                                   Show service logs"
         echo "  clean                                                  Remove all services and data"
-        echo "  build [<image>:<tag>] [--gpu true/false] [-f|--force]  Build a custom MemMachine image"
+        echo "  build [<image>:<tag>]                                  Build a custom MemMachine image"
         echo "  help                                                   Show this help message"
         echo ""
         echo "Provider Options:"

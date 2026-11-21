@@ -308,7 +308,7 @@ helm upgrade --install memmachine . --set qdrant.existingSecret=my-qdrant-key
 | Value                              | Default                                          | Description                                   |
 |------------------------------------|--------------------------------------------------|-----------------------------------------------|
 | `memmachine.image`                 | `docker.io/memmachine/memmachine`                | Container image                               |
-| `memmachine.tag`                   | `v0.2.6-cpu`                                     | Image tag                                     |
+| `memmachine.tag`                   | `latest`                                         | Image tag                                     |
 | `memmachine.pullPolicy`            | `IfNotPresent`                                   | Image pull policy                             |
 | `memmachine.openaiApiKey`          | `<OPENAI_API_KEY>`                               | Stored in `memmachine-secrets`; injected as `OPENAI_API_KEY` env var and used as `api_key` for LLM and embedder |
 | `memmachine.config.loggingLevel`   | `INFO`                                           | Controls `FAST_MCP_LOG_LEVEL` env var         |

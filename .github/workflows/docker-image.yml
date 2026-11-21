@@ -1,5 +1,5 @@
-# Workflow to build and publish CPU and GPU Docker images to Docker Hub
-name: Build and Publish CPU/GPU Docker Images
+# Workflow to build and publish the Docker image to Docker Hub
+name: Build and Publish Docker Image
 
 on:
   # Trigger when a release is published
@@ -27,8 +27,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build-cpu:
-    name: Build and Push CPU Image
+  build:
+    name: Build and Push Image
     # Use the latest Ubuntu runner
     runs-on: ubuntu-latest
     steps:
@@ -76,26 +76,27 @@ jobs:
         id: scm
         run: echo "version=$(git describe --tags --always | sed 's/^v//;s/-\([0-9]\+\)-g\([0-9a-f]\+\)/.dev\1+g\2/')" >> $GITHUB_OUTPUT
 
-      # Step 5: Extract Docker metadata for CPU image
-      - name: Extract Docker metadata for CPU image
-        id: meta-cpu
+      # Step 5: Extract Docker metadata
+      - name: Extract Docker metadata
+        id: meta
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.IMAGE_NAME }}
           flavor: |
-            # Disable 'latest' tag for CPU image to prevent conflicts with GPU Image
-            # We use manual 'latest' tags for CPU images
+            # The latest rules below add the latest tag
             latest=false
+          # For a pre-release version, a semver rule replaces its pattern with
+          # {{version}} but keeps its prefix. The v therefore goes in the
+          # prefix, and the latest rules skip any version with a pre-release
+          # part, since they would tag the bare version.
           tags: |
             # For Manual (workflow_dispatch) runs
-            type=semver,pattern=v{{version}}-cpu,value=${{ inputs.tag }},enable=${{ github.event_name == 'workflow_dispatch' }}
-            type=semver,pattern=latest-cpu,value=${{ inputs.tag }},enable=${{ github.event_name == 'workflow_dispatch' && !contains(inputs.tag, '-') }}
+            type=semver,pattern={{version}},prefix=v,value=${{ inputs.tag }},enable=${{ github.event_name == 'workflow_dispatch' }}
             type=semver,pattern=latest,value=${{ inputs.tag }},enable=${{ github.event_name == 'workflow_dispatch' && !contains(inputs.tag, '-') }}
 
             # For Release events
-            type=semver,pattern=v{{version}}-cpu,enable=${{ github.event_name == 'release' }}
-            type=semver,pattern=latest-cpu,enable=${{ github.event_name == 'release' && !github.event.release.prerelease }}
-            type=semver,pattern=latest,enable=${{ github.event_name == 'release' && !github.event.release.prerelease }}
+            type=semver,pattern={{version}},prefix=v,enable=${{ github.event_name == 'release' }}
+            type=semver,pattern=latest,enable=${{ github.event_name == 'release' && !github.event.release.prerelease && !contains(github.event.release.tag_name, '-') }}
           labels: |
             org.opencontainers.image.source=${{ github.repository }}
 
@@ -103,120 +104,22 @@ jobs:
       - name: Prune Docker system
         run: docker system prune -af
 
-      # Step 6: Build and push the CPU image
-      - name: Build and push CPU image
-        id: build_cpu
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ./Dockerfile
-          push: true
-          # FIXED: Explicitly disable GPU here to ensure 'latest' is the CPU version
-          build-args: |
-            GPU=false
-            SCM_VERSION=${{ steps.scm.outputs.version }}
-          tags: ${{ steps.meta-cpu.outputs.tags }}
-          labels: ${{ steps.meta-cpu.outputs.labels }}
-          platforms: linux/amd64,linux/arm64
-          # FIXED: Added scope 'build-cpu' to isolate this cache
-          cache-from: type=gha,scope=build-cpu
-          cache-to: type=gha,mode=max,scope=build-cpu
-
-      # Step 7: Show the digest of the built CPU image (useful for traceability)
-      - name: Show CPU image digest
-        run: echo "CPU digest - ${{ steps.build_cpu.outputs.digest }}"
-
-  build-gpu:
-    name: Build and Push GPU Image
-    needs: build-cpu
-    # Use the latest Ubuntu runner
-    runs-on: ubuntu-latest
-    steps:
-      # Step 0: Free Disk Space (Manual)
-      - name: Free Disk Space (Manual)
-        run: |
-          sudo rm -rf /usr/local/lib/android
-          sudo rm -rf /usr/share/dotnet
-          sudo rm -rf /usr/share/swift
-          sudo rm -rf /opt/ghc
-          sudo rm -rf /usr/local/.ghcup
-
-      # Step 1: Checkout source for Release triggers
-      - name: Checkout source (Release)
-        if: github.event_name == 'release'
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-
-      # Step 1: Checkout source for Manual triggers
-      - name: Checkout source (Manual)
-        if: github.event_name == 'workflow_dispatch'
-        uses: actions/checkout@v6
-        with:
-          ref: ${{ inputs.tag }}
-          fetch-depth: 0
-
-      # Step 2: Enable QEMU for multi-platform builds (required for ARM support)
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-
-      # Step 3: Set up Docker Buildx (needed for advanced Docker builds)
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      # Step 4: Log in to Docker Hub
-      - name: Log in to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_API_KEY }}
-
-      # Step 4.5: Get SCM Version
-      - name: Get SCM Version
-        id: scm
-        run: echo "version=$(git describe --tags --always)" >> $GITHUB_OUTPUT
-
-      # Step 5: Extract Docker metadata for GPU image
-      - name: Extract Docker metadata for GPU image
-        id: meta-gpu
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.IMAGE_NAME }}
-          flavor: |
-            latest=false
-          tags: |
-            # For Manual (workflow_dispatch) runs
-            type=semver,pattern=v{{version}}-gpu,value=${{ inputs.tag }},enable=${{ github.event_name == 'workflow_dispatch' }}
-            type=semver,pattern=latest-gpu,value=${{ inputs.tag }},enable=${{ github.event_name == 'workflow_dispatch' && !contains(inputs.tag, '-') }}
-
-            # For Release events
-            type=semver,pattern=v{{version}}-gpu,enable=${{ github.event_name == 'release' }}
-            type=semver,pattern=latest-gpu,enable=${{ github.event_name == 'release' && !github.event.release.prerelease }}
-          labels: |
-            org.opencontainers.image.source=${{ github.repository }}
-
-      # Step 5.5: Prune Docker system
-      - name: Prune Docker system
-        run: docker system prune -af
-
-      # Step 6: Build and push the GPU image
-      - name: Build and push GPU image
-        id: build_gpu
+      # Step 6: Build and push the image
+      - name: Build and push image
+        id: build
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ./Dockerfile
           push: true
           build-args: |
-            GPU=true
             SCM_VERSION=${{ steps.scm.outputs.version }}
-          tags: ${{ steps.meta-gpu.outputs.tags }}
-          labels: ${{ steps.meta-gpu.outputs.labels }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
           platforms: linux/amd64,linux/arm64
-          # FIXED: Added scope 'build-gpu' to isolate this cache
-          cache-from: type=gha,scope=build-gpu
-          cache-to: type=gha,mode=max,scope=build-gpu
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
-      # Step 7: Show the digest of the built GPU image (useful for traceability)
-      - name: Show GPU image digest
-        run: echo "GPU digest - ${{ steps.build_gpu.outputs.digest }}"
+      # Step 7: Show the digest of the built image (useful for traceability)
+      - name: Show image digest
+        run: echo "Digest - ${{ steps.build.outputs.digest }}"
