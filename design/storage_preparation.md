@@ -31,16 +31,22 @@ under an existing name.
 
 ## The store contract
 
-Every storage interface has `prepare`. On a store with none of its durable
-resources, it creates what the store needs; run again on what it created, it
-changes nothing. It runs before `startup`, while no other process uses the
-store, and promises nothing for any other state. Some stores' creation code
-does more, such as converting session tables and Neo4j semantic memory data
-of an older shape or upgrading pgvector semantic storage's tables, but
-nothing relies on that, and a database an earlier release created is
-recreated. `startup` creates nothing: it opens the store on what `prepare`
-created, and does what serving needs beyond schema, such as loading a Milvus
-collection or replaying a SQLite vector store's pending operations.
+Every storage interface extends `Preparable` and `Lifecycle`
+(`common/lifecycle.py`), whose docstrings state the contract:
+
+- `prepare` runs in the setup step. On a store with none of its durable
+  resources, it creates what the store needs; run again on what it created, it
+  changes nothing. It promises nothing for any other state.
+- Its owner calls `start` once before use and `stop` once after. Neither
+  creates, changes, or deletes anything durable, so any number of processes
+  may start stores over the same resources at once.
+
+Some stores' creation code does more than `prepare` promises, such as
+converting session tables and Neo4j semantic memory data of an older shape or
+upgrading pgvector semantic storage's tables, but nothing relies on that, and a
+database an earlier release created is recreated. What `start` does beyond
+reading is in process: loading a Milvus collection into memory, or replaying a
+SQLite vector store's pending operations into its search engines.
 
 ## What `prepare` covers
 

@@ -142,14 +142,13 @@ name for that alone.
 ### Interface
 
 ```python
-class PartitionRegistry(ABC):
-    async def startup(self) -> None: ...
+class PartitionRegistry(Preparable, Lifecycle):
     async def reserve(self, partition_name: str) -> Reservation: ...
     async def resolve(self, partition_name: str) -> Registration | None: ...
     async def unregister(self, partition_name: str) -> None: ...
     async def claim_tombstone(self) -> TombstoneClaim | None: ...
 
-    # Supplied by an implementation, with startup and claim_tombstone.
+    # Supplied by an implementation, with prepare, start, stop, and claim_tombstone.
     async def _reserve(self, partition_name: str) -> Reservation: ...
     async def _resolve(self, partition_name: str) -> UUID | None: ...
     def _registration(
@@ -645,7 +644,7 @@ differs where a store is remote:
   stays pending until its caller deletes the name: the registry offers the
   deletion and holds no policy on when to give up.
 - **`prepare` creates the registry's tables when missing**, as every store's
-  `prepare` creates its own durable resources idempotently; `startup`
+  `prepare` creates its own durable resources idempotently; `start`
   creates nothing.
 
 ## Alternatives considered
