@@ -680,6 +680,8 @@ class DatabaseManager:
             }
             if conf.api_key.get_secret_value():
                 client_kwargs["api_key"] = conf.api_key.get_secret_value()
+            if conf.pool_size is not None:
+                client_kwargs["pool_size"] = conf.pool_size
 
             client = AsyncQdrantClient(**client_kwargs)
 

@@ -252,6 +252,14 @@ class QdrantConf(MetricsFactoryIdMixin, YamlSerializableMixin, ApiKeyMixin):
         default=False,
         description="Whether to use HTTPS/TLS for Qdrant communication",
     )
+    pool_size: int | None = Field(
+        default=None,
+        description=(
+            "Maximum number of HTTP connections kept open to Qdrant per client. "
+            "Passed to the Qdrant client as pool_size. Unset keeps the client's "
+            "default."
+        ),
+    )
     request_timeout_seconds: int = Field(
         default=30,
         gt=0,
