@@ -11,7 +11,7 @@ import numpy as np
 from pydantic import InstanceOf
 
 from memmachine_server.common.filter.filter_parser import FilterExpr
-from memmachine_server.common.lifecycle import Lifecycle
+from memmachine_server.common.lifecycle import Lifecycle, Preparable
 from memmachine_server.semantic_memory.semantic_model import (
     FeatureIdT,
     SemanticFeature,
@@ -19,20 +19,10 @@ from memmachine_server.semantic_memory.semantic_model import (
 )
 
 
-class SemanticStorage(Lifecycle):
+class SemanticStorage(Preparable, Lifecycle):
     """Base class for semantic storage backends."""
 
     backend_name: str | None = None
-
-    @abstractmethod
-    async def prepare(self) -> None:
-        """
-        Create the storage's missing durable resources.
-
-        The caller runs it before `start`, while no other process uses the
-        storage. Running it again changes nothing.
-        """
-        raise NotImplementedError
 
     @abstractmethod
     async def delete_all(self) -> None:

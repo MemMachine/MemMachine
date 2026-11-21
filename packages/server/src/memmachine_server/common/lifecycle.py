@@ -31,3 +31,18 @@ class Lifecycle(Protocol):
     async def stop(self) -> None:
         """Release what the component holds in this process, writing nothing durable."""
         raise NotImplementedError
+
+
+class Preparable(Protocol):
+    """A component whose durable resources the setup step prepares."""
+
+    @abstractmethod
+    async def prepare(self) -> None:
+        """
+        Create the component's missing durable resources.
+
+        The setup step calls it in one process, while no other process uses
+        the resources, before any component over them starts. Running it again
+        changes nothing.
+        """
+        raise NotImplementedError

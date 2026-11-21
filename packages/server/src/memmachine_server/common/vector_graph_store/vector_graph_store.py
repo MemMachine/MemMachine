@@ -12,12 +12,12 @@ from memmachine_server.common.data_types import OrderedValue, SimilarityMetric
 from memmachine_server.common.filter.filter_parser import (
     FilterExpr,
 )
-from memmachine_server.common.lifecycle import Lifecycle
+from memmachine_server.common.lifecycle import Lifecycle, Preparable
 
 from .data_types import Edge, Node
 
 
-class VectorGraphStore(Lifecycle):
+class VectorGraphStore(Preparable, Lifecycle):
     """Abstract base class for a vector graph store."""
 
     @abstractmethod
@@ -283,14 +283,4 @@ class VectorGraphStore(Lifecycle):
     @abstractmethod
     async def delete_all_data(self) -> None:
         """Delete all data from the vector graph store."""
-        raise NotImplementedError
-
-    @abstractmethod
-    async def prepare(self) -> None:
-        """
-        Create the store's missing durable resources.
-
-        The caller runs it before the store's first use, while no other process uses the
-        store. Running it again changes nothing.
-        """
         raise NotImplementedError
