@@ -285,6 +285,16 @@ class VectorGraphStore(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    async def prepare(self) -> None:
+        """
+        Create the store's missing durable resources.
+
+        The caller runs it before the store's first use, while no other process uses the
+        store. Running it again changes nothing.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
     async def close(self) -> None:
         """Shut down and release resources."""
         raise NotImplementedError

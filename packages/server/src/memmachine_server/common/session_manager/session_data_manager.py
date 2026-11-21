@@ -18,8 +18,13 @@ class SessionDataManager(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def create_tables(self) -> None:
-        """Create the necessary tables in the database."""
+    async def prepare(self) -> None:
+        """
+        Create the manager's missing durable resources.
+
+        The caller runs it before the manager serves, while no other process
+        uses the manager. Running it again changes nothing.
+        """
         raise NotImplementedError
 
     @abstractmethod
