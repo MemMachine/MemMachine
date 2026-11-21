@@ -1326,35 +1326,28 @@ async def test_unsupported_dialect_engine_is_rejected(
 async def test_overlapping_segment_deletes_do_not_deadlock(
     store: SQLAlchemySegmentStore,
 ) -> None:
-    """Overlapping concurrent `delete_segments` stay deadlock-free.
+    """Concurrent `delete_segments` calls with segments in common both complete.
 
-    Regression canary rather than a lock-necessity proof: ablating the
-    ordered pre-lock does not make this fail on PostgreSQL, whose current
-    executor happens to acquire row locks in consistent orders for
-    identical DELETE shapes (scalar array probes are sorted; bitmap scans
-    lock in TID order). That consistency is engine behavior, not a
-    guarantee any database documents, so the pre-lock imposes the order
-    deliberately; this test catches the AB/BA cycle wherever an engine or
-    plan change ever produces divergent orders.
+    Calls that locked their common segments in different orders could each
+    wait for the other, and PostgreSQL would fail one of them.
     """
     partition = await _created(store, uuid4())
 
-    async def round_trip(rng: random.Random) -> None:
-        segments = [_seg(index=index) for index in range(24)]
+    async def round_trip() -> None:
+        segments = [_seg(index=index) for index in range(96)]
         await partition.add_segments(_links(*segments))
         uuids = [segment.uuid for segment in segments]
-        forward = uuids[:16]
-        backward = [*reversed(uuids[8:])]
+        # One call deletes every segment and the other a few of them: calls
+        # of unequal size deadlock far more often than calls of equal size
+        # when they lock in different orders.
         await asyncio.gather(
-            partition.delete_segments(forward),
-            partition.delete_segments(backward),
+            partition.delete_segments(uuids),
+            partition.delete_segments(uuids[80:]),
         )
-        await partition.delete_segments(rng.sample(uuids, len(uuids)))
         assert await _row_counts(partition, partition._partition_uuid) == (0, 0)
 
-    rng = random.Random(7)
     for _ in range(10):
-        await asyncio.wait_for(round_trip(rng), 30)
+        await asyncio.wait_for(round_trip(), 30)
 
 
 # ===================================================================

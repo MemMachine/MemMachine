@@ -138,15 +138,147 @@ reclaimed by the purge, which starts only after the retention.
 ### Locking model
 
 Row locks only. Writers lock nothing beyond the rows they write;
-`delete_segments` locks its segment rows in key order on PostgreSQL; the
-purge takes `FOR UPDATE` on its partition's row, which only the purgers and
-the drop of the same partition contend for. No table-level lock, no DDL,
+`delete_segments` deletes its segments one statement each in key order, so
+every deletion takes its row locks in that order; the purge takes
+`FOR UPDATE` on its partition's row, which only the purgers and the drop of
+the same partition contend for. No table-level lock, no DDL,
 and no lock upgrade anywhere in the store, which removes the measured
 deadlock classes at the root: reclamation touches only rows of a partition
 no request can reach. On SQLite, which drops locking clauses, every write
 transaction of the store takes the database's write lock at BEGIN
 (`BEGIN IMMEDIATE`, through the `enable_sqlite_explicit_begin` setup the
 store requires of its engine), which stands in for the row locks.
+
+The order of `delete_segments`'s row locks is the order in which its
+statements reach PostgreSQL. PostgreSQL documents its part: it runs a
+session's statements in the order received, each to completion, and a
+`DELETE` locks the row it deletes. The client's part has no documented
+guarantee. The store hands SQLAlchemy the statement once with the
+parameter sets in key order, SQLAlchemy hands them to the driver, and each
+keeps the list's order without stating that it does. A client that sent
+them in another order would let two deletions of overlapping segments
+deadlock, which PostgreSQL ends by failing one of them, and the store's
+test of concurrent overlapping deletions fails on such a client. Sending
+each statement in its own round trip would rest on documented behavior
+alone, and was not chosen for its cost: 19 ms against 2.5 for 100 segments
+and 166 against 10 for 1,000, measured on a local PostgreSQL 18.6 with a
+0.34 ms round trip.
+
+### Lookups by key
+
+A statement that reads a partition's rows for a list of keys (seed segments
+by UUID, segments by event UUID, links by segment UUID or by derivative
+UUID) costs in proportion to the number of keys on PostgreSQL, whatever the
+partition's size, with one exception given below. It is one statement: the
+keys are one array parameter,
+and each joins a `LATERAL` subquery selecting that key's rows, so the index
+is searched once per key, as an `IN` list searches it under a plan built
+for the partition. The subquery's `OFFSET 0` keeps the planner from merging
+it into the statement; it is a constant, which PostgreSQL plans no node
+for. `delete_segments` runs one `DELETE` per segment on every dialect.
+
+Given the keys as one `IN` list, PostgreSQL chooses between an index lookup
+per key and one scan of the partition's whole range of an index led by the
+partition UUID, filtered by the list. It prices that scan by the number of
+rows it estimates the partition to hold. It has that number only for the
+partitions among the column's most common values (100 at the default
+statistics target), and only in a plan built for the statement's parameter
+values. For any other partition, and in the generic plan a prepared
+statement switches to after five executions, it uses the average over all
+partitions. Where most tenants are small, it prices the scan below the
+lookups once the list holds more than a few keys, and on a large tenant the
+scan reads every row the tenant has.
+
+Measured on PostgreSQL 18.6 (0.6 to 6 million rows, statistics from
+`ANALYZE`, data in memory; times are the server's mean execution time over
+1,500 executions):
+
+- With one 100,000-segment tenant among 500,000 tenants of one segment
+  each, the generic plan for the segments of 40 events read 100,748 blocks
+  in 61 ms; the statement above read 280 blocks in 0.09 ms, as the `IN`
+  list did under a plan built for the tenant. The seed read did the same
+  (101,471 blocks in 45 ms against 160 in 0.06 ms), and the link reads read
+  a tenant whole in a like distribution (about 100,700 blocks).
+- With one 1,000,000-segment tenant among 20,000 tenants of 48, the generic
+  plan read 14,713 blocks against 20 for the segments of 5 events, and
+  16,326 against 2,000 for 500 seed segments.
+- A plan built for the parameter values chose the scan as well for a large
+  tenant outside the most common values (4,973 blocks against 80 for 20
+  events of a 5,000-segment tenant, at `random_page_cost` 1.1), so
+  `plan_cache_mode = force_custom_plan` corrects only the listed tenants.
+- In these distributions the cost of the scan grew in proportion to the
+  tenant, and the cost of the statement above with the number of keys
+  alone: up to 3 µs of execution per key.
+
+For one key, the index on the partition UUID and the key answers in one
+lookup at any estimate, and no scan of the partition's range is priced
+below it. Where the planner estimates the partition at two rows or more, it
+prices the scan above the lookup, so the plan depends on neither the
+partition's size nor the plan mode. It held in every case measured on
+PostgreSQL 18: seven distributions of tenant sizes, 1 to 500 keys, plans
+built for the values and generic plans, with and without statistics, at
+`random_page_cost` 4 and 1.1. It held for three of the distributions on
+PostgreSQL 16 as well. The statement's text is also the same for any number
+of keys, so one prepared statement serves them all.
+
+The exception is a partition that the planner estimates at one row. The
+planner counts rows in whole numbers, so an estimate below one and a half
+is one row, and a scan of the partition's range of any index led by the
+partition UUID is then priced the same as the lookup. The planner may
+choose the scan, which reads the partition's whole range for each key,
+where the `IN` list reads it once. A statement that names one key outright
+is priced the same way, and each `DELETE` of `delete_segments` is such a
+statement. The estimate is that low where almost every partition holds one
+row. Measured on PostgreSQL 18.6 under generic plans, with one
+10,000-segment partition among 1,000,000 partitions of one segment each (an
+estimate of 1.3 to 1.4 rows per partition):
+
+- The seed read of 20 segments read 202,060 blocks against 10,103 for the
+  `IN` list, the link read for 20 derivative UUIDs 199,720 against 9,986,
+  and the deletion of 20 segments 202,119. The reads by event UUID and by
+  segment UUID kept their lookups. PostgreSQL 16.15 read as many blocks in
+  the first three.
+- With the estimate set to 1.4 rows per partition, the lookup of one
+  segment was priced the same through each of the segment table's three
+  indexes. Set to 1.6, both scans were priced above the lookup.
+- With 600,000 partitions of one segment and 200,000 of two (an estimate of
+  1.7 to 1.8), every statement kept its lookup.
+- Setting the `n_distinct` of the partition UUID column for an estimate of
+  five rows per partition gave every statement its lookup in that table,
+  and gave the scan to plans built for the values in a table of 100
+  partitions of 9,000 segments and 60 of 5,000. Such a plan estimates a
+  partition outside the most common values from the rows the most common
+  ones leave, which came to one row, and the seed read of 20 segments of a
+  5,000-segment partition read 99,560 blocks against 80. The statistics
+  are left as `ANALYZE` computes them.
+
+Against an `IN` list under a plan built for the partition, the statement
+reads the same blocks up to 100 keys spread over a large tenant and about a
+third more at 500, in the same time to a third more. It costs more where
+the list's one scan passes the keys together: up to about two and a half
+times the time where the keys are neighbors in the index, and, for a tenant
+of 48 segments, whose whole range is one page, 44 µs against 17 for 40 keys
+and 0.3 ms against 0.03 for 500.
+
+Rewrites that keep the keys as one list (`= ANY` of an array, a plain join
+to the unnested array) leave the planner the same choice, and it chose the
+scan for large tenants there too. SQLite chooses the index on both columns
+for an `IN` list of any length measured, with and without statistics, so it
+keeps the list.
+
+The statement's cost rests on three planner behaviors that no documentation
+guarantees. None of them changes what the statement returns.
+
+- An `OFFSET` keeps a subquery from being merged into its statement.
+  PostgreSQL's manual names "`OFFSET 0` as an optimization fence" in a
+  workaround on the `postgres_fdw` page and promises nothing about it.
+- A constant zero `OFFSET` gets no plan node.
+- The planner estimates the lookup of one key to cost less than a scan of
+  the partition, with the exception above. That is its cost model, measured
+  here on PostgreSQL 16 and 18.
+
+Were any of them to change, a read by a list of keys could again cost in
+proportion to the partition.
 
 ## Alternatives considered
 
@@ -178,12 +310,13 @@ requirement excludes.
 
 - No partitioned parents, per-tenant DDL, detach machinery, store-wide
   management lock, per-partition ORM entities or their cache, or
-  compiled-statement-cache tuning. Generic plans are benign on
-  unpartitioned tables (a plan references one table), so no plan-mode
-  tuning is needed.
+  compiled-statement-cache tuning. A generic plan references one table,
+  so its locks do not grow with the tenant count. It prices a statement
+  for an average tenant, so the statements whose best plan depends on the
+  tenant's size take a form with one plan (see [lookups by
+  key](#lookups-by-key)), and no plan-mode tuning is needed.
 - One architecture on every dialect. The remaining dialect splits are the
-  LATERAL-vs-loop read strategy, the PostgreSQL-only ordered row locks in
-  `delete_segments` (SQLAlchemy drops locking clauses on SQLite), and
+  LATERAL-vs-loop read strategy, the lookup per key on PostgreSQL, and
   SQLite's engine setup: the foreign-key pragma, and transactions begun
   explicitly, a write transaction with `BEGIN IMMEDIATE`. Both are
   per-connection state that the engine's owner registers at engine
