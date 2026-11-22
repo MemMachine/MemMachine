@@ -75,11 +75,8 @@ Readiness does not run the resource manager's construction validators or
 | Qdrant | Fresh collection-list request over the configured REST or gRPC transport |
 | Neo4j | Read-only `RETURN 1 AS ok` with a transaction timeout |
 | NebulaGraph | Read-only `RETURN 1 AS ok` with an SDK request timeout |
-| Remote Milvus | Collection-list request with an SDK timeout and a retained worker reservation |
-| Initialized Milvus Lite | Collection-list request on the serving client |
+| Milvus | Collection-list request with an SDK timeout and a retained worker reservation |
 
-A cold Milvus Lite client cannot be created by readiness without starting a
-local server, so an uninitialized required Lite backend reports `unsupported`.
 A missing optional SDK or an invalid configured dependency reports unavailable.
 Unsupported required configurations never receive a fabricated healthy result.
 

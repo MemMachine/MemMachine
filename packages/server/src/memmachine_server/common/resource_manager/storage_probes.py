@@ -280,9 +280,6 @@ class StorageProbes:
         borrowed = client is not None
         if client is None:
             conf = self._databases.conf.milvus_confs[name]
-            if "://" not in conf.uri:
-                # Constructing a cold Milvus Lite client starts a local server.
-                raise UnsupportedProbeError("Milvus Lite must be initialized first")
             from pymilvus import MilvusClient
 
             client = MilvusClient(

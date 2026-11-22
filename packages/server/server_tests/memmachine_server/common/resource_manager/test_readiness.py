@@ -11,6 +11,7 @@ from memmachine_server.common.configuration.database_conf import (
     MilvusConf,
     Neo4jConf,
     QdrantConf,
+    SqlAlchemyConf,
     SQLiteVecVectorStoreConf,
 )
 from memmachine_server.common.resource_manager import readiness as readiness_module
@@ -25,7 +26,7 @@ from memmachine_server.main.memmachine import MemMachine
 from memmachine_server.server.app import MemMachineAPI
 
 
-def local_config():
+def local_config(tmp_path):
     return Configuration.model_validate(
         {
             "episodic_memory": {
@@ -38,7 +39,10 @@ def local_config():
             "episode_store": {"database": "local"},
             "resources": {
                 "databases": {
-                    "local": {"provider": "sqlite", "config": {"path": ":memory:"}}
+                    "local": {
+                        "provider": "sqlite",
+                        "config": {"path": str(tmp_path / "local.sqlite")},
+                    }
                 },
                 "embedders": {},
                 "language_models": {},
@@ -65,8 +69,8 @@ class StatefulQdrant:
 
 
 @pytest.mark.asyncio
-async def test_failed_probe_preserves_serving_client_and_recovers():
-    conf = local_config()
+async def test_failed_probe_preserves_serving_client_and_recovers(tmp_path):
+    conf = local_config(tmp_path)
     conf.resources.databases.qdrant_confs["private-name"] = QdrantConf()
     databases = DatabaseManager(conf.resources.databases)
     client = StatefulQdrant()
@@ -157,7 +161,9 @@ async def test_cancelled_requests_share_a_single_refresh():
 
 
 @pytest.mark.asyncio
-async def test_blocked_milvus_worker_reservation_survives_repeated_timeouts():
+async def test_blocked_milvus_worker_reservation_survives_repeated_timeouts(
+    tmp_path,
+):
     entered = threading.Event()
     release = threading.Event()
 
@@ -177,7 +183,7 @@ async def test_blocked_milvus_worker_reservation_survives_repeated_timeouts():
         def close(self):
             self.closed = True
 
-    conf = local_config()
+    conf = local_config(tmp_path)
     conf.resources.databases.milvus_confs["vector"] = MilvusConf(
         uri="http://localhost:19530"
     )
@@ -256,8 +262,10 @@ async def test_parallel_probes_obey_response_and_concurrency_limits():
     assert peak == 2
 
 
-def test_selection_covers_project_alternatives_but_excludes_disabled_services():
-    conf = local_config()
+def test_selection_covers_project_alternatives_but_excludes_disabled_services(
+    tmp_path,
+):
+    conf = local_config(tmp_path)
     conf.resources.databases.qdrant_confs.update(
         {"default": QdrantConf(), "project-alternative": QdrantConf()}
     )
@@ -293,7 +301,7 @@ def test_selection_covers_project_alternatives_but_excludes_disabled_services():
 
 @pytest.mark.asyncio
 async def test_readonly_cold_local_probe_creates_no_database(tmp_path):
-    conf = local_config()
+    conf = local_config(tmp_path)
     path = tmp_path / "not-initialized.sqlite"
     conf.resources.databases.sqlite_vec_vector_store_confs["vector"] = (
         SQLiteVecVectorStoreConf(path=str(path))
@@ -316,7 +324,7 @@ async def test_readonly_cold_local_probe_creates_no_database(tmp_path):
 
 @pytest.mark.asyncio
 async def test_cold_existing_sqlite_probe_does_not_modify_the_database(tmp_path):
-    conf = local_config()
+    conf = local_config(tmp_path)
     path = tmp_path / "existing.sqlite"
     with sqlite3.connect(path) as connection:
         connection.execute("CREATE TABLE existing (value TEXT)")
@@ -363,8 +371,8 @@ async def test_shutdown_reports_stopping_to_inflight_and_late_start_requests():
 
 
 @pytest.mark.asyncio
-async def test_missing_or_unsupported_dependency_cannot_report_ready():
-    conf = local_config()
+async def test_missing_or_unsupported_dependency_cannot_report_ready(tmp_path):
+    conf = local_config(tmp_path)
     conf.episode_store.database = "unconfigured-private-name"
     probes = StorageProbes(conf, DatabaseManager(conf.resources.databases))
     service = ReadinessService(probes.selected, cache_seconds=0)
@@ -374,15 +382,17 @@ async def test_missing_or_unsupported_dependency_cannot_report_ready():
         assert result.status == "not_ready"
         assert result.components == {"configuration": ComponentStatus.UNAVAILABLE}
         assert "unconfigured-private-name" not in result.model_dump_json()
-        conf.episode_store.database = "local"
-        conf.episodic_memory.enabled = True
-        conf.episodic_memory.long_term_memory_enabled = True
-        conf.resources.databases.milvus_confs["cold-lite"] = MilvusConf(
-            uri="uninitialized.db"
+        conf.resources.databases.relational_db_confs["other-sql"] = SqlAlchemyConf(
+            dialect="mysql", driver="aiomysql", host="private-database"
         )
+        conf.episode_store.database = "other-sql"
         result = await service.check()
         assert result.status == "not_ready"
-        assert result.components["milvus_1"] == ComponentStatus.UNSUPPORTED
+        assert sorted(result.components.values()) == [
+            ComponentStatus.READY,
+            ComponentStatus.UNSUPPORTED,
+        ]
+        assert "private-database" not in result.model_dump_json()
     finally:
         await service.close()
         probes.close()
@@ -391,7 +401,7 @@ async def test_missing_or_unsupported_dependency_cannot_report_ready():
 @pytest.mark.asyncio
 async def test_http_lifecycle_and_local_only_readiness(tmp_path):
     app = MemMachineAPI()
-    conf = local_config()
+    conf = local_config(tmp_path)
     conf.logging.path = str(tmp_path / "server.log")
     machine = MemMachine(conf)
     async with httpx.AsyncClient(
@@ -425,7 +435,7 @@ async def test_http_lifecycle_and_local_only_readiness(tmp_path):
 async def test_stop_before_start_and_restart_create_a_fresh_readiness_service(
     fail_initial_start, monkeypatch, tmp_path
 ):
-    conf = local_config()
+    conf = local_config(tmp_path)
     conf.logging.path = str(tmp_path / "server.log")
     machine = MemMachine(conf)
     if fail_initial_start:
@@ -455,7 +465,7 @@ async def test_stop_before_start_and_restart_create_a_fresh_readiness_service(
 async def test_startup_waits_for_semantic_service_and_failure_is_not_ready(
     monkeypatch, tmp_path
 ):
-    conf = local_config()
+    conf = local_config(tmp_path)
     conf.logging.path = str(tmp_path / "server.log")
     conf.semantic_memory = SemanticMemoryConf(
         enabled=True,
