@@ -68,7 +68,9 @@ def test_generated_config_resolves_default_stm_capacity(
     resolved = memmachine._with_default_episodic_memory_conf(session_key="session1")
 
     assert isinstance(resolved.long_term_memory, EventLongTermMemoryConf)
-    assert resolved.long_term_memory.vector_store == vector_store
+    assert config.episodic_memory is not None
+    assert config.episodic_memory.long_term_memory is not None
+    assert config.episodic_memory.long_term_memory.vector_store == vector_store
     assert resolved.short_term_memory_enabled is True
     assert resolved.short_term_memory is not None
     assert resolved.short_term_memory.message_capacity == 64000
