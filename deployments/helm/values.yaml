@@ -101,6 +101,11 @@ memmachine:
   image: docker.io/memmachine/memmachine
   tag: latest-cpu
   pullPolicy: IfNotPresent
+  readiness:
+    # Requires an application image containing /api/v2/ready. For an older
+    # image, explicitly use /api/v2/health (liveness-only compatibility mode).
+    # Roll back the image and this setting together; never silently fall back.
+    path: /api/v2/ready
   resources:
     requests:
       cpu: 200m
