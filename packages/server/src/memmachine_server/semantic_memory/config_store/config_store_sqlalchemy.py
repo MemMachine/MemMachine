@@ -270,11 +270,8 @@ class SemanticConfigStorageSqlAlchemy(SemanticConfigStorage):
         ins: PgInsert | SQliteInsert
         if dialect_name == "postgresql":
             ins = pg_insert(SetIdResources)
-        elif dialect_name == "sqlite":
-            ins = sqlite_insert(SetIdResources)
         else:
-            # other backends: no ON CONFLICT support
-            raise NotImplementedError
+            ins = sqlite_insert(SetIdResources)
 
         stmt = ins.values(
             set_id=set_id,
@@ -369,10 +366,8 @@ class SemanticConfigStorageSqlAlchemy(SemanticConfigStorage):
         ins: PgInsert | SQliteInsert
         if dialect_name == "postgresql":
             ins = pg_insert(SetIdSetType)
-        elif dialect_name == "sqlite":
-            ins = sqlite_insert(SetIdSetType)
         else:
-            raise NotImplementedError
+            ins = sqlite_insert(SetIdSetType)
 
         stmt = ins.values(
             set_id=set_id,
@@ -583,10 +578,8 @@ class SemanticConfigStorageSqlAlchemy(SemanticConfigStorage):
         ins: PgInsert | SQliteInsert
         if dialect_name == "postgresql":
             ins = pg_insert(DisabledDefaultCategories)
-        elif dialect_name == "sqlite":
-            ins = sqlite_insert(DisabledDefaultCategories)
         else:
-            raise NotImplementedError
+            ins = sqlite_insert(DisabledDefaultCategories)
 
         resources_upsert: PgInsert | SQliteInsert
         if dialect_name == "postgresql":
