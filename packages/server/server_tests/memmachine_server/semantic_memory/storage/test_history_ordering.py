@@ -14,10 +14,6 @@ from memmachine_server.common.vector_store import VectorStoreSchema
 from memmachine_server.semantic_memory.storage.neo4j_semantic_storage import (
     Neo4jSemanticStorage,
 )
-from memmachine_server.semantic_memory.storage.sqlalchemy_pgvector_semantic import (
-    BaseSemanticStorage,
-    SqlAlchemyPgVectorSemanticStorage,
-)
 from memmachine_server.semantic_memory.storage.storage_base import SemanticStorage
 from memmachine_server.semantic_memory.storage.vector_store_semantic_storage import (
     VectorStoreSemanticStorage,
@@ -27,17 +23,6 @@ from server_tests.memmachine_server.common.vector_store.in_memory_vector_store_p
 )
 
 pytestmark = pytest.mark.asyncio
-
-
-@pytest_asyncio.fixture
-async def sqlite_pgvector_history_storage(sqlalchemy_sqlite_engine: AsyncEngine):
-    # Only the portable history table is needed to execute the real SQL methods.
-    async with sqlalchemy_sqlite_engine.begin() as conn:
-        await conn.run_sync(
-            BaseSemanticStorage.metadata.create_all,
-            tables=[BaseSemanticStorage.metadata.tables["set_ingested_history"]],
-        )
-    return SqlAlchemyPgVectorSemanticStorage(sqlalchemy_sqlite_engine)
 
 
 @pytest_asyncio.fixture
@@ -57,7 +42,6 @@ async def sqlite_vector_history_storage(sqlalchemy_sqlite_engine: AsyncEngine):
 @pytest.fixture(
     params=[
         "in_memory_semantic_storage",
-        "sqlite_pgvector_history_storage",
         "sqlite_vector_history_storage",
         pytest.param("pgvector_semantic_storage", marks=pytest.mark.integration),
         pytest.param("neo4j_semantic_storage", marks=pytest.mark.integration),

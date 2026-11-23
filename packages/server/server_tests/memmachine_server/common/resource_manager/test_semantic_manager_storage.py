@@ -95,6 +95,18 @@ async def test_storage_is_built_once(sqlalchemy_sqlite_engine):
     resources.get_vector_store.assert_awaited_once()
 
 
+@pytest.mark.asyncio
+async def test_auto_storage_on_a_sqlite_database_reports_its_dialect(
+    sqlalchemy_sqlite_engine,
+):
+    resources = MagicMock()
+    resources.get_sql_engine = AsyncMock(return_value=sqlalchemy_sqlite_engine)
+    manager = _manager(SemanticMemoryConf(database="semantic_db"), resources)
+
+    with pytest.raises(ValueError, match="sqlite dialect"):
+        await manager.get_semantic_storage()
+
+
 def _alembic_config() -> Config:
     script_location = Path(sqlalchemy_pgvector_semantic.__file__).parent / "alembic_pg"
     config = Config()
