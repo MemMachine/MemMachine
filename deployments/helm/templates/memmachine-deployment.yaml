@@ -1,10 +1,9 @@
 # memmachine-deployment.yaml
-# Deploys the MemMachine application server (1 replica).
+# Deploys the MemMachine application server.
 # Uses two init containers to block startup until both PostgreSQL (5432)
 # and Neo4j (7687) are accepting connections. The main container mounts:
 #   - memmachine-config ConfigMap → /app/configuration.yml  (app config)
 #   - memmachine-env-config ConfigMap → /app/.env           (env vars)
-#   - memmachine-pvc PVC → /app/data                        (persistent logs/data)
 # OPENAI_API_KEY is injected from the memmachine-secrets Secret, and
 # QDRANT_API_KEY from qdrant-secret (or qdrant.existingSecret) when set.
 apiVersion: apps/v1
@@ -13,7 +12,7 @@ metadata:
   name: memmachine
   namespace: {{ .Release.Namespace }}
 spec:
-  replicas: 1
+  replicas: {{ .Values.replicaCount }}
   selector:
     matchLabels:
       app: memmachine
@@ -22,6 +21,10 @@ spec:
       labels:
         app: memmachine
     spec:
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       initContainers:
         - name: wait-for-postgres
           image: busybox:1.36
@@ -91,8 +94,8 @@ spec:
                   name: {{ . }}
                   key: QDRANT_API_KEY
             {{- end }}
-            - name: LOG_FILE
-              value: "/app/data/memmachine.log"
+            - name: MEMMACHINE_WORKERS
+              value: {{ .Values.workerCount | quote }}
             - name: MEMORY_CONFIG
               value: {{ .Values.memmachine.config.memoryConfigPath }}
           volumeMounts:
@@ -102,8 +105,6 @@ spec:
             - name: env-volume
               mountPath: /app/.env
               subPath: .env
-            - name: data-volume
-              mountPath: /app/data
       volumes:
         - name: config-volume
           configMap:
@@ -111,6 +112,3 @@ spec:
         - name: env-volume
           configMap:
             name: memmachine-env-config
-        - name: data-volume
-          persistentVolumeClaim:
-            claimName: memmachine-pvc
