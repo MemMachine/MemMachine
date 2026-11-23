@@ -747,3 +747,13 @@ async def test_get_category_set_ids_for_set_type_category_with_different_categor
     assert len(config_2.categories) == 2
     category_names = {c.name for c in config_2.categories}
     assert category_names == {"org-category", "different-category"}
+
+
+@pytest.mark.asyncio
+async def test_an_engine_of_another_dialect_is_refused(
+    sqlalchemy_sqlite_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(sqlalchemy_sqlite_engine.dialect, "name", "mssql")
+    with pytest.raises(ValueError, match="mssql"):
+        SemanticConfigStorageSqlAlchemy(sqlalchemy_sqlite_engine)

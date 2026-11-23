@@ -613,6 +613,11 @@ class SQLiteVectorStoreParams(VectorStoreParams):
     @field_validator("sqlalchemy_engine")
     @classmethod
     def _validate_engine(cls, engine: AsyncEngine) -> AsyncEngine:
+        if engine.dialect.name != "sqlite":
+            raise ValueError(
+                f"Engine uses the {engine.dialect.name} dialect, which the store "
+                "does not support. Use SQLite."
+            )
         validate_engine_connections(engine)
         return engine
 

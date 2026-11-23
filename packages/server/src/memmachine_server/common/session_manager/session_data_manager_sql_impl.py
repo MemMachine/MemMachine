@@ -107,6 +107,11 @@ class SessionDataManagerSQL(SessionDataManager):
         metrics_factory: MetricsFactory | None = None,
     ) -> None:
         """Initialize with an async engine and optional schema."""
+        if engine.dialect.name not in ("postgresql", "sqlite"):
+            raise ValueError(
+                f"Engine uses the {engine.dialect.name} dialect, which the store "
+                "does not support. Use PostgreSQL or SQLite."
+            )
         self._engine = engine
         self._tracker = OperationTracker(
             metrics_factory,

@@ -93,6 +93,16 @@ async def session_manager(sqlalchemy_engine: AsyncEngine):
 
 
 @pytest.mark.asyncio
+async def test_an_engine_of_another_dialect_is_refused(
+    sqlalchemy_sqlite_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(sqlalchemy_sqlite_engine.dialect, "name", "mssql")
+    with pytest.raises(ValueError, match="mssql"):
+        SessionDataManagerSQL(engine=sqlalchemy_sqlite_engine)
+
+
+@pytest.mark.asyncio
 async def test_create_tables(sqlalchemy_engine: AsyncEngine):
     """Test that create_tables creates the expected tables."""
     manager = SessionDataManagerSQL(engine=sqlalchemy_engine)

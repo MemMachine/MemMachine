@@ -90,6 +90,11 @@ class ClusterStateStorageSqlAlchemy(ClusterStateStorage):
 
     def __init__(self, sqlalchemy_engine: AsyncEngine) -> None:
         """Store the SQLAlchemy engine and session factory."""
+        if sqlalchemy_engine.dialect.name not in ("postgresql", "sqlite"):
+            raise ValueError(
+                f"Engine uses the {sqlalchemy_engine.dialect.name} dialect, which "
+                "the store does not support. Use PostgreSQL or SQLite."
+            )
         self._engine = sqlalchemy_engine
         self._session_factory = async_sessionmaker(
             bind=self._engine,

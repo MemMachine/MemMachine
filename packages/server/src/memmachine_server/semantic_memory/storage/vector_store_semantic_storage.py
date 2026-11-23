@@ -188,6 +188,11 @@ class VectorStoreSemanticStorage(SemanticStorage):
         vector_partition: VectorStorePartition,
     ) -> None:
         """Initialize storage with an async SQLAlchemy engine and a vector store partition."""
+        if sqlalchemy_engine.dialect.name not in ("postgresql", "sqlite"):
+            raise ValueError(
+                f"Engine uses the {sqlalchemy_engine.dialect.name} dialect, which "
+                "the storage does not support. Use PostgreSQL or SQLite."
+            )
         self._engine = sqlalchemy_engine
         self._vector_partition = vector_partition
         self._session_factory = async_sessionmaker(

@@ -49,6 +49,8 @@ class _FailingBeginContext:
 class _FakeAsyncEngine:
     def __init__(self, exc: Exception):
         self._exc = exc
+        self.dialect = MagicMock()
+        self.dialect.name = "postgresql"
 
     def begin(self):
         return _FailingBeginContext(self._exc)
@@ -75,6 +77,7 @@ def _make_pg_engine() -> tuple[MagicMock, MagicMock, MagicMock]:
     conn.execute = AsyncMock()
     conn.dialect = MagicMock()
     conn.dialect.name = "postgresql"
+    engine.dialect = conn.dialect
 
     sync_conn = MagicMock()
     sync_conn.dialect = conn.dialect
@@ -230,6 +233,7 @@ async def test_startup_skips_enum_creation_on_non_postgresql():
     conn.execute = AsyncMock()
     conn.dialect = MagicMock()
     conn.dialect.name = "sqlite"
+    engine.dialect = conn.dialect
 
     sync_conn = MagicMock()
     sync_conn.dialect = conn.dialect
