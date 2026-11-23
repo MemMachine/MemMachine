@@ -6,7 +6,8 @@ import pytest
 import pytest_asyncio
 from pydantic import JsonValue
 from sqlalchemy import delete, insert
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
+from sqlalchemy.pool import StaticPool
 
 from memmachine_server.common.configuration.episodic_config import (
     DeclarativeLongTermMemoryConf,
@@ -100,6 +101,14 @@ async def test_an_engine_of_another_dialect_is_refused(
     monkeypatch.setattr(sqlalchemy_sqlite_engine.dialect, "name", "mssql")
     with pytest.raises(ValueError, match="mssql"):
         SessionDataManagerSQL(engine=sqlalchemy_sqlite_engine)
+
+
+def test_an_engine_sharing_one_connection_is_refused(tmp_path) -> None:
+    engine = create_async_engine(
+        f"sqlite+aiosqlite:///{tmp_path / 'test.db'}", poolclass=StaticPool
+    )
+    with pytest.raises(ValueError, match="StaticPool"):
+        SessionDataManagerSQL(engine=engine)
 
 
 @pytest.mark.asyncio

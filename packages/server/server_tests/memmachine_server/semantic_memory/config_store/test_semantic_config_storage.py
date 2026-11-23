@@ -4,7 +4,8 @@ import pytest
 import pytest_asyncio
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
+from sqlalchemy.pool import StaticPool
 
 from memmachine_server.semantic_memory.config_store.caching_semantic_config_storage import (
     CachingSemanticConfigStorage,
@@ -757,3 +758,11 @@ async def test_an_engine_of_another_dialect_is_refused(
     monkeypatch.setattr(sqlalchemy_sqlite_engine.dialect, "name", "mssql")
     with pytest.raises(ValueError, match="mssql"):
         SemanticConfigStorageSqlAlchemy(sqlalchemy_sqlite_engine)
+
+
+def test_an_engine_sharing_one_connection_is_refused(tmp_path) -> None:
+    engine = create_async_engine(
+        f"sqlite+aiosqlite:///{tmp_path / 'test.db'}", poolclass=StaticPool
+    )
+    with pytest.raises(ValueError, match="StaticPool"):
+        SemanticConfigStorageSqlAlchemy(engine)

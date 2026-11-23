@@ -20,7 +20,11 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
-from memmachine_server.common.sql import validate_engine_dialect, write_connection
+from memmachine_server.common.sql import (
+    validate_engine_connections,
+    validate_engine_dialect,
+    write_connection,
+)
 
 _metadata = MetaData()
 _lease_lock = Table(
@@ -54,6 +58,7 @@ class SQLLeaseStore:
 
     def __init__(self, engine: AsyncEngine) -> None:
         validate_engine_dialect(engine, ("postgresql", "sqlite"))
+        validate_engine_connections(engine)
         self._engine = engine
 
     async def startup(self) -> None:

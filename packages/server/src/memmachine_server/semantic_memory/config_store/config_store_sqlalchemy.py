@@ -28,7 +28,11 @@ from sqlalchemy.orm import (
 from sqlalchemy.sql.sqltypes import Boolean, String
 
 from memmachine_server.common.errors import ResourceNotFoundError
-from memmachine_server.common.sql import validate_engine_dialect, write_session
+from memmachine_server.common.sql import (
+    validate_engine_connections,
+    validate_engine_dialect,
+    write_session,
+)
 from memmachine_server.semantic_memory.config_store.config_store import (
     SemanticConfigStorage,
 )
@@ -226,6 +230,7 @@ class SemanticConfigStorageSqlAlchemy(SemanticConfigStorage):
     def __init__(self, sqlalchemy_engine: AsyncEngine) -> None:
         """Initialize the storage with an async SQLAlchemy engine."""
         validate_engine_dialect(sqlalchemy_engine, ("postgresql", "sqlite"))
+        validate_engine_connections(sqlalchemy_engine)
         self._engine = sqlalchemy_engine
         self._session_factory = async_sessionmaker(
             bind=self._engine,

@@ -6,7 +6,8 @@ from uuid import UUID, uuid4
 import numpy as np
 import pytest
 from sqlalchemy import insert
-from sqlalchemy.ext.asyncio import AsyncEngine
+from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+from sqlalchemy.pool import StaticPool
 
 from memmachine_server.common.data_types import SimilarityMetric
 from memmachine_server.common.filter.filter_parser import parse_filter
@@ -462,3 +463,13 @@ async def test_an_engine_of_another_dialect_is_refused(
     monkeypatch.setattr(sqlalchemy_sqlite_engine.dialect, "name", "mssql")
     with pytest.raises(ValueError, match="mssql"):
         VectorStoreSemanticStorage(sqlalchemy_sqlite_engine, vector_store_partition)
+
+
+def test_an_engine_sharing_one_connection_is_refused(
+    tmp_path, vector_store_partition: InMemoryVectorStorePartition
+) -> None:
+    engine = create_async_engine(
+        f"sqlite+aiosqlite:///{tmp_path / 'test.db'}", poolclass=StaticPool
+    )
+    with pytest.raises(ValueError, match="StaticPool"):
+        VectorStoreSemanticStorage(engine, vector_store_partition)

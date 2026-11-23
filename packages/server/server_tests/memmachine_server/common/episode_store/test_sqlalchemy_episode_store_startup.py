@@ -46,14 +46,12 @@ class _FailingBeginContext:
         return False
 
 
-class _FakeAsyncEngine:
-    def __init__(self, exc: Exception):
-        self._exc = exc
-        self.dialect = MagicMock()
-        self.dialect.name = "postgresql"
-
-    def begin(self):
-        return _FailingBeginContext(self._exc)
+def _failing_engine(exc: Exception) -> MagicMock:
+    """Build a fake async engine whose begin() raises `exc`."""
+    engine = MagicMock(spec=AsyncEngine)
+    engine.dialect.name = "postgresql"
+    engine.begin.return_value = _FailingBeginContext(exc)
+    return engine
 
 
 class _AsyncCtxMgr:
@@ -106,8 +104,8 @@ async def _cleanup(engine: AsyncEngine) -> None:
 
 @pytest.mark.asyncio
 async def test_startup_wraps_operational_error():
-    engine = _FakeAsyncEngine(OperationalError("select 1", {}, Exception("db down")))
-    store = SqlAlchemyEpisodeStore(engine)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
+    engine = _failing_engine(OperationalError("select 1", {}, Exception("db down")))
+    store = SqlAlchemyEpisodeStore(engine)
 
     with pytest.raises(ConfigurationError) as exc_info:
         await store.startup()
@@ -117,8 +115,8 @@ async def test_startup_wraps_operational_error():
 
 @pytest.mark.asyncio
 async def test_startup_wraps_socket_gaierror():
-    engine = _FakeAsyncEngine(socket.gaierror(8, "dns lookup failed"))
-    store = SqlAlchemyEpisodeStore(engine)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
+    engine = _failing_engine(socket.gaierror(8, "dns lookup failed"))
+    store = SqlAlchemyEpisodeStore(engine)
 
     with pytest.raises(ConfigurationError) as exc_info:
         await store.startup()

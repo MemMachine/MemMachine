@@ -47,7 +47,11 @@ from memmachine_server.common.metrics_factory import (
 from memmachine_server.common.session_manager.session_data_manager import (
     SessionDataManager,
 )
-from memmachine_server.common.sql import validate_engine_dialect, write_session
+from memmachine_server.common.sql import (
+    validate_engine_connections,
+    validate_engine_dialect,
+    write_session,
+)
 
 # Base class for declarative class definitions
 
@@ -108,6 +112,7 @@ class SessionDataManagerSQL(SessionDataManager):
     ) -> None:
         """Initialize with an async engine and optional schema."""
         validate_engine_dialect(engine, ("postgresql", "sqlite"))
+        validate_engine_connections(engine)
         self._engine = engine
         self._tracker = OperationTracker(
             metrics_factory,
