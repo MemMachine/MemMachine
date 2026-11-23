@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 from typing import Literal
 from uuid import UUID
 
-from sqlalchemy import ColumnElement, and_, false, or_
+from sqlalchemy import ColumnElement, Numeric, and_, case, false, or_
 
 from memmachine_server.common.data_types import (
     PROPERTY_TYPE_TO_PROPERTY_TYPE_NAME,
@@ -116,6 +116,7 @@ def _check_json_value(value: PropertyValue) -> bool | int | float | str:
 def _compile_json_leaf(
     expr: IsNull | In | Comparison,
     column: ColumnElement,
+    dialect_name: str | None = None,
 ) -> ColumnElement[bool]:
     if isinstance(expr, IsNull):
         # .as_string() emits ->> instead of JSON_QUOTE(JSON_EXTRACT(...)),
@@ -124,12 +125,46 @@ def _compile_json_leaf(
     if isinstance(expr, In):
         if not expr.values:
             return false()
-        return _cast_json_value(column, _check_json_value(expr.values[0])).in_(
-            expr.values
-        )
-    return _get_op(expr.op)(
-        _cast_json_value(column, _check_json_value(expr.value)), expr.value
-    )
+        value = _check_json_value(expr.values[0])
+        casted = _numeric_json_clause(column, value, dialect_name)
+        if casted is not None:
+            return casted.in_(expr.values)
+        return _cast_json_value(column, value).in_(expr.values)
+    value = _check_json_value(expr.value)
+    casted = _numeric_json_clause(column, value, dialect_name)
+    if casted is not None:
+        return _get_op(expr.op)(casted, expr.value)
+    return _get_op(expr.op)(_cast_json_value(column, value), expr.value)
+
+
+# Numeric text a PostgreSQL numeric cast accepts, so every row the CASE
+# guard passes to the cast parses and the query cannot raise (#1917).
+_NUMERIC_TEXT_PATTERN = r"^\s*[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?\s*$"
+
+
+def _numeric_json_clause(
+    column: ColumnElement,
+    value: bool | float | str,
+    dialect_name: str | None,
+) -> ColumnElement | None:
+    """Cast a raw JSON path for a numeric literal, matching numeric strings.
+
+    The REST API stores every metadata value as a string, so the documented
+    filter `metadata.user_id=123` must still find a stored "123" (issue
+    #1917). PostgreSQL raises for the whole query when a cast over a text
+    value does not parse, so the cast is guarded by a CASE on a numeric
+    pattern instead of the stored type; JSON numbers reach it as their own
+    text and are admitted too. SQLite casts never raise, and non-numeric
+    text casts to 0. Unknown dialects keep the unguarded cast.
+    """
+    if not isinstance(value, int | float) or isinstance(value, bool):
+        return None
+    if dialect_name == "postgresql":
+        text = column.as_string()
+        return case((text.regexp_match(_NUMERIC_TEXT_PATTERN), text.cast(Numeric)))
+    if dialect_name == "sqlite":
+        return column.as_string().cast(Numeric)
+    return None
 
 
 def _cast_properties_json_value(
@@ -190,12 +225,17 @@ def _compile_properties_json_leaf(
 def compile_sql_filter(
     expr: FilterExpr,
     resolve_field: FieldResolver,
+    dialect_name: str | None = None,
 ) -> ColumnElement[bool]:
     """
     Compile a FilterExpr tree into a SQLAlchemy boolean expression.
 
     The `resolve_field` callback maps each field name to a
     `(column, FieldEncoding)` pair and raises `ValueError` for unknown fields.
+
+    `dialect_name` (e.g. "postgresql", "sqlite") enables dialect-specific
+    guards for raw JSON ("json") fields; when it is None those fields keep
+    the ungated behavior.
 
     Datetime values arrive already normalized -- `Comparison`/`In` nodes
     convert them to UTC-aware instants at construction -- so
@@ -209,24 +249,24 @@ def compile_sql_filter(
         if kind == "uuid":
             return _compile_uuid_leaf(expr, column)
         if kind == "json":
-            return _compile_json_leaf(expr, column)
+            return _compile_json_leaf(expr, column, dialect_name)
         if kind == "properties_json":
             return _compile_properties_json_leaf(expr, column)
         raise ValueError(f"Unknown field kind: {kind!r}")
 
     if isinstance(expr, And):
         return and_(
-            compile_sql_filter(expr.left, resolve_field),
-            compile_sql_filter(expr.right, resolve_field),
+            compile_sql_filter(expr.left, resolve_field, dialect_name),
+            compile_sql_filter(expr.right, resolve_field, dialect_name),
         )
 
     if isinstance(expr, Or):
         return or_(
-            compile_sql_filter(expr.left, resolve_field),
-            compile_sql_filter(expr.right, resolve_field),
+            compile_sql_filter(expr.left, resolve_field, dialect_name),
+            compile_sql_filter(expr.right, resolve_field, dialect_name),
         )
 
     if isinstance(expr, Not):
-        return ~compile_sql_filter(expr.expr, resolve_field)
+        return ~compile_sql_filter(expr.expr, resolve_field, dialect_name)
 
     raise TypeError(f"Unsupported filter expression type: {type(expr)!r}")

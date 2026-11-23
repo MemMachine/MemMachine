@@ -69,6 +69,15 @@ class CohereRerankerConf(YamlSerializableMixin):
         default=None,
         description="Cohere-compatible Rerank API base URL",
     )
+    request_timeout_seconds: float = Field(
+        default=30.0,
+        description=(
+            "Timeout in seconds for a single rerank request. Rerankers sit"
+            " in the search path, so a slow endpoint otherwise holds every"
+            " search that needs reranking"
+        ),
+        gt=0,
+    )
 
     @field_validator("base_url")
     @classmethod

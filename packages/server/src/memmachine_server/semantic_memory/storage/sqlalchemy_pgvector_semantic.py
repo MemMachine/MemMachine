@@ -668,7 +668,9 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
             )
             if filter_expr is not None:
                 clause = compile_sql_filter(
-                    filter_expr, self._resolve_feature_field_default
+                    filter_expr,
+                    self._resolve_feature_field_default,
+                    dialect_name="postgresql",
                 )
                 if clause is not None:
                     working_stmt = working_stmt.where(clause)
@@ -682,7 +684,9 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
         delete_stmt = stmt
         if filter_expr is not None:
             clause = compile_sql_filter(
-                filter_expr, self._resolve_feature_field_default
+                filter_expr,
+                self._resolve_feature_field_default,
+                dialect_name="postgresql",
             )
             if clause is not None:
                 delete_stmt = delete_stmt.where(clause)
