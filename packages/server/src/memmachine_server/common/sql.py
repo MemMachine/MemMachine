@@ -66,7 +66,7 @@ def validate_engine_dialect(
     engine: AsyncEngine, *, supported_dialects: Collection[str]
 ) -> None:
     """
-    Raise ValueError unless the engine's dialect is one of `supported_dialects`.
+    Raise ValueError if the engine's dialect is not in `supported_dialects`.
 
     `supported_dialects` holds SQLAlchemy dialect names (`Dialect.name`).
     """
