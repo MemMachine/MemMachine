@@ -223,7 +223,7 @@ class SQLAlchemyPartitionRegistryParams(BaseModel):
     @field_validator("engine")
     @classmethod
     def _validate_engine(cls, engine: AsyncEngine) -> AsyncEngine:
-        validate_engine_dialect(engine, ("postgresql", "sqlite"))
+        validate_engine_dialect(engine, supported_dialects=("postgresql", "sqlite"))
         # The registry's arbitration needs every transaction on its own
         # connection to one database.
         validate_engine_connections(engine)

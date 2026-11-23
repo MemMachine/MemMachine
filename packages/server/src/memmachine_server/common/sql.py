@@ -62,16 +62,18 @@ def enable_sqlite_explicit_begin(engine: AsyncEngine) -> None:
     event.listen(engine.sync_engine, "begin", _begin)
 
 
-def validate_engine_dialect(engine: AsyncEngine, supported: Collection[str]) -> None:
+def validate_engine_dialect(
+    engine: AsyncEngine, *, supported_dialects: Collection[str]
+) -> None:
     """
-    Raise ValueError unless the engine's dialect is one of `supported`.
+    Raise ValueError unless the engine's dialect is one of `supported_dialects`.
 
-    `supported` holds SQLAlchemy dialect names (`Dialect.name`).
+    `supported_dialects` holds SQLAlchemy dialect names (`Dialect.name`).
     """
-    if engine.dialect.name not in supported:
+    if engine.dialect.name not in supported_dialects:
         raise ValueError(
             f"Engine uses the {engine.dialect.name} dialect, which is not "
-            f"supported. Use {' or '.join(supported)}."
+            f"supported. Use {' or '.join(supported_dialects)}."
         )
 
 

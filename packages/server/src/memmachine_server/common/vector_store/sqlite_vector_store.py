@@ -617,7 +617,7 @@ class SQLiteVectorStoreParams(VectorStoreParams):
     @field_validator("sqlalchemy_engine")
     @classmethod
     def _validate_engine(cls, engine: AsyncEngine) -> AsyncEngine:
-        validate_engine_dialect(engine, ("sqlite",))
+        validate_engine_dialect(engine, supported_dialects=("sqlite",))
         validate_engine_connections(engine)
         return engine
 

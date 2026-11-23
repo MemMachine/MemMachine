@@ -899,7 +899,7 @@ class SQLAlchemySegmentStoreParams(BaseModel):
     @field_validator("engine")
     @classmethod
     def _validate_engine(cls, engine: AsyncEngine) -> AsyncEngine:
-        validate_engine_dialect(engine, ("postgresql", "sqlite"))
+        validate_engine_dialect(engine, supported_dialects=("postgresql", "sqlite"))
         validate_engine_connections(engine)
         return engine
 

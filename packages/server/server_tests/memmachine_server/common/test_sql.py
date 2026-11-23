@@ -231,14 +231,14 @@ async def test_a_write_connection_that_raises_rolls_back_its_ddl_too(database):
 @pytest.mark.asyncio
 async def test_an_engine_of_a_supported_dialect_is_accepted(database):
     _, engine = database
-    validate_engine_dialect(engine, ("postgresql", "sqlite"))
+    validate_engine_dialect(engine, supported_dialects=("postgresql", "sqlite"))
 
 
 @pytest.mark.asyncio
 async def test_an_engine_of_another_dialect_is_refused(database):
     _, engine = database
     with pytest.raises(ValueError, match=r"sqlite dialect.*Use postgresql\."):
-        validate_engine_dialect(engine, ("postgresql",))
+        validate_engine_dialect(engine, supported_dialects=("postgresql",))
 
 
 @pytest.mark.asyncio

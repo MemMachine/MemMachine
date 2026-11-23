@@ -229,7 +229,9 @@ class SemanticConfigStorageSqlAlchemy(SemanticConfigStorage):
 
     def __init__(self, sqlalchemy_engine: AsyncEngine) -> None:
         """Initialize the storage with an async SQLAlchemy engine."""
-        validate_engine_dialect(sqlalchemy_engine, ("postgresql", "sqlite"))
+        validate_engine_dialect(
+            sqlalchemy_engine, supported_dialects=("postgresql", "sqlite")
+        )
         validate_engine_connections(sqlalchemy_engine)
         self._engine = sqlalchemy_engine
         self._session_factory = async_sessionmaker(

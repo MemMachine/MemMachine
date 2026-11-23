@@ -57,7 +57,7 @@ class SQLLeaseStore:
     """Serialize exclusive lease changes through one row per resource."""
 
     def __init__(self, engine: AsyncEngine) -> None:
-        validate_engine_dialect(engine, ("postgresql", "sqlite"))
+        validate_engine_dialect(engine, supported_dialects=("postgresql", "sqlite"))
         validate_engine_connections(engine)
         self._engine = engine
 

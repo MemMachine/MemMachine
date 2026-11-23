@@ -111,7 +111,7 @@ class SessionDataManagerSQL(SessionDataManager):
         metrics_factory: MetricsFactory | None = None,
     ) -> None:
         """Initialize with an async engine and optional schema."""
-        validate_engine_dialect(engine, ("postgresql", "sqlite"))
+        validate_engine_dialect(engine, supported_dialects=("postgresql", "sqlite"))
         validate_engine_connections(engine)
         self._engine = engine
         self._tracker = OperationTracker(

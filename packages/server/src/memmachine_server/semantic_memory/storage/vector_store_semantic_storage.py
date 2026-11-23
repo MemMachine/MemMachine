@@ -192,7 +192,9 @@ class VectorStoreSemanticStorage(SemanticStorage):
         vector_partition: VectorStorePartition,
     ) -> None:
         """Initialize storage with an async SQLAlchemy engine and a vector store partition."""
-        validate_engine_dialect(sqlalchemy_engine, ("postgresql", "sqlite"))
+        validate_engine_dialect(
+            sqlalchemy_engine, supported_dialects=("postgresql", "sqlite")
+        )
         validate_engine_connections(sqlalchemy_engine)
         self._engine = sqlalchemy_engine
         self._vector_partition = vector_partition
