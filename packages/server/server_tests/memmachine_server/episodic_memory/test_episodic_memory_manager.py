@@ -45,9 +45,9 @@ from memmachine_server.episodic_memory.long_term_memory.service_locator import (
 
 
 @pytest_asyncio.fixture
-async def db_engine():
-    """Fixture for an in-memory SQLite async engine."""
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+async def db_engine(tmp_path):
+    """Fixture for a SQLite async engine on a database file."""
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'test.db'}")
     enable_sqlite_explicit_begin(engine)
     yield engine
     await engine.dispose()

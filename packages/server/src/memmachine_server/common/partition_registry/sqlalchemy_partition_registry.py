@@ -45,7 +45,11 @@ from sqlalchemy.orm import (
     mapped_column,
 )
 
-from memmachine_server.common.sql import validate_engine_connections, write_connection
+from memmachine_server.common.sql import (
+    validate_engine_connections,
+    validate_engine_dialect,
+    write_connection,
+)
 from memmachine_server.common.utils import ensure_tz_aware
 
 from .data_types import (
@@ -219,11 +223,7 @@ class SQLAlchemyPartitionRegistryParams(BaseModel):
     @field_validator("engine")
     @classmethod
     def _validate_engine(cls, engine: AsyncEngine) -> AsyncEngine:
-        if engine.dialect.name not in ("postgresql", "sqlite"):
-            raise ValueError(
-                f"Engine uses the {engine.dialect.name} dialect, which the "
-                "registry does not support. Use PostgreSQL or SQLite."
-            )
+        validate_engine_dialect(engine, supported_dialects=("postgresql", "sqlite"))
         # The registry's arbitration needs every transaction on its own
         # connection to one database.
         validate_engine_connections(engine)

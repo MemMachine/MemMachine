@@ -8,6 +8,8 @@ from uuid import UUID
 import pytest
 import pytest_asyncio
 from pydantic import JsonValue
+from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+from sqlalchemy.pool import StaticPool
 
 from memmachine_server.common.episode_store import (
     EpisodeEntry,
@@ -286,7 +288,9 @@ async def test_add_multiple_episodes_preserves_input_order_when_rows_reordered()
         async def __aexit__(self, *_args):
             return False
 
-    store = SqlAlchemyEpisodeStore(MagicMock())
+    engine = MagicMock()
+    engine.dialect.name = "sqlite"
+    store = SqlAlchemyEpisodeStore(engine)
     reordered_session = ReorderedSession()
     with patch.object(store, "_session_factory", return_value=reordered_session):
         episodes = await store.add_episodes("batch-session", entries)
@@ -295,6 +299,24 @@ async def test_add_multiple_episodes_preserves_input_order_when_rows_reordered()
     assert [episode.content for episode in episodes] == [
         entry.content for entry in entries
     ]
+
+
+@pytest.mark.asyncio
+async def test_an_engine_of_another_dialect_is_refused(
+    sqlalchemy_sqlite_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(sqlalchemy_sqlite_engine.dialect, "name", "mssql")
+    with pytest.raises(ValueError, match="mssql"):
+        SqlAlchemyEpisodeStore(sqlalchemy_sqlite_engine)
+
+
+def test_an_engine_sharing_one_connection_is_refused(tmp_path) -> None:
+    engine = create_async_engine(
+        f"sqlite+aiosqlite:///{tmp_path / 'test.db'}", poolclass=StaticPool
+    )
+    with pytest.raises(ValueError, match="StaticPool"):
+        SqlAlchemyEpisodeStore(engine)
 
 
 @pytest.mark.asyncio

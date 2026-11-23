@@ -153,13 +153,14 @@ class SemanticResourceManager:
             sql_engine = await self._resource_manager.get_sql_engine(
                 database, validate=True
             )
-            storage = SqlAlchemyPgVectorSemanticStorage(sql_engine)
         except ValueError:
             # try graph store
             neo4j_engine = await self._resource_manager.get_neo4j_driver(
                 database, validate=True
             )
             storage = Neo4jSemanticStorage(neo4j_engine)
+        else:
+            storage = SqlAlchemyPgVectorSemanticStorage(sql_engine)
 
         await storage.startup()
         return storage

@@ -47,7 +47,11 @@ from memmachine_server.common.metrics_factory import (
 from memmachine_server.common.session_manager.session_data_manager import (
     SessionDataManager,
 )
-from memmachine_server.common.sql import write_session
+from memmachine_server.common.sql import (
+    validate_engine_connections,
+    validate_engine_dialect,
+    write_session,
+)
 
 # Base class for declarative class definitions
 
@@ -107,6 +111,8 @@ class SessionDataManagerSQL(SessionDataManager):
         metrics_factory: MetricsFactory | None = None,
     ) -> None:
         """Initialize with an async engine and optional schema."""
+        validate_engine_dialect(engine, supported_dialects=("postgresql", "sqlite"))
+        validate_engine_connections(engine)
         self._engine = engine
         self._tracker = OperationTracker(
             metrics_factory,
@@ -351,24 +357,14 @@ class SessionDataManagerSQL(SessionDataManager):
         column: ColumnElement[object],
         filters: dict[str, PropertyValue | None],
     ) -> ColumnElement[Any]:
-        if self._engine.dialect.name == "mysql":
-            return func.json_contains(column, func.json_quote(func.json(filters)))
-
         if self._engine.dialect.name == "postgresql":
             return column.op("@>")(filters)
 
-        if self._engine.dialect.name == "sqlite":
-            # SQLite has no JSON_CONTAINS; emulate using json_extract
-            if not isinstance(filters, dict):
-                raise ValueError("SQLite emulation only supports dict values")
-            conditions = [
-                func.json_extract(column, f"$.{k}") == v for k, v in filters.items()
-            ]
-            return and_(*conditions)
-
-        raise NotImplementedError(
-            f"json_contains not supported for dialect '{self._engine.dialect.name}'",
-        )
+        # SQLite has no JSON_CONTAINS; emulate using json_extract
+        conditions = [
+            func.json_extract(column, f"$.{k}") == v for k, v in filters.items()
+        ]
+        return and_(*conditions)
 
     @timed("get_sessions")
     async def get_sessions(

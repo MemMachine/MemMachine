@@ -301,6 +301,12 @@ class TestPartitionLifecycle:
         with pytest.raises(ValidationError, match="Vector store name"):
             _params(engine, vector_store_name=vector_store_name)
 
+    def test_an_engine_of_another_dialect_is_refused(self, tmp_path, monkeypatch):
+        engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'test.db'}")
+        monkeypatch.setattr(engine.dialect, "name", "postgresql")
+        with pytest.raises(ValidationError, match="postgresql"):
+            _params(engine)
+
 
 # ── Upsert + Query ──
 

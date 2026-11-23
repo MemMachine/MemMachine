@@ -11,6 +11,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+from sqlalchemy.pool import StaticPool
 
 from memmachine_server.common.sql import (
     enable_sqlite_explicit_begin,
@@ -144,6 +145,23 @@ async def test_database_error_is_not_reported_as_contention(tmp_path: Path) -> N
             await conn.execute(text("DROP TABLE lease_lock"))
         with pytest.raises(OperationalError):
             await first.try_acquire("resource", 2_000)
+
+
+def test_an_engine_of_another_dialect_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'locks.db'}")
+    monkeypatch.setattr(engine.dialect, "name", "mssql")
+    with pytest.raises(ValueError, match="mssql"):
+        SQLLeaseStore(engine)
+
+
+def test_an_engine_sharing_one_connection_is_refused(tmp_path: Path) -> None:
+    engine = create_async_engine(
+        f"sqlite+aiosqlite:///{tmp_path / 'locks.db'}", poolclass=StaticPool
+    )
+    with pytest.raises(ValueError, match="StaticPool"):
+        SQLLeaseStore(engine)
 
 
 @pytest.mark.asyncio

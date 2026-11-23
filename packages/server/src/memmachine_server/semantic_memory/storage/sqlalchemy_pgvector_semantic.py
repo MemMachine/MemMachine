@@ -49,6 +49,10 @@ from memmachine_server.common.filter.sql_filter_util import (
     FieldEncoding,
     compile_sql_filter,
 )
+from memmachine_server.common.sql import (
+    validate_engine_connections,
+    validate_engine_dialect,
+)
 from memmachine_server.common.utils import ensure_tz_aware
 from memmachine_server.semantic_memory.semantic_model import SemanticFeature, SetIdT
 from memmachine_server.semantic_memory.storage.storage_base import (
@@ -199,6 +203,8 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
 
     def __init__(self, sqlalchemy_engine: AsyncEngine) -> None:
         """Initialize the storage with an async SQLAlchemy engine."""
+        validate_engine_dialect(sqlalchemy_engine, supported_dialects=("postgresql",))
+        validate_engine_connections(sqlalchemy_engine)
         self._engine = sqlalchemy_engine
         self._session_factory = async_sessionmaker(
             bind=self._engine,

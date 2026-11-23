@@ -11,7 +11,11 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.sql.sqltypes import JSON
 
-from memmachine_server.common.sql import write_session
+from memmachine_server.common.sql import (
+    validate_engine_connections,
+    validate_engine_dialect,
+    write_session,
+)
 from memmachine_server.common.utils import ensure_tz_aware
 from memmachine_server.semantic_memory.cluster_manager import (
     ClusterInfo,
@@ -90,6 +94,10 @@ class ClusterStateStorageSqlAlchemy(ClusterStateStorage):
 
     def __init__(self, sqlalchemy_engine: AsyncEngine) -> None:
         """Store the SQLAlchemy engine and session factory."""
+        validate_engine_dialect(
+            sqlalchemy_engine, supported_dialects=("postgresql", "sqlite")
+        )
+        validate_engine_connections(sqlalchemy_engine)
         self._engine = sqlalchemy_engine
         self._session_factory = async_sessionmaker(
             bind=self._engine,

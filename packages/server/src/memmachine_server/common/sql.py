@@ -1,7 +1,7 @@
 """SQL engine setup and write transactions."""
 
 import contextlib
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Collection
 
 from sqlalchemy import event
 from sqlalchemy.engine import Connection
@@ -60,6 +60,21 @@ def enable_sqlite_explicit_begin(engine: AsyncEngine) -> None:
         return
     event.listen(engine.sync_engine, "connect", _disable_implicit_begin)
     event.listen(engine.sync_engine, "begin", _begin)
+
+
+def validate_engine_dialect(
+    engine: AsyncEngine, *, supported_dialects: Collection[str]
+) -> None:
+    """
+    Raise ValueError if the engine's dialect is not in `supported_dialects`.
+
+    `supported_dialects` holds SQLAlchemy dialect names (`Dialect.name`).
+    """
+    if engine.dialect.name not in supported_dialects:
+        raise ValueError(
+            f"Engine uses the {engine.dialect.name} dialect, which is not "
+            f"supported. Use {' or '.join(supported_dialects)}."
+        )
 
 
 def validate_engine_connections(engine: AsyncEngine) -> None:

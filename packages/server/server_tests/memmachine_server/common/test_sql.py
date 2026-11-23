@@ -12,6 +12,7 @@ from sqlalchemy.pool import AsyncAdaptedQueuePool, StaticPool
 from memmachine_server.common.sql import (
     enable_sqlite_explicit_begin,
     validate_engine_connections,
+    validate_engine_dialect,
     write_connection,
     write_session,
 )
@@ -225,6 +226,19 @@ async def test_a_write_connection_that_raises_rolls_back_its_ddl_too(database):
         ).scalars()
         assert list(tables) == ["t"]
     assert await _keys(engine) == []
+
+
+@pytest.mark.asyncio
+async def test_an_engine_of_a_supported_dialect_is_accepted(database):
+    _, engine = database
+    validate_engine_dialect(engine, supported_dialects=("postgresql", "sqlite"))
+
+
+@pytest.mark.asyncio
+async def test_an_engine_of_another_dialect_is_refused(database):
+    _, engine = database
+    with pytest.raises(ValueError, match=r"sqlite dialect.*Use postgresql\."):
+        validate_engine_dialect(engine, supported_dialects=("postgresql",))
 
 
 @pytest.mark.asyncio

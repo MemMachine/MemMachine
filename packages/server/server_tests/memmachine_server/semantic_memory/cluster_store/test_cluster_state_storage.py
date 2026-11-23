@@ -3,6 +3,8 @@ from uuid import NAMESPACE_URL, uuid5
 
 import pytest
 import pytest_asyncio
+from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+from sqlalchemy.pool import StaticPool
 
 from memmachine_server.semantic_memory.cluster_manager import (
     ClusterInfo,
@@ -380,3 +382,21 @@ async def test_round_trip_empty_split_records(
     loaded = await cluster_state_storage.get_state(set_id="set-split-d")
     assert loaded is not None
     assert loaded.split_records == {}
+
+
+@pytest.mark.asyncio
+async def test_an_engine_of_another_dialect_is_refused(
+    sqlalchemy_sqlite_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(sqlalchemy_sqlite_engine.dialect, "name", "mssql")
+    with pytest.raises(ValueError, match="mssql"):
+        ClusterStateStorageSqlAlchemy(sqlalchemy_sqlite_engine)
+
+
+def test_an_engine_sharing_one_connection_is_refused(tmp_path) -> None:
+    engine = create_async_engine(
+        f"sqlite+aiosqlite:///{tmp_path / 'test.db'}", poolclass=StaticPool
+    )
+    with pytest.raises(ValueError, match="StaticPool"):
+        ClusterStateStorageSqlAlchemy(engine)

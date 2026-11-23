@@ -42,7 +42,11 @@ from memmachine_server.common.filter.sql_filter_util import (
     FieldEncoding,
     compile_sql_filter,
 )
-from memmachine_server.common.sql import write_session
+from memmachine_server.common.sql import (
+    validate_engine_connections,
+    validate_engine_dialect,
+    write_session,
+)
 from memmachine_server.common.utils import ensure_tz_aware
 from memmachine_server.common.vector_store import Record, VectorStorePartition
 from memmachine_server.semantic_memory.semantic_model import SemanticFeature, SetIdT
@@ -188,6 +192,10 @@ class VectorStoreSemanticStorage(SemanticStorage):
         vector_partition: VectorStorePartition,
     ) -> None:
         """Initialize storage with an async SQLAlchemy engine and a vector store partition."""
+        validate_engine_dialect(
+            sqlalchemy_engine, supported_dialects=("postgresql", "sqlite")
+        )
+        validate_engine_connections(sqlalchemy_engine)
         self._engine = sqlalchemy_engine
         self._vector_partition = vector_partition
         self._session_factory = async_sessionmaker(

@@ -46,12 +46,12 @@ class _FailingBeginContext:
         return False
 
 
-class _FakeAsyncEngine:
-    def __init__(self, exc: Exception):
-        self._exc = exc
-
-    def begin(self):
-        return _FailingBeginContext(self._exc)
+def _failing_engine(exc: Exception) -> MagicMock:
+    """Build a fake async engine whose begin() raises `exc`."""
+    engine = MagicMock(spec=AsyncEngine)
+    engine.dialect.name = "postgresql"
+    engine.begin.return_value = _FailingBeginContext(exc)
+    return engine
 
 
 class _AsyncCtxMgr:
@@ -75,6 +75,7 @@ def _make_pg_engine() -> tuple[MagicMock, MagicMock, MagicMock]:
     conn.execute = AsyncMock()
     conn.dialect = MagicMock()
     conn.dialect.name = "postgresql"
+    engine.dialect = conn.dialect
 
     sync_conn = MagicMock()
     sync_conn.dialect = conn.dialect
@@ -103,8 +104,8 @@ async def _cleanup(engine: AsyncEngine) -> None:
 
 @pytest.mark.asyncio
 async def test_startup_wraps_operational_error():
-    engine = _FakeAsyncEngine(OperationalError("select 1", {}, Exception("db down")))
-    store = SqlAlchemyEpisodeStore(engine)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
+    engine = _failing_engine(OperationalError("select 1", {}, Exception("db down")))
+    store = SqlAlchemyEpisodeStore(engine)
 
     with pytest.raises(ConfigurationError) as exc_info:
         await store.startup()
@@ -114,8 +115,8 @@ async def test_startup_wraps_operational_error():
 
 @pytest.mark.asyncio
 async def test_startup_wraps_socket_gaierror():
-    engine = _FakeAsyncEngine(socket.gaierror(8, "dns lookup failed"))
-    store = SqlAlchemyEpisodeStore(engine)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
+    engine = _failing_engine(socket.gaierror(8, "dns lookup failed"))
+    store = SqlAlchemyEpisodeStore(engine)
 
     with pytest.raises(ConfigurationError) as exc_info:
         await store.startup()
@@ -230,6 +231,7 @@ async def test_startup_skips_enum_creation_on_non_postgresql():
     conn.execute = AsyncMock()
     conn.dialect = MagicMock()
     conn.dialect.name = "sqlite"
+    engine.dialect = conn.dialect
 
     sync_conn = MagicMock()
     sync_conn.dialect = conn.dialect

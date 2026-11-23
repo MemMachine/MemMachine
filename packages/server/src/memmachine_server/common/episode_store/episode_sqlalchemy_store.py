@@ -58,7 +58,11 @@ from memmachine_server.common.metrics_factory import (
     OperationTracker,
     timed,
 )
-from memmachine_server.common.sql import write_session
+from memmachine_server.common.sql import (
+    validate_engine_connections,
+    validate_engine_dialect,
+    write_session,
+)
 from memmachine_server.common.utils import ensure_tz_aware
 
 logger = logging.getLogger(__name__)
@@ -146,6 +150,8 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
         metrics_factory: MetricsFactory | None = None,
     ) -> None:
         """Initialize the store with an async SQLAlchemy engine."""
+        validate_engine_dialect(engine, supported_dialects=("postgresql", "sqlite"))
+        validate_engine_connections(engine)
         self._engine: AsyncEngine = engine
         self._session_factory = async_sessionmaker(
             self._engine,
