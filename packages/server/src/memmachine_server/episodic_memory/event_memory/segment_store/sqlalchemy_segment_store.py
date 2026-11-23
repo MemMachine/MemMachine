@@ -81,6 +81,7 @@ from memmachine_server.common.properties_json import (
 )
 from memmachine_server.common.sql import (
     validate_engine_connections,
+    validate_engine_dialect,
     write_connection,
     write_session,
 )
@@ -898,14 +899,7 @@ class SQLAlchemySegmentStoreParams(BaseModel):
     @field_validator("engine")
     @classmethod
     def _validate_engine(cls, engine: AsyncEngine) -> AsyncEngine:
-        # A value judgment, not an argument-type check: pydantic turns
-        # only ValueError/AssertionError into a ValidationError, so a
-        # TypeError here would escape model construction raw.
-        if engine.dialect.name not in ("postgresql", "sqlite"):
-            raise ValueError(
-                f"Engine uses the {engine.dialect.name} dialect, which the store "
-                "does not support. Use PostgreSQL or SQLite."
-            )
+        validate_engine_dialect(engine, ("postgresql", "sqlite"))
         validate_engine_connections(engine)
         return engine
 

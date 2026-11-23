@@ -42,7 +42,11 @@ from memmachine_server.common.data_types import (
     SimilarityMetric,
 )
 from memmachine_server.common.filter.filter_parser import FilterExpr
-from memmachine_server.common.sql import validate_engine_connections, write_session
+from memmachine_server.common.sql import (
+    validate_engine_connections,
+    validate_engine_dialect,
+    write_session,
+)
 
 from .data_types import (
     QueryMatch,
@@ -381,11 +385,7 @@ class SQLiteVecVectorStoreParams(VectorStoreParams):
     @field_validator("engine")
     @classmethod
     def _validate_engine(cls, engine: AsyncEngine) -> AsyncEngine:
-        if engine.dialect.name != "sqlite":
-            raise ValueError(
-                f"Engine uses the {engine.dialect.name} dialect, which the store "
-                "does not support. Use SQLite."
-            )
+        validate_engine_dialect(engine, ("sqlite",))
         validate_engine_connections(engine)
         return engine
 

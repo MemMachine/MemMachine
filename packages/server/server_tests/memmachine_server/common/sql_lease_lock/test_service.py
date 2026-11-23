@@ -146,6 +146,15 @@ async def test_database_error_is_not_reported_as_contention(tmp_path: Path) -> N
             await first.try_acquire("resource", 2_000)
 
 
+def test_an_engine_of_another_dialect_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'locks.db'}")
+    monkeypatch.setattr(engine.dialect, "name", "mssql")
+    with pytest.raises(ValueError, match="mssql"):
+        SQLLeaseStore(engine)
+
+
 @pytest.mark.asyncio
 async def test_public_service_validates_key_and_duration(tmp_path: Path) -> None:
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'locks.db'}")
