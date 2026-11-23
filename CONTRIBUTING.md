@@ -28,6 +28,9 @@ report them privately, as [SECURITY.md](SECURITY.md) describes.
    git remote add upstream https://github.com/MemMachine/MemMachine.git
    ```
 
+   For a documentation-only change, skip step 2 and set up as
+   [docs/README.md](docs/README.md) describes.
+
 2. Install [uv](https://docs.astral.sh/uv/). From the repository root, install
    every package in editable mode, with all optional dependencies and the
    development tools:
