@@ -153,6 +153,7 @@ class PartitionRegistry(ABC):
     async def list_partitions(
         self, *, prefix: str = "", after: str | None = None, limit: int
     ) -> list[ListedPartition]: ...
+    async def list_names(self) -> list[str]: ...
     async def unregister(self, partition_name: str) -> None: ...
     async def claim_tombstone(self) -> TombstoneClaim | None: ...
 
@@ -208,6 +209,7 @@ class PartitionManager:
     async def list_partitions(
         self, *, prefix: str = "", after: str | None = None, limit: int
     ) -> list[ListedPartition]: ...
+    async def list_partition_names(self) -> list[str]: ...
     async def delete_partition(self, partition_name: str) -> None: ...
     async def run_purge_round(self) -> bool: ...
 ```
@@ -240,7 +242,7 @@ or the claim a purge round holds.
 
 | Object | Operations | Answered by |
 |---|---|---|
-| `PartitionRegistry` | `reserve`, `resolve`, `unregister` (by name), `list_partitions` (by name prefix), `claim_tombstone` | |
+| `PartitionRegistry` | `reserve`, `resolve`, `unregister` (by name), `list_partitions` (by name prefix), `list_names`, `claim_tombstone` | |
 | `Reservation` | `confirm`, `cancel` | `reserve` |
 | `Registration` | `require_current` | `resolve` |
 | `TombstoneClaim` | `complete`, `progress`, `fail` | `claim_tombstone` |
@@ -389,6 +391,11 @@ once the deletion committed.
 **`Registration.require_current()`** reads the row under the registration's
 name and raises `PartitionDeletedError` unless it carries the registration's
 UUID. It is how a handle is fenced (see [Fencing](#fencing)).
+
+**`list_names()`** reads the names of the namespace's live partitions once.
+It is how an owner answers which partitions exist: a pending partition is
+left out, as `resolve` does not answer one, and a deleted partition is left
+out from the moment its deletion commits.
 
 **`unregister(partition_name)`** is one transaction (`_unregister`):
 `DELETE ... RETURNING` the partition's row, pending or live, then insert its

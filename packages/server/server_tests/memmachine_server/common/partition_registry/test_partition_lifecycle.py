@@ -136,6 +136,18 @@ async def test_an_invalid_name_is_refused_by_every_by_name_operation(
 
 
 @pytest.mark.asyncio
+async def test_a_partitions_name_is_listed_from_its_creation_to_its_deletion(manager):
+    assert await manager.list_partition_names() == []
+
+    await manager.create_partition(NAME)
+    await manager.create_partition("q")
+    assert sorted(await manager.list_partition_names()) == [NAME, "q"]
+
+    await manager.delete_partition(NAME)
+    assert await manager.list_partition_names() == ["q"]
+
+
+@pytest.mark.asyncio
 async def test_a_taken_name_is_refused_before_the_store_creates(manager, store):
     await manager.create_partition(NAME)
 
