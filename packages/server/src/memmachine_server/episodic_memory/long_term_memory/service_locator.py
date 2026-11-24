@@ -192,6 +192,46 @@ async def delete_long_term_memory_storage(
             )
 
 
+async def create_event_memory_storage(
+    session_id: str,
+    resource_manager: InstanceOf[CommonResourceManager],
+) -> None:
+    """
+    Create a session's event memory partition, on a deployment that configures event memory.
+
+    Raises:
+        PartitionAlreadyExistsError:
+            If a partition holds the session's partition name.
+    """
+    if not _deployment_configures_event_memory(resource_manager.config):
+        return
+    # Creating a partition uses no reranker, segmenter, or deriver.
+    event_memory = await _event_memory(
+        EventLongTermMemoryConf(session_id=session_id), resource_manager, reranker=None
+    )
+    await event_memory.create_partition(partition_name_for_session(session_id))
+
+
+async def delete_event_memory_storage(
+    session_id: str,
+    resource_manager: InstanceOf[CommonResourceManager],
+) -> None:
+    """Delete a session's event memory partition by name, on a deployment that configures event memory."""
+    if not _deployment_configures_event_memory(resource_manager.config):
+        return
+    await delete_long_term_memory_storage(
+        EventLongTermMemoryConf(session_id=session_id), resource_manager
+    )
+
+
+def _deployment_configures_event_memory(configuration: Configuration) -> bool:
+    try:
+        deployment_event_memory_ids(configuration)
+    except ConfigurationError:
+        return False
+    return True
+
+
 async def _declarative_memory(
     config: DeclarativeLongTermMemoryConf,
     resource_manager: InstanceOf[CommonResourceManager],
