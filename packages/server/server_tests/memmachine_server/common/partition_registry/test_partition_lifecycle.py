@@ -4,7 +4,7 @@ import asyncio
 import logging
 import random
 from unittest.mock import MagicMock, NonCallableMagicMock, create_autospec
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 import pytest_asyncio
@@ -111,6 +111,52 @@ async def test_a_partition_is_created_in_the_store_while_pending_then_confirmed(
     partition_uuid = await _created(manager, registry)
 
     store.create_partition.assert_awaited_once_with(partition_uuid)
+
+
+@pytest.mark.asyncio
+async def test_a_live_partition_resolves_by_its_uuid(registry, manager):
+    partition_uuid = await _created(manager, registry)
+
+    registration = await manager.resolve_partition_uuid(partition_uuid)
+
+    assert registration is not None
+    assert (registration.partition_name, registration.partition_uuid) == (
+        NAME,
+        partition_uuid,
+    )
+    await registration.require_current()
+
+
+@pytest.mark.asyncio
+async def test_a_deleted_partitions_uuid_resolves_to_none_after_its_name_is_registered_again(
+    registry, manager
+):
+    deleted_uuid = await _created(manager, registry)
+    await manager.delete_partition(NAME)
+    created_again_uuid = await _created(manager, registry)
+
+    assert await registry.resolve_uuid(deleted_uuid) is None
+    registration = await registry.resolve_uuid(created_again_uuid)
+    assert registration is not None
+    assert registration.partition_uuid == created_again_uuid
+
+
+@pytest.mark.asyncio
+async def test_a_uuid_no_partition_carries_resolves_to_none(registry):
+    assert await registry.resolve_uuid(uuid4()) is None
+
+
+@pytest.mark.asyncio
+async def test_a_pending_partitions_uuid_raises_pending(registry, manager, store):
+    async def pending_while_created(partition_uuid: UUID) -> None:
+        with pytest.raises(PartitionPendingError):
+            await registry.resolve_uuid(partition_uuid)
+
+    store.create_partition.side_effect = pending_while_created
+
+    await _created(manager, registry)
+
+    store.create_partition.assert_awaited_once()
 
 
 @pytest.mark.asyncio

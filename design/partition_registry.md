@@ -146,12 +146,14 @@ class PartitionRegistry(ABC):
     async def startup(self) -> None: ...
     async def reserve(self, partition_name: str) -> Reservation: ...
     async def resolve(self, partition_name: str) -> Registration | None: ...
+    async def resolve_uuid(self, partition_uuid: UUID) -> Registration | None: ...
     async def unregister(self, partition_name: str) -> None: ...
     async def claim_tombstone(self) -> TombstoneClaim | None: ...
 
     # Supplied by an implementation, with startup and claim_tombstone.
     async def _reserve(self, partition_name: str) -> Reservation: ...
     async def _resolve(self, partition_name: str) -> UUID | None: ...
+    async def _resolve_uuid(self, partition_uuid: UUID) -> str | None: ...
     def _registration(
         self, partition_name: str, partition_uuid: UUID
     ) -> Registration: ...
@@ -187,6 +189,9 @@ class PartitionManager:
     ) -> None: ...
     async def create_partition(self, partition_name: str) -> None: ...
     async def resolve_partition(self, partition_name: str) -> Registration | None: ...
+    async def resolve_partition_uuid(
+        self, partition_uuid: UUID
+    ) -> Registration | None: ...
     async def delete_partition(self, partition_name: str) -> None: ...
     async def run_purge_round(self) -> bool: ...
 ```
@@ -219,9 +224,9 @@ or the claim a purge round holds.
 
 | Object | Operations | Answered by |
 |---|---|---|
-| `PartitionRegistry` | `reserve`, `resolve`, `unregister` (by name), `claim_tombstone` | |
+| `PartitionRegistry` | `reserve`, `resolve`, `unregister` (by name), `resolve_uuid` (by UUID), `claim_tombstone` | |
 | `Reservation` | `confirm`, `cancel` | `reserve` |
-| `Registration` | `require_current` | `resolve` |
+| `Registration` | `require_current` | `resolve`, `resolve_uuid` |
 | `TombstoneClaim` | `complete`, `progress`, `fail` | `claim_tombstone` |
 
 - **Why handles.** Every operation on one partition needs its UUID:
@@ -270,15 +275,31 @@ or the claim a purge round holds.
   is deleted. `resolve` and `require_current` each read the registry once, so
   getting a partition takes one round trip to the registry, and each fence
   check takes another.
+- **Why one lookup by UUID.** Work over a store's records, such as event
+  memory's background work on its indexing jobs and tombstones, holds a
+  partition's UUID and no name, and checks that the partition is live
+  before it writes. `resolve_uuid` answers the registration `resolve`
+  answers, from the UUID, or `None` once the partition is deleted, and
+  raises as `resolve` does while it is pending. A UUID names one partition
+  for its whole life, so the answer says whether that partition is live,
+  whatever was registered under its name since. It is the registry's one
+  operation addressed by UUID, and it answers a handle, like `resolve`, so
+  the UUID is bound once there too. A record could instead keep its
+  partition's name beside the UUID, as a Kubernetes owner reference keeps
+  an owner's name and UID and the garbage collector reads the owner by
+  name and compares UIDs; the stores would then hold names, which they
+  otherwise never do.
 - **What each part gains.** The registry's public operations on a partition
-  are all addressed by name. An owner's handle on a tenant is built from one
+  are addressed by name, but for the lookup of a live partition by its
+  UUID. An owner's handle on a tenant is built from one
   registration and its stores' handles on the registration's UUID, and its
   fence is one call.
 
 ### Names and UUIDs
 
 Callers address partitions by name, and only the registry holds names; a
-store addresses its partitions by UUID. The registry's by-name operations
+store addresses its partitions by UUID, and work that holds only a UUID
+resolves it with `resolve_uuid`. The registry's by-name operations
 refuse an invalid name with `ValueError` before reading or writing anything,
 so no backend sees one. A caller's identifier, such as a session id, can be
 the partition name as it is; the server hashes a session id that is not a
