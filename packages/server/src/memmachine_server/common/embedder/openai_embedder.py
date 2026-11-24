@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+from collections.abc import Coroutine
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -56,6 +57,24 @@ class OpenAIEmbedderParams(BaseModel):
         description="Maximal retry interval in seconds when retrying API calls.",
         gt=0,
     )
+    search_timeout_seconds: float | None = Field(
+        default=None,
+        description=(
+            "Total time budget for a search embedding operation, including batches "
+            "and retries. None leaves the operation without an additional deadline."
+        ),
+        gt=0,
+        allow_inf_nan=False,
+    )
+    ingest_timeout_seconds: float | None = Field(
+        default=None,
+        description=(
+            "Total time budget for an ingestion embedding operation, including batches "
+            "and retries. None leaves the operation without an additional deadline."
+        ),
+        gt=0,
+        allow_inf_nan=False,
+    )
     metrics_factory: InstanceOf[MetricsFactory] | None = Field(
         default=None,
         description="An instance of MetricsFactory for collecting usage metrics.",
@@ -88,6 +107,8 @@ class OpenAIEmbedder(Embedder):
         self._use_dimensions_parameter = True
 
         self._max_retry_interval_seconds = params.max_retry_interval_seconds
+        self._search_timeout_seconds = params.search_timeout_seconds
+        self._ingest_timeout_seconds = params.ingest_timeout_seconds
 
         self._max_input_length = params.max_input_length
 
@@ -108,14 +129,60 @@ class OpenAIEmbedder(Embedder):
                 "Number of tokens used by requests to OpenAI embedder",
             )
 
+    async def ingest_embed(
+        self,
+        inputs: list[Any],
+        max_attempts: int = 1,
+    ) -> list[list[float]]:
+        """Embed inputs within one time budget for all batches and retries."""
+        if not inputs:
+            return []
+        return await self._embed_with_timeout(
+            "ingest_embed",
+            super().ingest_embed(inputs, max_attempts),
+            self._ingest_timeout_seconds,
+        )
+
+    async def search_embed(
+        self,
+        queries: list[Any],
+        max_attempts: int = 1,
+    ) -> list[list[float]]:
+        """Embed queries within one time budget for all batches and retries."""
+        if not queries:
+            return []
+        return await self._embed_with_timeout(
+            "search_embed",
+            super().search_embed(queries, max_attempts),
+            self._search_timeout_seconds,
+        )
+
+    async def _embed_with_timeout(
+        self,
+        operation: str,
+        embedding: Coroutine[Any, Any, list[list[float]]],
+        timeout_seconds: float | None,
+    ) -> list[list[float]]:
+        """Apply an operation deadline and record its failure before emitting metrics."""
+        async with self._tracker(operation):
+            deadline = asyncio.timeout(timeout_seconds)
+            try:
+                async with deadline:
+                    return await embedding
+            except TimeoutError as err:
+                if not deadline.expired():
+                    raise
+                raise ExternalServiceAPIError(
+                    f"OpenAI {operation} exceeded its {timeout_seconds} second time budget"
+                ) from err
+
     async def _ingest_embed(
         self,
         inputs: list[Any],
         max_attempts: int = 1,
     ) -> list[list[float]]:
         """Embed the provided inputs with retries."""
-        async with self._tracker("ingest_embed"):
-            return await self._embed(inputs, max_attempts)
+        return await self._embed(inputs, max_attempts)
 
     async def _search_embed(
         self,
@@ -123,8 +190,7 @@ class OpenAIEmbedder(Embedder):
         max_attempts: int = 1,
     ) -> list[list[float]]:
         """Embed search queries with retries."""
-        async with self._tracker("search_embed"):
-            return await self._embed(queries, max_attempts)
+        return await self._embed(queries, max_attempts)
 
     async def _embed(
         self,

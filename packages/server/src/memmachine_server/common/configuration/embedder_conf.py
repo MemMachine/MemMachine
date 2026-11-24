@@ -78,6 +78,18 @@ class OpenAIEmbedderConf(MetricsFactoryIdMixin, YamlSerializableMixin, ApiKeyMix
         default=None,
         description="OpenAI Embeddings API base URL",
     )
+    search_timeout_seconds: float | None = Field(
+        default=None,
+        description="Total search embedding timeout, including batches and retries; None disables it.",
+        gt=0,
+        allow_inf_nan=False,
+    )
+    ingest_timeout_seconds: float | None = Field(
+        default=None,
+        description="Total ingestion embedding timeout, including batches and retries; None disables it.",
+        gt=0,
+        allow_inf_nan=False,
+    )
     max_input_length: int | None = Field(
         default=None,
         description="Maximum input length for the model (in Unicode code points).",

@@ -215,6 +215,8 @@ class EmbedderManager(BaseResourceManager[Embedder]):
             ),
             model=conf.model,
             dimensions=dimensions,
+            search_timeout_seconds=conf.search_timeout_seconds,
+            ingest_timeout_seconds=conf.ingest_timeout_seconds,
             max_input_length=conf.max_input_length,
             max_retry_interval_seconds=conf.max_retry_interval_seconds,
             metrics_factory=conf.get_metrics_factory(),
