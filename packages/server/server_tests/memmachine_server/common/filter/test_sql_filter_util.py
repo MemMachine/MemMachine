@@ -9,11 +9,14 @@ against both SQLite and PostgreSQL (via testcontainers).
 """
 
 from datetime import UTC, datetime, timedelta, timezone
+from enum import Enum
 from typing import Any, cast
 
 import pytest
 import pytest_asyncio
 from sqlalchemy import JSON, Column, Integer, String, create_engine, select
+from sqlalchemy import Enum as SAEnum
+from sqlalchemy.dialects import postgresql, sqlite
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 from sqlalchemy.orm import DeclarativeBase, Session
@@ -29,6 +32,68 @@ from memmachine_server.common.filter.filter_parser import (
 )
 from memmachine_server.common.filter.sql_filter_util import compile_sql_filter
 from memmachine_server.common.properties_json import encode_properties
+
+
+@pytest.mark.parametrize("dialect", [sqlite.dialect(), postgresql.dialect()])
+@pytest.mark.parametrize(
+    ("expression", "expected"),
+    [
+        ("kind = 'message'", "kind = 'MESSAGE'"),
+        ("kind != 'message'", "kind != 'MESSAGE'"),
+        ("kind IN ('message', 'notice')", "kind IN ('MESSAGE', 'NOTICE')"),
+        ("kind = 'MESSAGE'", "kind = 'MESSAGE'"),
+        ("kind = 'unknown'", "kind = 'unknown'"),
+        ("kind IS NULL", "kind IS NULL"),
+    ],
+)
+def test_enum_column_values(dialect, expression, expected):
+    class Kind(Enum):
+        MESSAGE = "message"
+        NOTICE = "notice"
+
+    column = Column("kind", SAEnum(Kind, name="kind"))
+    predicate = compile_sql_filter(
+        parse_filter(expression), lambda _: (column, "column")
+    )
+    compiled = predicate.compile(
+        dialect=dialect, compile_kwargs={"literal_binds": True}
+    )
+    assert str(compiled) == expected
+
+
+@pytest.mark.parametrize("dialect", [sqlite.dialect(), postgresql.dialect()])
+@pytest.mark.parametrize("store_values", [False, True])
+@pytest.mark.parametrize(
+    ("value", "stored_name", "stored_value"),
+    [
+        ("SECOND", "SECOND", "SECOND"),
+        ("other", "SECOND", "other"),
+        ("FIRST", "FIRST", "FIRST"),
+    ],
+)
+def test_enum_column_preserves_persisted_labels(
+    dialect, store_values, value, stored_name, stored_value
+):
+    class Overlap(Enum):
+        FIRST = "SECOND"
+        SECOND = "other"
+
+    enum_type = SAEnum(
+        Overlap,
+        values_callable=(lambda members: [member.value for member in members])
+        if store_values
+        else None,
+    )
+    column = Column("kind", enum_type)
+    predicate = compile_sql_filter(
+        Comparison(field="kind", op="=", value=value), lambda _: (column, "column")
+    )
+    compiled = predicate.compile(
+        dialect=dialect, compile_kwargs={"literal_binds": True}
+    )
+    expected = stored_value if store_values else stored_name
+    assert str(compiled) == f"kind = '{expected}'"
+
 
 # ============================================================================
 # Raw JSON ("json" kind) + direct column ("column" kind) tests — sync SQLite

@@ -2,7 +2,7 @@
 Unified SQLAlchemy filter compiler for FilterExpr trees.
 
 Supports different field encodings via `FieldEncoding`:
-- `"column"`: direct column comparison, no casting.
+- `"column"`: direct column comparison, resolving known Python enum values.
 - `"json"`: raw JSON value, cast based on the Python value type.
 - `"properties_json"`: type-tagged JSON (`{"t": …, "v": …}`) supporting PropertyValue.
 """
@@ -13,6 +13,7 @@ from typing import Literal
 from uuid import UUID
 
 from sqlalchemy import ColumnElement, and_, false, or_
+from sqlalchemy import Enum as SAEnum
 
 from memmachine_server.common.data_types import (
     PROPERTY_TYPE_TO_PROPERTY_TYPE_NAME,
@@ -63,6 +64,20 @@ def _get_op(op: str) -> Callable[[ColumnElement, object], ColumnElement[bool]]:
     return op_fn
 
 
+def _column_value(column: ColumnElement, value: object) -> object:
+    """Bind known enum values as members without changing other literal handling."""
+    if isinstance(column.type, SAEnum) and column.type.enum_class is not None:
+        if isinstance(value, str) and value in column.type.enums:
+            return value
+        try:
+            return column.type.enum_class(value)
+        except ValueError:
+            # Keep enum names and unknown literals subject to the existing
+            # SQLAlchemy/dialect validation, rather than changing that policy.
+            pass
+    return value
+
+
 def _compile_column_leaf(
     expr: IsNull | In | Comparison,
     column: ColumnElement,
@@ -72,8 +87,8 @@ def _compile_column_leaf(
     if isinstance(expr, In):
         if not expr.values:
             return false()
-        return column.in_(expr.values)
-    return _get_op(expr.op)(column, expr.value)
+        return column.in_([_column_value(column, value) for value in expr.values])
+    return _get_op(expr.op)(column, _column_value(column, expr.value))
 
 
 def _compile_uuid_leaf(
