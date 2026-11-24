@@ -235,7 +235,7 @@ class AmazonBedrockLanguageModel(LanguageModel):
                 logger.error(msg)
                 raise AttributeError(msg)
 
-            client = from_bedrock(self._client, async_client=True)
+            client = from_bedrock(self._client)
 
             if max_attempts <= 0:
                 raise ValueError("max_attempts must be a positive integer")
@@ -259,11 +259,12 @@ class AmazonBedrockLanguageModel(LanguageModel):
                 )
 
             try:
-                (
-                    response,
-                    raw_response,
-                ) = await client.chat.completions.create_with_completion(
-                    **converse_kwargs
+                # Run the blocking create in a thread, as _generate_response
+                # does for its converse calls; instructor's async_client
+                # wrapper calls the blocking converse on the event loop.
+                response, raw_response = await asyncio.to_thread(
+                    client.chat.completions.create_with_completion,
+                    **converse_kwargs,
                 )
             except instructor.core.exceptions.InstructorRetryException as exc:
                 parsed = self._try_parse_bedrock_completion(
