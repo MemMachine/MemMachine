@@ -63,7 +63,7 @@ async def test_migrate_pickle_to_json(sqlalchemy_engine: AsyncEngine) -> None:
         )
 
     # Initialize the SessionDataManagerSQL
-    # This should trigger the migration in migrate
+    # This should trigger the conversion in prepare
     manager = SessionDataManagerSQL(sqlalchemy_engine)
     await manager.prepare()
 
@@ -130,7 +130,7 @@ async def test_migrate_add_status_column(sqlalchemy_engine: AsyncEngine) -> None
         )
 
     # Initialize the SessionDataManagerSQL
-    # This should trigger the migration in migrate
+    # This should trigger the conversion in prepare
     manager = SessionDataManagerSQL(sqlalchemy_engine)
     await manager.prepare()
 
