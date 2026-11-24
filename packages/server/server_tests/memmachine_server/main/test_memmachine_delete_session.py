@@ -61,7 +61,7 @@ async def test_delete_session_clears_semantic_history_and_citations(
 
     deleted = False
     try:
-        await memmachine.create_session(session_key)
+        await memmachine.create_session(session_data)
 
         episode_ids = await memmachine.add_episodes(
             session_data,

@@ -75,7 +75,8 @@ def test_create_project(client, mock_memmachine):
 
     mock_memmachine.create_session.assert_awaited_once()
     call_args = mock_memmachine.create_session.call_args[1]
-    assert call_args["session_key"] == "test_org/test_proj"
+    assert call_args["session_data"].session_key == "test_org/test_proj"
+    assert call_args["session_data"].org_id == "test_org"
     assert call_args["description"] == "A test project"
     assert call_args["user_conf"].long_term_memory.embedder == "openai"
     assert call_args["user_conf"].long_term_memory.reranker == "cohere"
@@ -326,7 +327,7 @@ def test_list_projects(client, mock_memmachine):
     assert data[0] == {"org_id": "org1", "project_id": "proj1"}
     assert data[1] == {"org_id": "org1", "project_id": "proj2"}
 
-    mock_memmachine.search_sessions.assert_awaited_once()
+    mock_memmachine.search_sessions.assert_awaited_once_with("org1")
 
 
 def test_list_projects_requires_org_id(client, mock_memmachine):

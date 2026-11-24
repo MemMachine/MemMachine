@@ -98,7 +98,7 @@ async def test_memmachine_list_search_paginates_semantic(memmachine: MemMachine)
     set_metadata = {
         "work_type": "pagination",
     }
-    await memmachine.create_session(session_info.session_key)
+    await memmachine.create_session(session_info)
     await memmachine.create_semantic_set_type(
         session_data=session_info,
         is_org_level=False,
@@ -176,7 +176,7 @@ async def test_memmachine_create_get_and_delete_session(memmachine: MemMachine):
 
     try:
         session_info = await memmachine.create_session(
-            session_key,
+            delete_handle,
             description="integration-session",
         )
 
@@ -214,7 +214,7 @@ async def test_memmachine_a_session_created_again_holds_none_of_the_deleted_sess
     )
 
     try:
-        await memmachine.create_session(session_key)
+        await memmachine.create_session(session)
         await memmachine.add_episodes(
             session,
             [
@@ -231,7 +231,7 @@ async def test_memmachine_a_session_created_again_holds_none_of_the_deleted_sess
         await memmachine.delete_session(session)
         assert await memmachine.episodes_count(session) == 0
 
-        await memmachine.create_session(session_key)
+        await memmachine.create_session(session)
 
         assert await memmachine.episodes_count(session) == 0
         listed = await memmachine.list_search(
@@ -255,37 +255,29 @@ async def test_memmachine_a_session_created_again_holds_none_of_the_deleted_sess
 async def test_memmachine_search_sessions_lists_a_session_until_its_deletion(
     memmachine: MemMachine,
 ):
+    org_id = f"listed-org-{uuid4()}"
     created_sessions = [f"listed-session-{uuid4()}" for _ in range(2)]
+    sessions = [
+        _Session(session_key=key, org_id=org_id, project_id=f"project-{key}")
+        for key in created_sessions
+    ]
 
     try:
-        for new_session_key in created_sessions:
-            await memmachine.create_session(new_session_key)
+        for session in sessions:
+            await memmachine.create_session(session)
 
-        all_sessions = await memmachine.search_sessions()
-        assert created_sessions[0] in all_sessions
-        assert created_sessions[1] in all_sessions
-
-        await memmachine.delete_session(
-            _Session(
-                session_key=created_sessions[0],
-                org_id=f"org-{created_sessions[0]}",
-                project_id=f"project-{created_sessions[0]}",
-            )
+        assert sorted(await memmachine.search_sessions(org_id)) == sorted(
+            created_sessions
         )
 
-        remaining_sessions = await memmachine.search_sessions()
-        assert created_sessions[0] not in remaining_sessions
-        assert created_sessions[1] in remaining_sessions
+        await memmachine.delete_session(sessions[0])
+
+        assert await memmachine.search_sessions(org_id) == [created_sessions[1]]
     finally:
-        for key in created_sessions:
-            cleanup_session = _Session(
-                session_key=key,
-                org_id=f"org-{key}",
-                project_id=f"project-{key}",
-            )
-            remaining = await memmachine.get_session(key)
+        for session in sessions:
+            remaining = await memmachine.get_session(session.session_key)
             if remaining is not None:
-                await memmachine.delete_session(cleanup_session)
+                await memmachine.delete_session(session)
 
 
 @pytest.mark.asyncio
