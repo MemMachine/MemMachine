@@ -341,6 +341,56 @@ class PartitionRegistry(ABC):
         """
         raise NotImplementedError
 
+    async def resolve_uuid(self, partition_uuid: UUID) -> Registration | None:
+        """
+        Resolve a partition UUID to the live partition carrying it.
+
+        One read of the registry decides the outcome. A UUID names one
+        partition for its whole life, so the UUID of a deleted partition
+        resolves to None, whether or not a partition was registered under its
+        name since.
+
+        Args:
+            partition_uuid (UUID): The partition's UUID.
+
+        Returns:
+            Registration | None:
+                The live partition's registration, or None when no live
+                partition carries the UUID.
+
+        Raises:
+            PartitionPendingError:
+                If the partition carrying the UUID is pending.
+        """
+        partition_name = await self._resolve_uuid(partition_uuid)
+        if partition_name is None:
+            return None
+        return self._registration(partition_name, partition_uuid)
+
+    @abstractmethod
+    async def _resolve_uuid(self, partition_uuid: UUID) -> str | None:
+        """
+        Resolve a partition UUID to the name of the live partition carrying it, or None when no partition carries it.
+
+        Called by `resolve_uuid`, concurrently with any other call on any
+        process. One read of the registry decides the outcome, reflecting
+        every reservation, confirmation, and deletion committed before the
+        read. It only reads, so a call that raises changes nothing.
+
+        Args:
+            partition_uuid (UUID): The partition's UUID.
+
+        Returns:
+            str | None:
+                The live partition's name, or None when no partition carries
+                the UUID.
+
+        Raises:
+            PartitionPendingError:
+                If the partition carrying the UUID is pending.
+        """
+        raise NotImplementedError
+
     @abstractmethod
     def _registration(self, partition_name: str, partition_uuid: UUID) -> Registration:
         """

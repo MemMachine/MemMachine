@@ -66,6 +66,7 @@ from memmachine_server.common.session_manager.session_data_manager import (
 )
 from memmachine_server.common.sql import enable_sqlite_explicit_begin
 from memmachine_server.common.sql_lease_lock import SQLLeaseLockService
+from memmachine_server.episodic_memory.event_memory.event_memory import EventMemory
 
 RERANKER_ID = "my_reranker"
 EMBEDDER_ID = "my_embedder"
@@ -630,6 +631,101 @@ def _record_purge_rounds(
         resource_manager_module, "_run_purge_rounds_forever", recorded_purge_rounds
     )
     return purge_rounds
+
+
+@pytest.mark.asyncio
+async def test_get_event_memory_builds_one_event_memory_and_runs_its_jobs_until_close(
+    invalid_resource_manager, monkeypatch
+):
+    """Concurrent first accesses build the deployment's EventMemory once, and close() ends both kinds of its jobs."""
+    event_memory = create_autospec(EventMemory, instance=True)
+    indexed = asyncio.Event()
+    purged = asyncio.Event()
+
+    def idle_job(ran: asyncio.Event):
+        async def job() -> bool:
+            ran.set()
+            return False
+
+        return job
+
+    event_memory.index_pending_segments.side_effect = idle_job(indexed)
+    event_memory.purge_forgotten_segments.side_effect = idle_job(purged)
+    build = AsyncMock(return_value=event_memory)
+    monkeypatch.setattr(resource_manager_module, "event_memory_from_config", build)
+
+    handed_out = await asyncio.gather(
+        invalid_resource_manager.get_event_memory(),
+        invalid_resource_manager.get_event_memory(),
+    )
+    await asyncio.wait_for(asyncio.gather(indexed.wait(), purged.wait()), 5)
+    jobs = invalid_resource_manager._event_memory_jobs
+
+    await invalid_resource_manager.close()
+
+    assert handed_out == [event_memory, event_memory]
+    build.assert_awaited_once_with(invalid_resource_manager)
+    assert len(jobs) == 2
+    assert all(job.cancelled() for job in jobs)
+
+
+@pytest.mark.asyncio
+async def test_event_memory_jobs_loop_survives_a_failing_call(monkeypatch):
+    """The loop keeps running jobs past a call that raised."""
+    monkeypatch.setattr(
+        resource_manager_module, "_EVENT_MEMORY_JOBS_INTERVAL_SECONDS", 0
+    )
+    calls = 0
+    third_call = asyncio.Event()
+
+    async def counting_job() -> bool:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise ConnectionError("dropped mid-job")
+        if calls >= 3:
+            third_call.set()
+        return False
+
+    task = asyncio.create_task(
+        resource_manager_module._run_event_memory_jobs_forever(
+            counting_job, "indexing of pending segments"
+        )
+    )
+    await asyncio.wait_for(third_call.wait(), 5)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+
+@pytest.mark.asyncio
+async def test_event_memory_jobs_loop_runs_the_next_job_at_once_after_one_ran(
+    monkeypatch,
+):
+    """A call that ran a job is followed by the next without the interval."""
+    monkeypatch.setattr(
+        resource_manager_module, "_EVENT_MEMORY_JOBS_INTERVAL_SECONDS", 3600
+    )
+    calls = 0
+    third_call = asyncio.Event()
+
+    async def busy_job() -> bool:
+        nonlocal calls
+        calls += 1
+        if calls >= 3:
+            third_call.set()
+            return False
+        return True
+
+    task = asyncio.create_task(
+        resource_manager_module._run_event_memory_jobs_forever(
+            busy_job, "indexing of pending segments"
+        )
+    )
+    await asyncio.wait_for(third_call.wait(), 5)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
 
 
 @pytest.mark.asyncio

@@ -40,21 +40,26 @@ registry](partition_registry.md) names each tenant's partition and mints its
 again; the store addresses everything by partition UUID.
 
 - `segment_store_pt`: one row per created partition, holding its payload
-  codec config and, while the partition is purged, the purge's cursor, the
-  last segment key purged.
-- `segment_store_sg` and `segment_store_dv_ln`, the segment and
-  derivative-link tables, shared by all tenants and not partitioned. Rows
+  codec config and, while the partition is purged, the purge's cursors, the
+  last key purged in each table it walks.
+- `segment_store_ev`, `segment_store_sg` and `segment_store_dv`, the event,
+  segment and derivative tables, shared by all tenants and not partitioned. Rows
   carry no tenant name; they are keyed by the partition's UUID alone, so
   addressing the wrong tenant is structurally impossible rather than
   guarded against. A 16-byte UUID also keeps index entries narrower than a
   composite string key, and random UUIDs are unique across nodes without
   coordination, so a tenant's rows move between databases verbatim.
+- `segment_store_ij`, indexing jobs, and `segment_store_tb`, tombstones,
+  each a segment's: the work a derived index of the derivatives leaves
+  behind ([ingest and deletion](event_memory_ingest_and_deletion.md)).
+  `segment_store_tb_dv` holds a tombstone's derivative UUIDs.
 
-The link table keeps its foreign key to the segment table (`ON DELETE
-CASCADE`), both sides keyed by partition UUID. The segment table has no
-foreign key to the partition's row: the purge deletes a partition's
-segments in batches, and the drop deletes its row once the purge finds
-none.
+The derivative and indexing job tables keep their foreign keys to the
+segment table, the segment table its to the event table, and the tombstone
+derivative UUIDs theirs to the tombstone table, all `ON DELETE CASCADE` and
+keyed by partition UUID. No table has a foreign key to the partition's row:
+the purge deletes a partition's rows in batches, and the drop deletes its
+row once the purge finds none.
 
 A name with a UUID minted for each object created under it is the pattern
 of a Kubernetes object's name and UID, and of a Kafka topic's name and topic
@@ -86,36 +91,40 @@ with a new UUID.
 
   - One transaction per call, committing its progress or nothing, so
     committed progress survives interruption.
-  - Segment rows are deleted in batches of up to
-    `SQLAlchemySegmentStoreParams.purge_max_segments` per call. A batch
-    continues from the partition's cursor: it reads the next keys after
-    `purged_through` in primary-key order, deletes that key range, and,
-    when it found a full batch, records its last key in the same
-    transaction. PostgreSQL keeps deleted rows in the table and its
-    indexes until vacuum, and a batch that started from the partition's
-    first key would step over all of them, making each batch cost in
-    proportion to what was already purged; a batch that continues from
-    the cursor reads no row an earlier batch deleted. A walk from the
-    cursor that reaches the end clears it, and only a call that searches
-    from the partition's first key answers that nothing remains, so a row
-    that lands behind the cursor is still found. A search from the first
-    key steps over the deleted rows vacuum has not yet removed, so the
-    call that finds the partition empty costs in proportion to them. Link
-    rows are deleted by cascade from their segments, measured faster than
-    deleting them manually at one and at four links per segment. A call's
-    transaction therefore also scales with the links per segment, which
-    the deriver sets and the store cannot reject after derivation.
-  - A call returns False only when it searched from the partition's first
-    key and found nothing, so a call that returns False proves the
-    partition's segments gone from the store. Link rows are deleted with
-    their segments by the foreign key's cascade and by nothing else: the
-    store requires foreign-key enforcement of its engine (on SQLite, per
-    connection) and does not verify it, so an engine without enforcement
-    leaves link rows behind.
+  - Rows are deleted in batches of up to
+    `SQLAlchemySegmentStoreParams.purge_max_rows` per call, shared by the
+    segment, event, and tombstone tables in that order, so deleting an
+    event cascades to no segment. A batch continues from its table's
+    cursor: it reads the next keys after the cursor in primary-key order,
+    deletes that key range, and, when it found a full batch, records how
+    far each table's walk got in the same transaction. PostgreSQL keeps
+    deleted rows in the table and its indexes until vacuum, and a batch
+    that started from the partition's first key would step over all of
+    them, making each batch cost in proportion to what was already purged;
+    a batch that continues from its cursor reads no row an earlier batch
+    deleted. A walk from the cursors that reaches the end of every table
+    clears them, and only a call that searches every table from the
+    partition's first key answers that nothing remains, so a row that
+    lands behind a cursor is still found. A search from the first key
+    steps over the deleted rows vacuum has not yet removed, so the call
+    that finds the partition empty costs in proportion to them. Derivative
+    and indexing job rows are deleted by cascade from their segments, and a
+    tombstone's derivative UUIDs from it; for rows holding only their keys,
+    the cascade measured faster than deleting them manually at one and at
+    four per segment. A call's transaction therefore also scales with the
+    derivatives per segment, which the deriver sets and the store cannot
+    reject after derivation.
+  - A call returns False only when it searched every table from the
+    partition's first key and found nothing, so a call that returns False
+    proves the partition's rows gone from the store. Derivative, indexing
+    job, and tombstone derivative rows are deleted by the foreign keys'
+    cascades and by nothing else: the store requires foreign-key
+    enforcement of its engine (on SQLite, per connection) and does not
+    verify it, so an engine without enforcement leaves them behind.
   - Purgers of one partition, from any process, serialize on its row's
-    lock (`FOR UPDATE`) while the row exists, so each reads the cursor its
+    lock (`FOR UPDATE`) while the row exists, so each reads the cursors its
     predecessor committed. On SQLite, which drops locking clauses, the call
-    holds the database's write lock from BEGIN instead. With a cursor read
+    holds the database's write lock from BEGIN instead. With cursors read
     before the lock is taken, a second purger could plan its batch from a
     cursor the first has since advanced and read again the rows the first
     deleted.
@@ -123,9 +132,9 @@ with a new UUID.
     and the server's resource manager runs those rounds (see
     [the sweeper](vector_store_purge.md#the-sweeper)).
   - Pacing, not deletion speed, bounds how fast a backlog drains: a call
-    deletes at most `purge_max_segments` segment rows and the resource
-    manager pauses between busy rounds, so one process drains at most
-    `purge_max_segments` rows per pause.
+    deletes at most `purge_max_rows` segment, event, and tombstone rows and
+    the resource manager pauses between busy rounds, so one process drains
+    at most `purge_max_rows` of them per pause.
 
 ### Fencing
 
@@ -133,49 +142,57 @@ The store checks nothing about whether a partition is still live. Its
 owner fences each operation by the partition's registration (see
 [fencing](partition_registry.md#fencing)): an operation begun after the
 tenant's deletion raises, and a write that lands in a deleted partition is
-reclaimed by the purge, which starts only after the retention.
+reclaimed by the purge, which starts only after the retention. Indexing
+jobs and tombstones are claimed from every partition, a deleted one's
+included until its purge deletes them, and a claim's holder checks its
+partition by UUID before it writes or deletes (see [ingest and
+deletion](event_memory_ingest_and_deletion.md)).
 
 ### Locking model
 
-Row locks only. Writers lock nothing beyond the rows they write;
-`delete_segments` deletes its segments one statement each in key order, so
-every deletion takes its row locks in that order; the purge takes
-`FOR UPDATE` on its partition's row, which only the purgers and the drop of
-the same partition contend for. No table-level lock, no DDL,
-and no lock upgrade anywhere in the store, which removes the measured
-deadlock classes at the root: reclamation touches only rows of a partition
-no request can reach. On SQLite, which drops locking clauses, every write
-transaction of the store takes the database's write lock at BEGIN
-(`BEGIN IMMEDIATE`, through the `enable_sqlite_explicit_begin` setup the
-store requires of its engine), which stands in for the row locks.
+Row locks only. A write of a partition's events, an ingest or a forget,
+locks the partition's row first: under `FOR NO KEY UPDATE` when it names
+several events, so such writes take turns, and under `FOR KEY SHARE`
+otherwise, which no other write's lock blocks. The purge takes `FOR UPDATE`
+on the same row before any row it deletes, so it takes turns with every
+such write and with the partition's other purges. Every other statement
+locks one row at most, or skips the rows it would wait for. No table-level
+lock, no DDL, and no lock upgrade anywhere in the store, and no two of its
+transactions wait on each other in a cycle; the transactions' kinds, and
+why, are in [ingest and deletion](event_memory_ingest_and_deletion.md#why-it-is-safe).
+On SQLite, which drops locking clauses, every write transaction of the
+store takes the database's write lock at BEGIN (`BEGIN IMMEDIATE`, through
+the `enable_sqlite_explicit_begin` setup the store requires of its engine),
+which stands in for the row locks.
 
-The order of `delete_segments`'s row locks is the order in which its
-statements reach PostgreSQL. PostgreSQL documents its part: it runs a
-session's statements in the order received, each to completion, and a
-`DELETE` locks the row it deletes. The client's part has no documented
-guarantee. The store hands SQLAlchemy the statement once with the
-parameter sets in key order, SQLAlchemy hands them to the driver, and each
-keeps the list's order without stating that it does. A client that sent
-them in another order would let two deletions of overlapping segments
-deadlock, which PostgreSQL ends by failing one of them, and the store's
-test of concurrent overlapping deletions fails on such a client. Sending
-each statement in its own round trip would rest on documented behavior
-alone, and was not chosen for its cost: 19 ms against 2.5 for 100 segments
-and 166 against 10 for 1,000, measured on a local PostgreSQL 18.6 with a
-0.34 ms round trip.
+A forget and a purge of one partition lock its rows in different orders:
+the forget locks its events and, by cascade, their segments, and the purge
+deletes a key range of segments, then of events, in one statement each,
+whose rows PostgreSQL locks in the order its plan reads them. Run at once,
+each can hold a row the other waits for. Their locks on the partition's row
+conflict, so each waits for the other to finish before it locks any other
+row, and neither depends on the other's order. A forget whose partition has
+no row, the partition having been dropped, deletes nothing and leaves its
+events to the purge, which has no row to lock either. Measured on
+PostgreSQL 18 in a forced race, a purge of a 2,000-segment partition
+against deletions of its segments 100 at a time: without the deletions'
+lock on the partition's row, a purge or a deletion failed with a deadlock
+in 14 of 20 rounds; with it, in none of 20.
 
 ### Lookups by key
 
 A statement that reads a partition's rows for a list of keys (seed segments
-by UUID, segments by event UUID, links by segment UUID or by derivative
-UUID) costs in proportion to the number of keys on PostgreSQL, whatever the
+by UUID, events by UUID, segments by event UUID, derivatives by segment UUID
+or by UUID, indexing jobs by segment UUID) costs in proportion to the number of keys on PostgreSQL, whatever the
 partition's size, with one exception given below. It is one statement: the
 keys are one array parameter,
 and each joins a `LATERAL` subquery selecting that key's rows, so the index
 is searched once per key, as an `IN` list searches it under a plan built
 for the partition. The subquery's `OFFSET 0` keeps the planner from merging
 it into the statement; it is a constant, which PostgreSQL plans no node
-for. `delete_segments` runs one `DELETE` per segment on every dialect.
+for. A forget deletes its events, and an ingest its indexing jobs, one
+`DELETE` per key on every dialect, each on a row the transaction already
+locked.
 
 Given the keys as one `IN` list, PostgreSQL chooses between an index lookup
 per key and one scan of the partition's whole range of an index led by the
@@ -197,7 +214,7 @@ Measured on PostgreSQL 18.6 (0.6 to 6 million rows, statistics from
   each, the generic plan for the segments of 40 events read 100,748 blocks
   in 61 ms; the statement above read 280 blocks in 0.09 ms, as the `IN`
   list did under a plan built for the tenant. The seed read did the same
-  (101,471 blocks in 45 ms against 160 in 0.06 ms), and the link reads read
+  (101,471 blocks in 45 ms against 160 in 0.06 ms), and the reads of derivatives read
   a tenant whole in a like distribution (about 100,700 blocks).
 - With one 1,000,000-segment tenant among 20,000 tenants of 48, the generic
   plan read 14,713 blocks against 20 for the segments of 5 events, and
@@ -227,15 +244,14 @@ is one row, and a scan of the partition's range of any index led by the
 partition UUID is then priced the same as the lookup. The planner may
 choose the scan, which reads the partition's whole range for each key,
 where the `IN` list reads it once. A statement that names one key outright
-is priced the same way, and each `DELETE` of `delete_segments` is such a
-statement. The estimate is that low where almost every partition holds one
+is priced the same way, and each per-key `DELETE` is such a statement. The estimate is that low where almost every partition holds one
 row. Measured on PostgreSQL 18.6 under generic plans, with one
 10,000-segment partition among 1,000,000 partitions of one segment each (an
 estimate of 1.3 to 1.4 rows per partition):
 
 - The seed read of 20 segments read 202,060 blocks against 10,103 for the
-  `IN` list, the link read for 20 derivative UUIDs 199,720 against 9,986,
-  and the deletion of 20 segments 202,119. The reads by event UUID and by
+  `IN` list, the derivative read for 20 UUIDs 199,720 against 9,986,
+  and a per-key deletion of 20 segments 202,119. The reads by event UUID and by
   segment UUID kept their lookups. PostgreSQL 16.15 read as many blocks in
   the first three.
 - With the estimate set to 1.4 rows per partition, the lookup of one
@@ -324,9 +340,10 @@ requirement excludes.
   the reference practice for SQLite foreign keys (SQLAlchemy's dialect
   docs, Django's and Rails' adapters); a listener added later by the store
   would miss connections already in the pool. An engine without the pragma
-  leaves link rows that outlive their segments, and nothing reclaims them:
-  the purge relies on the same cascade.
-- Replication and sharding: three ordinary tables. Logical replication
+  leaves a forgotten event's segments in place, and readable, and the
+  purge leaves derivatives and indexing jobs behind, which nothing
+  reclaims.
+- Replication and sharding: ordinary tables. Logical replication
   covers new tenants automatically (they are rows, not relations), and
   moving a tenant's rows between nodes is an indexed row copy: they keep
   the partition UUID its registry holds.

@@ -374,6 +374,31 @@ class SQLAlchemyPartitionRegistry(PartitionRegistry):
         return row.partition_uuid
 
     @override
+    async def _resolve_uuid(self, partition_uuid: UUID) -> str | None:
+        async with self._engine.connect() as connection:
+            row = (
+                await connection.execute(
+                    select(
+                        PartitionRow.partition_name,
+                        PartitionRow.live,
+                        PartitionRow.registered_at,
+                    ).where(
+                        PartitionRow.partition_namespace == self._partition_namespace,
+                        PartitionRow.partition_uuid == partition_uuid,
+                    )
+                )
+            ).one_or_none()
+        if row is None:
+            return None
+        if not row.live:
+            raise PartitionPendingError(
+                self._partition_namespace,
+                row.partition_name,
+                ensure_tz_aware(row.registered_at),
+            )
+        return row.partition_name
+
+    @override
     def _registration(self, partition_name: str, partition_uuid: UUID) -> Registration:
         return _SQLAlchemyRegistration(
             partition_name=partition_name,

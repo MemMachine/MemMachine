@@ -6,6 +6,7 @@ from uuid import UUID, uuid4
 
 import pytest
 import pytest_asyncio
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from memmachine_server.common.metrics_factory import MetricsFactory
@@ -34,8 +35,10 @@ from memmachine_server.episodic_memory.event_memory.event_memory import (
     EventMemoryPartition,
 )
 from memmachine_server.episodic_memory.event_memory.segment_store.sqlalchemy_segment_store import (
+    EventRow,
     SQLAlchemySegmentStore,
     SQLAlchemySegmentStoreParams,
+    TombstoneRow,
 )
 from memmachine_server.episodic_memory.event_memory.segmenter.text_segmenter import (
     TextSegmenter,
@@ -140,6 +143,37 @@ def _partition_uuid(partition: EventMemoryPartition) -> UUID:
     return partition._registration.partition_uuid
 
 
+async def _holds_event(
+    segment_store: SQLAlchemySegmentStore, partition_uuid: UUID, event_uuid: UUID
+) -> bool:
+    """Whether the segment store holds the event under the partition's UUID."""
+    async with segment_store._engine.connect() as connection:
+        row = (
+            await connection.execute(
+                select(EventRow.uuid).where(
+                    EventRow.partition_uuid == partition_uuid,
+                    EventRow.uuid == event_uuid,
+                )
+            )
+        ).first()
+    return row is not None
+
+
+async def _tombstone_count(
+    segment_store: SQLAlchemySegmentStore, partition_uuid: UUID
+) -> int:
+    async with segment_store._engine.connect() as connection:
+        return len(
+            (
+                await connection.execute(
+                    select(TombstoneRow.segment_uuid).where(
+                        TombstoneRow.partition_uuid == partition_uuid
+                    )
+                )
+            ).all()
+        )
+
+
 @pytest.mark.asyncio
 async def test_a_created_partition_is_gotten_by_its_name(
     event_memory: EventMemory,
@@ -156,9 +190,8 @@ async def test_a_created_partition_is_gotten_by_its_name(
     assert gotten is not None
     assert _partition_uuid(gotten) == _partition_uuid(created)
     vector_store.create_partition.assert_awaited_once_with(_partition_uuid(created))
-    segments = await segment_store.get_partition(_partition_uuid(created))
-    assert segments is not None
-    assert await segments.get_segment_uuids_by_event_uuids([event.uuid])
+    assert await segment_store.get_partition(_partition_uuid(created)) is not None
+    assert await _holds_event(segment_store, _partition_uuid(created), event.uuid)
 
 
 @pytest.mark.asyncio
@@ -236,14 +269,17 @@ async def test_a_deleted_partitions_handle_refuses_every_operation(
     with pytest.raises(PartitionDeletedError):
         await partition.encode_events([too_late])
     # The refused encode wrote nothing.
-    segments = await segment_store.get_partition(_partition_uuid(partition))
-    assert segments is not None
-    assert await segments.get_segment_uuids_by_event_uuids([too_late.uuid]) == {}
+    assert not await _holds_event(
+        segment_store, _partition_uuid(partition), too_late.uuid
+    )
     assert vector_partition.records == vector_records
     with pytest.raises(PartitionDeletedError):
         await partition.query("milk")
     with pytest.raises(PartitionDeletedError):
         await partition.forget_events([event.uuid])
+    # The refused forget wrote nothing.
+    assert await _holds_event(segment_store, _partition_uuid(partition), event.uuid)
+    assert await _tombstone_count(segment_store, _partition_uuid(partition)) == 0
     # An operation with nothing to write or delete is checked too.
     with pytest.raises(PartitionDeletedError):
         await partition.encode_events([])
@@ -266,24 +302,54 @@ async def test_an_encode_checks_its_events_before_its_partition(
 
 
 @pytest.mark.asyncio
-async def test_an_encode_that_outlives_its_partition_raises(
+async def test_an_encode_in_flight_when_its_partition_is_deleted_returns_and_the_purge_reclaims_its_writes(
     event_memory: EventMemory,
+    segment_store: SQLAlchemySegmentStore,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The check after the writes reports a partition deleted during them."""
     partition = await _created(event_memory)
-    add_segments = partition._segment_store_partition.add_segments
+    add_event_segments = partition._segment_store_partition.add_event_segments
 
-    async def deleted_meanwhile(segments_to_derivative_uuids) -> None:
-        await add_segments(segments_to_derivative_uuids)
+    async def deleted_meanwhile(*args, **kwargs) -> None:
+        await add_event_segments(*args, **kwargs)
         await event_memory.delete_partition(NAME)
 
     monkeypatch.setattr(
-        partition._segment_store_partition, "add_segments", deleted_meanwhile
+        partition._segment_store_partition, "add_event_segments", deleted_meanwhile
     )
-    with pytest.raises(PartitionDeletedError) as ended:
-        await partition.encode_events([_event("remember the milk")])
-    assert ended.value.partition_uuid == _partition_uuid(partition)
+    event = _event("remember the milk")
+
+    await partition.encode_events([event])
+
+    assert await _holds_event(segment_store, _partition_uuid(partition), event.uuid)
+    await _purge(event_memory)
+    assert not await _holds_event(segment_store, _partition_uuid(partition), event.uuid)
+
+
+@pytest.mark.asyncio
+async def test_a_forget_in_flight_when_its_partition_is_deleted_returns_and_the_purge_reclaims_its_tombstones(
+    event_memory: EventMemory,
+    segment_store: SQLAlchemySegmentStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    partition = await _created(event_memory)
+    event = _event("remember the milk")
+    await partition.encode_events([event])
+    delete_event_segments = partition._segment_store_partition.delete_event_segments
+
+    async def deleted_meanwhile(event_uuids) -> None:
+        await delete_event_segments(event_uuids)
+        await event_memory.delete_partition(NAME)
+
+    monkeypatch.setattr(
+        partition._segment_store_partition, "delete_event_segments", deleted_meanwhile
+    )
+
+    await partition.forget_events([event.uuid])
+
+    assert await _tombstone_count(segment_store, _partition_uuid(partition)) > 0
+    await _purge(event_memory)
+    assert await _tombstone_count(segment_store, _partition_uuid(partition)) == 0
 
 
 @pytest.mark.asyncio
@@ -299,9 +365,8 @@ async def test_a_name_created_again_names_a_new_partition_that_starts_empty(
     new = await _created(event_memory)
 
     assert _partition_uuid(new) != _partition_uuid(old)
-    segments = await segment_store.get_partition(_partition_uuid(new))
-    assert segments is not None
-    assert await segments.get_segment_uuids_by_event_uuids([event.uuid]) == {}
+    assert await segment_store.get_partition(_partition_uuid(new)) is not None
+    assert not await _holds_event(segment_store, _partition_uuid(new), event.uuid)
 
 
 @pytest.mark.asyncio
@@ -311,7 +376,8 @@ async def test_the_purge_round_reclaims_a_deleted_partition_from_every_store(
     vector_store: NonCallableMagicMock,
 ) -> None:
     deleted = await _created(event_memory)
-    await deleted.encode_events([_event("remember the milk")])
+    deleted_event = _event("remember the milk")
+    await deleted.encode_events([deleted_event])
     await event_memory.delete_partition(NAME)
     kept = await _created(event_memory)
     kept_event = _event("buy bread")
@@ -322,6 +388,8 @@ async def test_the_purge_round_reclaims_a_deleted_partition_from_every_store(
     assert await segment_store.get_partition(_partition_uuid(deleted)) is None
     vector_store.purge_partition.assert_any_await(_partition_uuid(deleted))
     vector_store.drop_partition.assert_awaited_once_with(_partition_uuid(deleted))
-    segments = await segment_store.get_partition(_partition_uuid(kept))
-    assert segments is not None
-    assert await segments.get_segment_uuids_by_event_uuids([kept_event.uuid])
+    assert not await _holds_event(
+        segment_store, _partition_uuid(deleted), deleted_event.uuid
+    )
+    assert await segment_store.get_partition(_partition_uuid(kept)) is not None
+    assert await _holds_event(segment_store, _partition_uuid(kept), kept_event.uuid)

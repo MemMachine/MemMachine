@@ -48,9 +48,9 @@ configured; semantic memory fixes it in its code.
   empty when it finds nothing. A round that lists records an earlier round
   deleted, before the deletion is reflected, deletes them again: a repeated
   round, never a wrong result.
-- **The retention decides nothing about validity.** A stale write is
-  reported by its owner's check after it; the retention only has to outlast
-  any write in flight. A write that lands after its tombstone is gone stays
+- **The retention decides nothing about validity.** An operation begun
+  after the deletion is refused by its owner's check before it; the
+  retention only has to outlast any write in flight. A write that lands after its tombstone is gone stays
   in a deleted partition no handle reads: leaked storage, never a wrong
   result.
 - **The configuration enforces a floor of 10 × the vector store's

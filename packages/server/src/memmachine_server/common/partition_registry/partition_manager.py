@@ -115,6 +115,29 @@ class PartitionManager:
         async with self._tracker("resolve_partition"):
             return await self._partition_registry.resolve(partition_name)
 
+    async def resolve_partition_uuid(self, partition_uuid: UUID) -> Registration | None:
+        """
+        Resolve a partition UUID to the live partition carrying it.
+
+        One read of the registry decides the outcome. The UUID of a deleted
+        partition resolves to None, whether or not a partition was registered
+        under its name since.
+
+        Args:
+            partition_uuid (UUID): The partition's UUID.
+
+        Returns:
+            Registration | None:
+                The live partition's registration, or None when no live
+                partition carries the UUID.
+
+        Raises:
+            PartitionPendingError:
+                If the partition carrying the UUID is pending.
+        """
+        async with self._tracker("resolve_partition_uuid"):
+            return await self._partition_registry.resolve_uuid(partition_uuid)
+
     async def delete_partition(self, partition_name: str) -> None:
         """
         Delete the partition registered under a name, pending or live.
