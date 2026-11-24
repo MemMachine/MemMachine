@@ -33,11 +33,12 @@ under an existing name.
 
 Every storage interface has `prepare`: it creates the store's missing
 durable resources, runs before `startup`, while no other process uses the
-store, and changes nothing when run again. It leaves what exists as it is,
-except that it converts session tables and Neo4j semantic memory data of an
-older shape and runs pgvector semantic storage's Alembic chain; a database
-whose other tables an earlier release created in another shape is not
-brought up to date. `startup` creates nothing: it opens the store on what
+store, and changes nothing when run again. It promises nothing more. Some
+stores' creation code does more: it converts session tables and Neo4j
+semantic memory data of an older shape, and pgvector semantic storage's
+Alembic chain upgrades its tables. Nothing relies on that, and a database
+whose tables an earlier release created in another shape is recreated.
+`startup` creates nothing: it opens the store on what
 `prepare` created, and does what serving needs beyond schema, such as
 loading a Milvus collection or replaying a SQLite vector store's pending
 operations.
