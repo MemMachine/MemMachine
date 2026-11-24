@@ -26,10 +26,10 @@ class SemanticStorage(ABC):
     @abstractmethod
     async def prepare(self) -> None:
         """
-        Create the storage's missing durable resources.
+        Create the storage's durable resources, starting from none.
 
         The caller runs it before `startup`, while no other process uses the
-        storage. Running it again changes nothing.
+        storage. Run again on what it created, it changes nothing.
         """
         raise NotImplementedError
 

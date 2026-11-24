@@ -68,7 +68,7 @@ class CommonResourceManager(Protocol):
         vector_store_name: str,
         store_schema: VectorStoreSchema,
     ) -> None:
-        """Create the missing durable resources of the store of one name on a configured vector store."""
+        """Prepare the store of one name on a configured vector store."""
         raise NotImplementedError
 
     async def get_segment_store(self, name: str) -> SegmentStore:
@@ -76,7 +76,7 @@ class CommonResourceManager(Protocol):
         raise NotImplementedError
 
     async def prepare_segment_store(self, name: str) -> None:
-        """Create the missing durable resources of the segment store by name."""
+        """Prepare the segment store of the given name."""
         raise NotImplementedError
 
     async def get_partition_registry(

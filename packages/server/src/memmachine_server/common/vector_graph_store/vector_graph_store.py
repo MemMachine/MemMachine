@@ -287,10 +287,10 @@ class VectorGraphStore(ABC):
     @abstractmethod
     async def prepare(self) -> None:
         """
-        Create the store's missing durable resources.
+        Create the store's durable resources, starting from none.
 
         The caller runs it before the store's first use, while no other process uses the
-        store. Running it again changes nothing.
+        store. Run again on what it created, it changes nothing.
         """
         raise NotImplementedError
 

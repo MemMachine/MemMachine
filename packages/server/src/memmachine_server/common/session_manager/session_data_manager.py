@@ -20,10 +20,10 @@ class SessionDataManager(ABC):
     @abstractmethod
     async def prepare(self) -> None:
         """
-        Create the manager's missing durable resources.
+        Create the manager's durable resources, starting from none.
 
         The caller runs it before the manager serves, while no other process
-        uses the manager. Running it again changes nothing.
+        uses the manager. Run again on what it created, it changes nothing.
         """
         raise NotImplementedError
 

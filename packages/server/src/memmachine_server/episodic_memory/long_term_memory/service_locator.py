@@ -272,7 +272,7 @@ async def prepare_event_memory_storage(
     resource_manager: InstanceOf[CommonResourceManager],
 ) -> None:
     """
-    Create the missing durable resources of the deployment's event memory stores and partition registry.
+    Prepare the deployment's event memory stores and partition registry.
 
     Does nothing when the deployment configures no event memory.
     """

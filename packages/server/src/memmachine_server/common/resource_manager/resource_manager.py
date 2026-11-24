@@ -156,7 +156,7 @@ class ResourceManagerImpl:
 
     async def prepare(self) -> None:
         """
-        Create the missing durable resources of every store the configuration names.
+        Prepare every store the configuration names.
 
         Run it with no server using the configured databases, before one
         starts. Each store is prepared without being started, except the
@@ -228,7 +228,7 @@ class ResourceManagerImpl:
         vector_store_name: str,
         store_schema: VectorStoreSchema,
     ) -> None:
-        """Create the missing durable resources of the store of one name on a configured vector store, without starting it."""
+        """Prepare the store of one name on a configured vector store, without starting it."""
         await self._database_manager.prepare_vector_store(
             vector_store_id,
             vector_store_name=vector_store_name,
@@ -246,7 +246,7 @@ class ResourceManagerImpl:
         return self._segment_stores[name]
 
     async def prepare_segment_store(self, name: str) -> None:
-        """Create the missing durable resources of a segment store, without starting it."""
+        """Prepare a segment store, without starting it."""
         await (await self._build_segment_store(name)).prepare()
 
     async def _build_segment_store(self, name: str) -> SegmentStore:

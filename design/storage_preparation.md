@@ -31,17 +31,16 @@ under an existing name.
 
 ## The store contract
 
-Every storage interface has `prepare`: it creates the store's missing
-durable resources, runs before `startup`, while no other process uses the
-store, and changes nothing when run again. It promises nothing more. Some
-stores' creation code does more: it converts session tables and Neo4j
-semantic memory data of an older shape, and pgvector semantic storage's
-Alembic chain upgrades its tables. Nothing relies on that, and a database
-whose tables an earlier release created in another shape is recreated.
-`startup` creates nothing: it opens the store on what
-`prepare` created, and does what serving needs beyond schema, such as
-loading a Milvus collection or replaying a SQLite vector store's pending
-operations.
+Every storage interface has `prepare`. On a store with none of its durable
+resources, it creates what the store needs; run again on what it created, it
+changes nothing. It runs before `startup`, while no other process uses the
+store, and promises nothing for any other state. Some stores' creation code
+does more, such as converting session tables and Neo4j semantic memory data
+of an older shape or upgrading pgvector semantic storage's tables, but
+nothing relies on that, and a database an earlier release created is
+recreated. `startup` creates nothing: it opens the store on what `prepare`
+created, and does what serving needs beyond schema, such as loading a Milvus
+collection or replaying a SQLite vector store's pending operations.
 
 ## What `prepare` covers
 
