@@ -481,37 +481,36 @@ that partition is deleted, every operation on the handle raises
 `PartitionDeletedError`, and a partition created again under the same name is
 a new partition the old handle cannot reach.
 
-The owner fences each of its operations with the partition's registration:
-an operation that writes checks `require_current` before and after it, one
-that reads checks before it, and one that deletes checks after it. For event
-memory, an ingest writes, a query reads, and a forget deletes.
+The owner checks the partition's registration once before each operation
+that reads or writes the partition, and not after it. For event memory, an
+ingest, a query, and a forget each check `require_current`, and its
+background work checks the partition of each indexing job and tombstone it
+claims with `resolve_partition_uuid`.
 
-- The check before an operation runs once its inputs are validated; an
-  operation with nothing to send (no records, no query vectors) checks too.
-- The check after a write makes a write that completed to a partition deleted
-  meanwhile raise instead of reporting success.
-- A delete checks once, after it runs: it adds nothing a purge must reclaim,
-  and a stale handle's delete reaches only its own partition.
+- The check runs once the operation's inputs are validated; an operation
+  with nothing to send (no records, no query vectors, no events) checks too.
+- A write checks after the work it does before writing, such as segmenting,
+  deriving, and embedding an encode's events, so only its store calls run
+  between the check and the requests they send.
+- An operation in flight when a deletion commits overlaps it, and may be
+  ordered before it: a read returns a snapshot from before the deletion,
+  the answer it would have given had it run a moment earlier, and a write
+  lands in the partition, where the purge reclaims it. A check after the
+  operation could report the deletion, but could not keep the write out of
+  the partition.
 - A handle reaches the registry through its registration alone.
-- A read is not checked afterwards. A deleted partition's records stay until
-  a purge round claims its tombstone, so a read in flight when the deletion
-  commits returns a snapshot from before it, never a state halfway through a
-  deletion: the answer it would have given had it run a moment earlier.
 - Stores, SQL ones included, check nothing themselves. No lock spans a
   store's call or transaction, on the registry or in a process.
 
-A write can still land in a deleted partition: between its two checks, or
-after its process died before the second check. No store refuses it and no
-handle reads it, so the purge reclaims it, which is why a tombstone waits out
-a retention before its purge starts. Every write lands within a bound, well
-under the retention, of the check before it. The bound is the operation's own
-work before it writes, such as segmenting, deriving, and embedding an
-encode's events, plus the client's bound on the write, for SQL and remote
-stores alike: a remote store's request timeout and, on PostgreSQL, the
-driver's `command_timeout`. Checking before that work saves it for an
-operation on a deleted partition. A process paused, or an event loop
-stalled, between its check and its send or commit is outside this design,
-like a paused remote writer.
+A write can still land in a deleted partition when the deletion commits
+after the write's check. No store refuses it and no handle reads it, so the
+purge reclaims it, which is why a tombstone waits out a retention before its
+purge starts. Every write lands within a bound, well under the retention, of
+the check before it: the clients' bounds on its store calls, for SQL and
+remote stores alike, a remote store's request timeout and, on PostgreSQL,
+the driver's `command_timeout`. A process paused, or an event loop stalled,
+between its check and its send or commit is outside this design, like a
+paused remote writer.
 
 ### Deletion and purge
 
@@ -559,7 +558,7 @@ retention is fixed in its code.
   segment store and the vector store, and builds its partition manager over
   both. Each store holds a tenant's records under the partition's UUID. The
   segment store keeps one row per partition, with its payload
-  codec configuration and, during its purge, its cursor, and no name.
+  codec configuration and, during its purge, its cursors, and no name.
 - Event memory's `create_partition`, `get_partition`, and `delete_partition`
   address its partitions by name through its manager. `get_partition`
   resolves the name and gets each store's handle on the registration's UUID;
@@ -567,6 +566,12 @@ retention is fixed in its code.
   purge round drops a deleted partition from both stores and one store's drop
   may land before the other's. Event memory's handle on the partition pairs
   the two stores' handles with the registration that fences it.
+- Event memory's background work claims indexing jobs and tombstones from
+  the segment store, which keeps them under their partition's UUID (see
+  [ingest and deletion](event_memory_ingest_and_deletion.md)), and checks
+  each claim's partition by its UUID before it writes or deletes: a deleted
+  partition's indexing job ends without its write, and its tombstone's
+  deletes are left to the partition's purge.
 - The service locator builds event memory over the deployment's two stores,
   gives the resource manager the same two stores for the namespace's purge
   rounds, and gets a session's partition, creating it when no partition holds
@@ -606,9 +611,9 @@ differs where a store is remote:
 
 - deletion is `DELETE ... RETURNING` then the queue insert, since there is no
   write fence to pin the row with;
-- a write is fenced by a registry lookup before and after it (a read by one
-  before, a delete by one after), not by a row lock held across the write,
-  since the write is not in the registry's database;
+- a write is fenced by a registry lookup before it, as a read is, not by a
+  row lock held across the write, since the write is not in the registry's
+  database;
 - the purge is one tombstone per call, each backend deleting the way it
   measured best;
 - the purge claim is a lease, committed before the round, rather than the
@@ -651,8 +656,8 @@ differs where a store is remote:
   round that drops proves the partition gone from every store.
 - **The owner fences each operation by its registration.** One liveness and
   late-write mechanism serves every store, the registry can live in a database
-  apart from the stores', and an operation pays one check before and one after
-  its writes, whatever number of stores it calls.
+  apart from the stores', and an operation pays one check before it, whatever
+  number of stores it calls.
 - **Deletion is by name.** Callers delete partitions by name, and the name is
   resolved to its partition's UUID inside the deleting transaction. Keying it
   by UUID alone would make every caller resolve the name first, in a
@@ -735,14 +740,19 @@ differs where a store is remote:
   store's purge would delete its records and then, once none remain, its
   own storage. One call then does two kinds of work, and one store's own
   storage is removed while another store's purge may still find records.
+- **A check after each write as well.** A write that completed while the
+  deletion committed would raise instead of reporting success. The write
+  has landed in the partition either way, and the purge reclaims it; an
+  operation that overlaps a deletion may be ordered before it. Each write
+  would pay a second read of the registry.
 - **An in-transaction fence in the SQL stores.** A SQL store would check
   liveness in the same statement as each read and hold the partition's
   catalog row under a shared lock while it writes, so a deletion would wait
   out its writes and no SQL write would land late. With the registry's
   tables in the same database, the store would do so through a predicate
-  the registry supplies. It saves the check after a write and the late SQL
-  write, at the cost of a second liveness mechanism and of placing the
-  registry in that database.
+  the registry supplies. It keeps a SQL write from landing late, at the cost
+  of a second liveness mechanism and of placing the registry in that
+  database.
 - **Storage first, registry last**, with no pending state. Storage named by a
   partition's UUID cannot be made before the registry mints the UUID, so a
   partition's own storage is created after its reservation, and the storage
