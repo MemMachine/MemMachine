@@ -16,9 +16,9 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v8.1.0
+        uses: astral-sh/setup-uv@v10.3.3
         with:
-          version: "0.11.15"
+          prune-cache: true
 
       - name: Run security audit
         id: audit
@@ -46,8 +46,8 @@ jobs:
             # `affected.ranges.events`), aborting the entire audit. Tracked in
             # this repo (see issue linked from PR description) and upstream at
             # https://github.com/astral-sh/uv/issues/19492 (fix PR #19496).
-            # Remove this branch once the `version:` input above is bumped to
-            # a uv release containing the upstream fix.
+            # Remove this branch once the uv release setup-uv installs
+            # contains the upstream fix.
             if grep -qF 'error decoding response body' "$audit_stderr"; then
               echo "::warning title=uv audit skipped::uv audit could not decode the OSV response (known upstream bug astral-sh/uv#19492). Exiting successfully without scanning; see the in-repo tracking issue for details."
               {
@@ -57,7 +57,7 @@ jobs:
                 echo
                 echo "This is the known upstream bug [astral-sh/uv#19492](https://github.com/astral-sh/uv/issues/19492): an OSV record contains an empty \`{}\` in \`affected.ranges.events\`, which uv's deserializer rejects."
                 echo
-                echo "**No vulnerability scanning ran in this workflow execution.** When the upstream fix ([astral-sh/uv#19496](https://github.com/astral-sh/uv/pull/19496) or equivalent) is released, bump the \`setup-uv\` \`version:\` input in \`.github/workflows/security-audit.yml\` and remove this skip branch."
+                echo "**No vulnerability scanning ran in this workflow execution.** When the upstream fix ([astral-sh/uv#19496](https://github.com/astral-sh/uv/pull/19496) or equivalent) is released, remove this skip branch from \`.github/workflows/security-audit.yml\`."
               } >> "$GITHUB_STEP_SUMMARY"
               echo "has_vulnerabilities=false" >> "$GITHUB_OUTPUT"
               exit 0
