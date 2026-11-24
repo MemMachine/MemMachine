@@ -29,20 +29,25 @@ that excludes.
 A partition's data is spread over several components: its record, its
 episodes, short-term memory's summary, and a long-term memory in event
 memory or in declarative memory. When each component holds the data under
-the partition's name, and the partition's lifecycle is arbitrated in one
-process's memory, a creation or a deletion that stops part way is visible:
+the partition's name, a creation or a deletion that stops part way is
+visible, whatever sequences its steps:
 
-- **Deletion is a sequence of steps that one process remembers.** A process
-  that stops part way leaves the partition half deleted, and the rest of the
-  work is recorded nowhere another process can claim it.
+- **A partition being deleted is a third state.** Its deletion is a mark on
+  its record and then steps that empty each component, so it is neither
+  present nor absent until the last step. Every request has to answer for
+  it, and a creation under its name waits, is refused, or fails for as long
+  as any step keeps failing.
+- **A lease on the deletion does not confine it.** A lease keeps two
+  processes from running the steps at once. The steps delete by name, and
+  no component checks the lease, so a deleter that outlives its lease
+  deletes whatever holds the name by then.
 - **A name created again inherits what a deletion left behind.** Data stored
   under the name, in any component the deletion did not reach, belongs to
   whichever partition holds the name.
 - **A late write lands in the next partition.** A request that read its
   partition before the deletion and writes after it writes under the name.
-- **A partition being deleted is a third state.** It is neither present nor
-  absent, so every request has to answer for it, and a creation under its
-  name waits, is refused, or fails for as long as the deletion runs.
+- **A creation that stops leaves a partition every request fails on.** Its
+  record says it exists, and its long-term storage does not.
 
 ## Design
 
@@ -68,7 +73,11 @@ remove is invisible, and a partition manager's purge rounds remove it.
 - Event memory holds the event memory partition named by the key, and
   declarative memory holds the collections named by the key.
 - Each process's instance cache holds the partition's episodic memory
-  instance, so a partition created again under a name gets its own.
+  instance, and its episode count cache holds the partition's count, so a
+  partition created again under a name gets its own.
+- Semantic memory holds nothing under the key. Its sets are named by
+  organization, project, and tags, and its history and citations by episode
+  UUID (see [Semantic memory](#semantic-memory)).
 
 The API's listed episodes carry the key they are stored under as
 `session_key`.
@@ -175,8 +184,13 @@ its record waits for the purge like the rest of its data.
 ### Semantic memory
 
 Semantic memory names its sets by organization, project, and tags, and some
-sets span every project of an organization. It is not one of the stores,
-and its sets are shared by every partition created under a name. A
+sets span every project of an organization. It takes an organization and a
+project where every other component takes one key, and it keeps no record
+of the sets created under a project: a request reaches a set by building
+the set's id again from its own organization, project, and tags (#2004). A
+purge by UUID has nothing to find a partition's sets by. So semantic memory
+is not one of the stores, and its sets are shared by every partition
+created under a name. A
 partition's deletion deletes the features of the project's sets by name
 before it unregisters the name, while the name still names the partition
 being deleted: a deletion by name that ran after the name was free would
@@ -196,8 +210,12 @@ then event memory's have passed.
 ## Decisions
 
 - **One UUID for everything a partition owns, minted by the registry.** A
-  name created again starts empty in every component, and a late write
-  reaches only the partition it was meant for.
+  name created again starts empty in every component, and a late write or a
+  late purge reaches only the partition it was meant for. Outside the
+  registry, nothing a partition owns holds its name, so renaming a
+  partition rewrites no component's records, a store's naming rules meet
+  the UUID and never a caller's text, and what waits for a purge is held
+  without the name.
 - **The registry decides whether a partition exists.** A partition is
   pending, live, or absent in the registry, and a deleted partition is
   absent, so no request answers for a partition being deleted and a creation
@@ -220,10 +238,15 @@ then event memory's have passed.
   deleting states on the row and a job table for deletion. It is a second
   catalog and a second claim protocol beside the partition registry's, and
   it keeps the deleting state.
-- **A deletion queue in each process**, with a lease on each deletion and a
-  rescan of partitions marked deleted. Components are still addressed by
-  name, so an expired lease does not stop a stalled deleter from deleting
-  the next partition under the name.
+- **A deletion queue in each process**, with a mark on the partition's
+  record, a lease on each deletion, and a rescan for marked partitions. The
+  mark keeps the deleting state, and the name stays unusable until the last
+  step. The lease's contract is that whatever writes checks its fencing
+  token. Components are addressed by name and take no token, so an expired
+  lease does not stop a stalled deleter from deleting the next partition
+  under the name, and a token for every component to check changes each
+  one. A purge addressed by UUID is safe without a lease, and the
+  registry's claim on a tombstone keeps two purges apart.
 - **The delete request deleting the record**, so that a listing reads the
   records. The records would be a second source for which partitions exist.
 - **A creation replacing a partition left pending**, after a wait. How long
@@ -232,6 +255,10 @@ then event memory's have passed.
 - **The project's semantic sets deleted in the purge round, by name.** The
   round runs after the name is free, so it would delete the sets of a
   partition created under the name afterwards.
+- **The UUID as semantic memory's project.** Project-level sets would be
+  under the key. Set ids are returned by the API and would change at each
+  creation, and a purge still could not find them, since nothing records a
+  partition's sets.
 
 ## What this design leaves open
 
@@ -248,6 +275,8 @@ then event memory's have passed.
   and MemMachine writing to each memory in turn.
 - **What a pending partition answers to requests other than a creation**,
   and whether anything deletes one that no caller deletes.
+- **Renaming a partition.** The registry offers no rename, and semantic
+  sets, named by organization and project, would not follow one.
 - **What the partition is called** in the API and its documentation (#1812).
 
 ## Consequences
