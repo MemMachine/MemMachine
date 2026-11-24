@@ -1,6 +1,6 @@
 """Abstract interfaces for semantic storage implementations."""
 
-from abc import ABC, abstractmethod
+from abc import abstractmethod
 from collections.abc import AsyncIterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
@@ -11,6 +11,7 @@ import numpy as np
 from pydantic import InstanceOf
 
 from memmachine_server.common.filter.filter_parser import FilterExpr
+from memmachine_server.common.lifecycle import Lifecycle, Preparable
 from memmachine_server.semantic_memory.semantic_model import (
     FeatureIdT,
     SemanticFeature,
@@ -18,20 +19,10 @@ from memmachine_server.semantic_memory.semantic_model import (
 )
 
 
-class SemanticStorage(ABC):
+class SemanticStorage(Preparable, Lifecycle):
     """Base class for semantic storage backends."""
 
     backend_name: str | None = None
-
-    @abstractmethod
-    async def startup(self) -> None:
-        """Initialize the semantic storage connection."""
-        raise NotImplementedError
-
-    @abstractmethod
-    async def cleanup(self) -> None:
-        """Clean up semantic storage resources."""
-        raise NotImplementedError
 
     @abstractmethod
     async def delete_all(self) -> None:

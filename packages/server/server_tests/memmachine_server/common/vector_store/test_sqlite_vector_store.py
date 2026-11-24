@@ -113,9 +113,10 @@ async def store(tmp_path):
     enable_sqlite_explicit_begin(engine)
     enable_sqlite_foreign_keys(engine)
     vector_store = SQLiteVectorStore(_params(engine))
-    await vector_store.startup()
+    await vector_store.prepare()
+    await vector_store.start()
     yield vector_store
-    await vector_store.shutdown()
+    await vector_store.stop()
     await engine.dispose()
 
 
@@ -153,7 +154,8 @@ async def _store_with(store, vector_store_name: str, **overrides) -> SQLiteVecto
             store_schema=_schema(**overrides),
         )
     )
-    await other.startup()
+    await other.prepare()
+    await other.start()
     return other
 
 
@@ -209,7 +211,7 @@ class TestPartitionLifecycle:
         [result] = await partition.query(query_vectors=[record.vector], limit=5)
         assert [match.record_uuid for match in result.matches] == [record.uuid]
 
-        await store.shutdown()
+        await store.stop()
         await engine.dispose()
 
     @pytest.mark.asyncio
@@ -275,7 +277,7 @@ class TestPartitionLifecycle:
         assert list((tmp_path / "indexes").glob("*.idx")) == []
         await store.drop_partition(partition_uuid)
 
-        await store.shutdown()
+        await store.stop()
         await engine.dispose()
 
     @pytest.mark.asyncio
@@ -804,7 +806,7 @@ class TestPartitionIsolation:
 
         await _purge_and_drop(store, partition_a._partition_uuid)
         assert set(await _stored(partition_b)) == {r2.uuid}
-        await other.shutdown()
+        await other.stop()
 
     @pytest.mark.asyncio
     async def test_stores_of_two_names_keep_their_records_in_separate_storage(
@@ -824,7 +826,8 @@ class TestPartitionIsolation:
                 save_threshold=1,
             )
         )
-        await other.startup()
+        await other.prepare()
+        await other.start()
         partition_uuid = uuid4()
         await store.create_partition(partition_uuid)
         await other.create_partition(partition_uuid)
@@ -850,8 +853,8 @@ class TestPartitionIsolation:
         assert [match.record_uuid for match in result.matches] == [their_record.uuid]
         assert len(list(index_directory.glob("*.idx"))) == 1
 
-        await other.shutdown()
-        await store.shutdown()
+        await other.stop()
+        await store.stop()
         await engine.dispose()
 
     @pytest.mark.asyncio
@@ -895,7 +898,7 @@ class TestEuclideanMetric:
         # Euclidean: lower distance = better match; best match is first
         assert results[0].matches[0].score < results[0].matches[1].score
 
-        await euclidean.shutdown()
+        await euclidean.stop()
 
 
 # ── No-properties store ──
@@ -914,7 +917,7 @@ class TestNoProperties:
         results = await partition.query(query_vectors=[[1.0, 0.0]], limit=1)
         assert len(results[0].matches) == 1
 
-        await bare.shutdown()
+        await bare.stop()
 
 
 # ── USearch-specific: dot product metric ──
@@ -935,7 +938,7 @@ class TestDotProductMetric:
         results = await partition.query(query_vectors=[v1], limit=2)
         assert len(results[0].matches) == 2
 
-        await dot.shutdown()
+        await dot.stop()
 
 
 # ── Input validation ──
@@ -1056,7 +1059,7 @@ class TestScoreSemantics:
         assert scores[0] == pytest.approx(0.0, abs=0.01)
         assert scores[1] == pytest.approx(5.0, abs=0.01)
 
-        await euclidean.shutdown()
+        await euclidean.stop()
 
 
 # A query, and vectors that each metric ranks in its own order, with no two
@@ -1110,7 +1113,7 @@ class TestScoreThreshold:
         assert [match.record_uuid for match in past_edge.matches] == [
             match.record_uuid for match in ranked.matches[:2]
         ]
-        await edged.shutdown()
+        await edged.stop()
 
 
 # ── Upsert behavior ──
@@ -1201,7 +1204,7 @@ class TestConcurrentAsync:
         db_path = tmp_path / "test.db"
         creator, creator_engine = await _fresh_store(db_path, tmp_path)
         partition_uuid = (await _created(creator))._partition_uuid
-        await creator.shutdown()
+        await creator.stop()
         await creator_engine.dispose()
 
         # A restarted store, whose first get_partition calls load the saved index.
@@ -1215,7 +1218,7 @@ class TestConcurrentAsync:
         [result] = await second.query(query_vectors=[record.vector], limit=1)
         assert [match.record_uuid for match in result.matches] == [record.uuid]
 
-        await store.shutdown()
+        await store.stop()
         await engine.dispose()
 
 
@@ -1233,7 +1236,8 @@ async def _fresh_store(db_path, tmp_path, *, save_threshold=1000):
         save_threshold=save_threshold,
     )
     store = SQLiteVectorStore(params)
-    await store.startup()
+    await store.prepare()
+    await store.start()
     return store, engine
 
 
@@ -1270,7 +1274,7 @@ async def _unapplied_operation_counts(engine) -> dict[str, int]:
 
 
 class TestCrashRecovery:
-    """Tests for pending operations replay on startup."""
+    """Tests for the pending operations a store replays when it starts."""
 
     @pytest.mark.asyncio
     async def test_replay_upserts_after_crash(self, tmp_path):
@@ -1285,7 +1289,7 @@ class TestCrashRecovery:
         ]
         await partition.upsert(records=records)
 
-        # Simulate crash: dispose without shutdown (pending ops remain).
+        # Simulate crash: dispose without stopping (pending ops remain).
         await engine1.dispose()
 
         # Restart with fresh in-memory engines.
@@ -1297,7 +1301,7 @@ class TestCrashRecovery:
         )
         assert len(results[0].matches) == 2
 
-        await store2.shutdown()
+        await store2.stop()
         await engine2.dispose()
 
     @pytest.mark.asyncio
@@ -1318,8 +1322,9 @@ class TestCrashRecovery:
         await _set_all_pending_operations_unapplied(engine1)
         await engine1.dispose()
 
-        # Restart: replay should re-apply unapplied ops to the engine.
+        # Restart: replay re-applies the unapplied ops to the engine, and marks none.
         store2, engine2 = await _fresh_store(db_path, tmp_path)
+        assert await _unapplied_operation_counts(engine2) == {VECTOR_STORE_NAME: 2}
         partition_2 = await store2.get_partition(partition._partition_uuid)
 
         results = await partition_2.query(
@@ -1327,28 +1332,30 @@ class TestCrashRecovery:
         )
         assert len(results[0].matches) == 2
 
-        await store2.shutdown()
+        await store2.stop()
         await engine2.dispose()
 
     @pytest.mark.asyncio
     async def test_replay_applies_only_its_own_stores_operations(self, tmp_path):
-        """A store's startup replays its own partitions' operations, not another store's."""
+        """A store's start replays its own partitions' operations, not another store's."""
         db_path = tmp_path / "test.db"
         store1, engine1 = await _fresh_store(db_path, tmp_path)
         other = await _store_with(store1, "other_store")
+        partitions = {}
         for vector_store in (store1, other):
             partition = await _created(vector_store)
             await partition.upsert(
                 records=[_make_record(vector=_normalize([1.0, 0.0, 0.0]))]
             )
+            partitions[vector_store] = partition
 
         await _set_all_pending_operations_unapplied(engine1)
         await engine1.dispose()
 
         store2, engine2 = await _fresh_store(db_path, tmp_path)
-        assert await _unapplied_operation_counts(engine2) == {"other_store": 1}
+        assert set(store2._search_engines) == {partitions[store1]._partition_uuid}
 
-        await store2.shutdown()
+        await store2.stop()
         await engine2.dispose()
 
     @pytest.mark.asyncio
@@ -1376,7 +1383,7 @@ class TestCrashRecovery:
 
         assert r1.uuid not in await _stored(partition_2)
 
-        await store2.shutdown()
+        await store2.stop()
         await engine2.dispose()
 
     @pytest.mark.asyncio
@@ -1405,7 +1412,7 @@ class TestCrashRecovery:
 
         assert set(await _stored(partition_2)) == {r1.uuid, r3.uuid}
 
-        await store2.shutdown()
+        await store2.stop()
         await engine2.dispose()
 
     @pytest.mark.asyncio
@@ -1426,7 +1433,7 @@ class TestCrashRecovery:
         await partition.upsert(records=[r2])
         assert await _pending_operation_count(engine1) == 0
 
-        await store1.shutdown()
+        await store1.stop()
         await engine1.dispose()
 
     @pytest.mark.asyncio
@@ -1446,7 +1453,7 @@ class TestCrashRecovery:
         await _purge_and_drop(store1, partition._partition_uuid)
         assert await _pending_operation_count(engine1) == 0
 
-        await store1.shutdown()
+        await store1.stop()
         await engine1.dispose()
 
     @pytest.mark.asyncio
@@ -1458,13 +1465,13 @@ class TestCrashRecovery:
         enable_sqlite_foreign_keys(engine)
         store = SQLiteVectorStore(_params(engine))
 
-        with pytest.raises(RuntimeError, match="startup"):
+        with pytest.raises(RuntimeError, match="start"):
             await store.create_partition(uuid4())
 
-        with pytest.raises(RuntimeError, match="startup"):
+        with pytest.raises(RuntimeError, match="start"):
             await store.get_partition(uuid4())
 
-        with pytest.raises(RuntimeError, match="startup"):
+        with pytest.raises(RuntimeError, match="start"):
             await store.drop_partition(uuid4())
 
         await engine.dispose()
@@ -1499,7 +1506,7 @@ class TestIndexFileDurability:
 
         assert await _get_index_saved(engine, partition._partition_uuid) is False
 
-        await store.shutdown()
+        await store.stop()
         await engine.dispose()
 
     @pytest.mark.asyncio
@@ -1515,32 +1522,44 @@ class TestIndexFileDurability:
 
         assert await _get_index_saved(engine, partition._partition_uuid) is True
 
-        await store.shutdown()
+        await store.stop()
         await engine.dispose()
 
     @pytest.mark.asyncio
-    async def test_saved_flag_flips_on_clean_shutdown(self, tmp_path):
-        """Clean shutdown flips index_saved to True even below save_threshold."""
-        db_path = tmp_path / "test.db"
-        store, engine = await _fresh_store(db_path, tmp_path, save_threshold=1000)
-
-        partition = await _created(store)
-        await partition.upsert(
-            records=[_make_record(vector=_normalize([1.0, 0.0, 0.0]))]
-        )
-
-        # Below save_threshold, so _maybe_save_index has not flipped the flag yet.
-        assert await _get_index_saved(engine, partition._partition_uuid) is False
-
-        await store.shutdown()
-        assert await _get_index_saved(engine, partition._partition_uuid) is True
-
-        await engine.dispose()
-
-    @pytest.mark.asyncio
-    async def test_shutdown_closes_the_connections_a_filtered_query_opened(
+    async def test_a_stopped_stores_operations_are_served_after_it_starts_again(
         self, tmp_path
     ):
+        """Operations below save_threshold are replayed by the next start, not saved by stop."""
+        db_path = tmp_path / "test.db"
+        store1, engine1 = await _fresh_store(db_path, tmp_path, save_threshold=1000)
+
+        partition = await _created(store1)
+        await partition.upsert(
+            records=[
+                _make_record(vector=_normalize([1.0, 0.0, 0.0])),
+                _make_record(vector=_normalize([0.0, 1.0, 0.0])),
+            ]
+        )
+
+        await store1.stop()
+        assert await _get_index_saved(engine1, partition._partition_uuid) is False
+        assert not list((tmp_path / "indexes").glob("*.idx"))
+        assert await _pending_operation_count(engine1) == 2
+        await engine1.dispose()
+
+        store2, engine2 = await _fresh_store(db_path, tmp_path)
+        assert await _pending_operation_count(engine2) == 2
+        partition_2 = await store2.get_partition(partition._partition_uuid)
+        results = await partition_2.query(
+            query_vectors=[_normalize([1.0, 0.0, 0.0])], limit=10
+        )
+        assert len(results[0].matches) == 2
+
+        await store2.stop()
+        await engine2.dispose()
+
+    @pytest.mark.asyncio
+    async def test_stop_closes_the_connections_a_filtered_query_opened(self, tmp_path):
         db_path = tmp_path / "test.db"
         store, engine = await _fresh_store(db_path, tmp_path)
 
@@ -1557,7 +1576,7 @@ class TestIndexFileDurability:
         pool = store._sync_sqlalchemy_engine.pool
         assert pool.checkedin() == 1
 
-        await store.shutdown()
+        await store.stop()
         assert pool.checkedin() == 0
 
         await engine.dispose()
@@ -1566,13 +1585,14 @@ class TestIndexFileDurability:
     async def test_missing_file_when_saved_raises(self, tmp_path):
         """If the index has been saved, a missing file is loud, not silent."""
         db_path = tmp_path / "test.db"
-        store1, engine1 = await _fresh_store(db_path, tmp_path)
+        # A save threshold of 1 saves the index on the first upsert.
+        store1, engine1 = await _fresh_store(db_path, tmp_path, save_threshold=1)
 
         partition = await _created(store1)
         await partition.upsert(
             records=[_make_record(vector=_normalize([1.0, 0.0, 0.0]))]
         )
-        await store1.shutdown()
+        await store1.stop()
         await engine1.dispose()
 
         # Operator deletes the index file out from under us.
@@ -1590,20 +1610,21 @@ class TestIndexFileDurability:
         assert exc_info.value.partition_uuid == partition._partition_uuid
         assert exc_info.value.__cause__ is not None
 
-        await store2.shutdown()
+        await store2.stop()
         await engine2.dispose()
 
     @pytest.mark.asyncio
     async def test_corrupt_file_when_saved_raises(self, tmp_path):
         """If the index has been saved, a corrupt file is loud, not silent."""
         db_path = tmp_path / "test.db"
-        store1, engine1 = await _fresh_store(db_path, tmp_path)
+        # A save threshold of 1 saves the index on the first upsert.
+        store1, engine1 = await _fresh_store(db_path, tmp_path, save_threshold=1)
 
         partition = await _created(store1)
         await partition.upsert(
             records=[_make_record(vector=_normalize([1.0, 0.0, 0.0]))]
         )
-        await store1.shutdown()
+        await store1.stop()
         await engine1.dispose()
 
         index_dir = tmp_path / "indexes"
@@ -1618,7 +1639,7 @@ class TestIndexFileDurability:
         assert exc_info.value.partition_uuid == partition._partition_uuid
         assert exc_info.value.__cause__ is not None
 
-        await store2.shutdown()
+        await store2.stop()
         await engine2.dispose()
 
     @pytest.mark.asyncio
@@ -1635,7 +1656,7 @@ class TestIndexFileDurability:
             ]
         )
 
-        # Crash without shutdown: index_saved stays False, no file on disk.
+        # Crash without stopping: index_saved stays False, no file on disk.
         await engine1.dispose()
         assert not (tmp_path / "indexes").exists() or not list(
             (tmp_path / "indexes").glob("*.idx")
@@ -1649,7 +1670,7 @@ class TestIndexFileDurability:
         )
         assert len(results[0].matches) == 2
 
-        await store2.shutdown()
+        await store2.stop()
         await engine2.dispose()
 
 
@@ -1686,7 +1707,7 @@ class TestPartitionResources:
         assert await _table_names(engine) == baseline
         assert list((tmp_path / "indexes").glob("*.idx")) == []
 
-        await store.shutdown()
+        await store.stop()
         await engine.dispose()
 
     @pytest.mark.asyncio
@@ -1708,7 +1729,7 @@ class TestPartitionResources:
         ]
         for partition, record in zip(partitions, records, strict=True):
             await partition.upsert(records=[record])
-        await store1.shutdown()
+        await store1.stop()
         await engine1.dispose()
 
         store2, engine2 = await _fresh_store(db_path, tmp_path)
@@ -1718,7 +1739,7 @@ class TestPartitionResources:
             record.uuid for record in records
         }
 
-        await store2.shutdown()
+        await store2.stop()
         await engine2.dispose()
 
     @pytest.mark.asyncio
@@ -1761,7 +1782,8 @@ class TestPartitionResources:
             )
         )
         stores.append(store)
-        await store.startup()
+        await store.prepare()
+        await store.start()
         await store.create_partition(partition_uuid)
         partition = await store.get_partition(partition_uuid)
 
@@ -1773,7 +1795,7 @@ class TestPartitionResources:
 
         assert list((tmp_path / "indexes").glob("*.idx")) == []
 
-        await store.shutdown()
+        await store.stop()
         await engine.dispose()
 
 

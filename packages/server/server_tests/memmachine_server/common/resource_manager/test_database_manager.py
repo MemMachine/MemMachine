@@ -146,7 +146,7 @@ async def test_build_and_validate_sqlite(tmp_path):
     await builder.build_all(validate=True)
     # If no exception is raised, validation passed
     assert "sqlite1" in builder.sql_engines
-    await builder.close()
+    await builder.stop()
     assert "sqlite1" not in builder.sql_engines
 
 
@@ -196,6 +196,7 @@ async def test_neo4j_pool_lifecycle_kwargs():
         ),
         patch(
             "memmachine_server.common.resource_manager.database_manager.Neo4jVectorGraphStore",
+            **{"return_value.start": AsyncMock()},
         ),
     ):
         builder = DatabaseManager(conf)
@@ -229,7 +230,7 @@ async def test_sqlalchemy_pool_lifecycle_kwargs(tmp_path):
     ) as mock_create:
         builder = DatabaseManager(conf)
         await builder.async_get_sql_engine("db1")
-        await builder.close()
+        await builder.stop()
 
     call_kwargs = mock_create.call_args.kwargs
     assert call_kwargs["pool_timeout"] == 30
@@ -265,6 +266,7 @@ async def test_neo4j_pool_lifecycle_kwargs_none_omitted():
         ),
         patch(
             "memmachine_server.common.resource_manager.database_manager.Neo4jVectorGraphStore",
+            **{"return_value.start": AsyncMock()},
         ),
     ):
         builder = DatabaseManager(conf)
@@ -295,7 +297,7 @@ async def test_sqlalchemy_pool_lifecycle_kwargs_none_omitted(tmp_path):
     ) as mock_create:
         builder = DatabaseManager(conf)
         await builder.async_get_sql_engine("db1")
-        await builder.close()
+        await builder.stop()
 
     call_kwargs = mock_create.call_args.kwargs
     assert "pool_timeout" not in call_kwargs
@@ -354,7 +356,7 @@ async def test_qdrant_client_kwargs_forwarded(tmp_path):
             return_value=mock_client,
         ) as mock_cls,
     ):
-        mock_store_cls.return_value.startup = AsyncMock()
+        mock_store_cls.return_value.start = AsyncMock()
         builder = DatabaseManager(conf)
         await builder.async_get_qdrant_client("qdrant1")
 
@@ -389,7 +391,7 @@ async def test_qdrant_api_key_omitted_when_empty(tmp_path):
             return_value=mock_client,
         ) as mock_cls,
     ):
-        mock_store_cls.return_value.startup = AsyncMock()
+        mock_store_cls.return_value.start = AsyncMock()
         builder = DatabaseManager(conf)
         await builder.async_get_qdrant_client("qdrant1")
 
@@ -418,7 +420,7 @@ async def test_get_vector_store_builds_a_qdrant_store(tmp_path):
             return_value=mock_client,
         ),
     ):
-        mock_store_cls.return_value.startup = AsyncMock()
+        mock_store_cls.return_value.start = AsyncMock()
         builder = DatabaseManager(conf)
         await builder.get_vector_store("qdrant1", **_STORE)
 
@@ -432,7 +434,7 @@ async def test_get_vector_store_builds_a_qdrant_store(tmp_path):
     # keyword is not the property that matters - passing a factory is.
     assert kwargs["metrics_factory"] is not None
     mock_store_cls.assert_called_once_with(mock_params_cls.return_value)
-    mock_store_cls.return_value.startup.assert_awaited_once()
+    mock_store_cls.return_value.start.assert_awaited_once()
     assert ("qdrant1", "c") in builder.vector_stores
 
 
@@ -457,7 +459,7 @@ async def test_get_vector_store_qdrant(tmp_path):
             return_value=mock_client,
         ),
     ):
-        mock_store_cls.return_value.startup = AsyncMock()
+        mock_store_cls.return_value.start = AsyncMock()
         builder = DatabaseManager(conf)
         store = await builder.get_vector_store("qdrant1", **_STORE)
 
@@ -508,15 +510,15 @@ async def test_qdrant_close(tmp_path):
             return_value=mock_client,
         ),
     ):
-        mock_store_cls.return_value.startup = AsyncMock()
-        mock_store_cls.return_value.shutdown = AsyncMock()
+        mock_store_cls.return_value.start = AsyncMock()
+        mock_store_cls.return_value.stop = AsyncMock()
         builder = DatabaseManager(conf)
         await builder.get_vector_store("qdrant1", **_STORE)
 
     assert "qdrant1" in builder.qdrant_clients
     assert ("qdrant1", "c") in builder.vector_stores
 
-    await builder.close()
+    await builder.stop()
 
     assert builder.qdrant_clients == {}
     assert builder.vector_stores == {}
@@ -566,7 +568,7 @@ async def test_milvus_client_kwargs_forwarded(tmp_path):
         ) as mock_store_cls,
         patch("pymilvus.AsyncMilvusClient", return_value=mock_client) as mock_cls,
     ):
-        mock_store_cls.return_value.startup = AsyncMock()
+        mock_store_cls.return_value.start = AsyncMock()
         builder = DatabaseManager(conf)
         await builder.async_get_milvus_client("milvus1")
 
@@ -595,7 +597,7 @@ async def test_milvus_token_and_db_name_omitted_when_empty(tmp_path):
         ) as mock_store_cls,
         patch("pymilvus.AsyncMilvusClient", return_value=mock_client) as mock_cls,
     ):
-        mock_store_cls.return_value.startup = AsyncMock()
+        mock_store_cls.return_value.start = AsyncMock()
         builder = DatabaseManager(conf)
         await builder.async_get_milvus_client("milvus1")
 
@@ -626,7 +628,7 @@ async def test_get_vector_store_builds_a_milvus_store(tmp_path):
         ) as mock_store_cls,
         patch("pymilvus.AsyncMilvusClient", return_value=mock_client),
     ):
-        mock_store_cls.return_value.startup = AsyncMock()
+        mock_store_cls.return_value.start = AsyncMock()
         builder = DatabaseManager(conf)
         await builder.get_vector_store("milvus1", **_STORE)
 
@@ -640,7 +642,7 @@ async def test_get_vector_store_builds_a_milvus_store(tmp_path):
         metrics_factory=conf.milvus_confs["milvus1"].get_metrics_factory(),
     )
     mock_store_cls.assert_called_once_with(mock_params_cls.return_value)
-    mock_store_cls.return_value.startup.assert_awaited_once()
+    mock_store_cls.return_value.start.assert_awaited_once()
     assert ("milvus1", "c") in builder.vector_stores
 
 
@@ -663,7 +665,7 @@ async def test_get_vector_store_milvus(tmp_path):
         ) as mock_store_cls,
         patch("pymilvus.AsyncMilvusClient", return_value=mock_client),
     ):
-        mock_store_cls.return_value.startup = AsyncMock()
+        mock_store_cls.return_value.start = AsyncMock()
         builder = DatabaseManager(conf)
         store = await builder.get_vector_store("milvus1", **_STORE)
 
@@ -719,7 +721,7 @@ async def test_milvus_validation_is_bounded_by_the_request_timeout(tmp_path):
         ) as mock_store_cls,
         patch("pymilvus.AsyncMilvusClient", return_value=mock_client),
     ):
-        mock_store_cls.return_value.startup = AsyncMock()
+        mock_store_cls.return_value.start = AsyncMock()
         builder = DatabaseManager(conf)
         await builder.async_get_milvus_client("milvus1", validate=True)
         await builder._validate_milvus_clients()
@@ -749,15 +751,15 @@ async def test_milvus_close(tmp_path):
         ) as mock_store_cls,
         patch("pymilvus.AsyncMilvusClient", return_value=mock_client),
     ):
-        mock_store_cls.return_value.startup = AsyncMock()
-        mock_store_cls.return_value.shutdown = AsyncMock()
+        mock_store_cls.return_value.start = AsyncMock()
+        mock_store_cls.return_value.stop = AsyncMock()
         builder = DatabaseManager(conf)
         await builder.get_vector_store("milvus1", **_STORE)
 
     assert "milvus1" in builder.milvus_clients
     assert ("milvus1", "c") in builder.vector_stores
 
-    await builder.close()
+    await builder.stop()
 
     assert builder.milvus_clients == {}
     assert builder.vector_stores == {}
@@ -811,8 +813,8 @@ async def test_sqlite_vector_store_creates_store_and_engine():
             "memmachine_server.common.vector_store.sqlite_vector_store.SQLiteVectorStore",
         ) as mock_store_cls,
     ):
-        mock_store_cls.return_value.startup = AsyncMock()
-        mock_store_cls.return_value.shutdown = AsyncMock()
+        mock_store_cls.return_value.start = AsyncMock()
+        mock_store_cls.return_value.stop = AsyncMock()
         builder = DatabaseManager(conf)
         store = await builder.get_vector_store("vs1", **_STORE)
 
@@ -829,7 +831,7 @@ async def test_sqlite_vector_store_creates_store_and_engine():
     assert params_kwargs["save_threshold"] == 200
     assert callable(params_kwargs["vector_search_engine_factory"])
 
-    mock_store_cls.return_value.startup.assert_awaited_once()
+    mock_store_cls.return_value.start.assert_awaited_once()
     assert ("vs1", "c") in builder.vector_stores
     assert "vs1" in builder.vector_store_sql_engines
 
@@ -857,7 +859,7 @@ async def test_a_sqlite_relational_engine_takes_the_write_lock_at_begin(tmp_path
                 await connection.execute(text("CREATE TABLE probe (k INTEGER)"))
     finally:
         await other.dispose()
-        await builder.close()
+        await builder.stop()
 
 
 @pytest.mark.asyncio
@@ -868,6 +870,7 @@ async def test_a_sqlite_vector_store_engine_takes_the_write_lock_at_begin(tmp_pa
         sqlite_vector_store_confs={"vs1": SQLiteVectorStoreConf(path=str(path))}
     )
     builder = DatabaseManager(conf)
+    await builder.prepare_vector_store("vs1", **_STORE)
     await builder.get_vector_store("vs1", **_STORE)
     other = create_async_engine(
         f"sqlite+aiosqlite:///{path}", connect_args={"timeout": 0.2}
@@ -883,7 +886,7 @@ async def test_a_sqlite_vector_store_engine_takes_the_write_lock_at_begin(tmp_pa
                 await connection.execute(text("CREATE TABLE probe (k INTEGER)"))
     finally:
         await other.dispose()
-        await builder.close()
+        await builder.stop()
 
 
 @pytest.mark.asyncio
@@ -896,13 +899,14 @@ async def test_a_sqlite_vector_store_engine_enforces_foreign_keys(tmp_path):
     )
     builder = DatabaseManager(conf)
     try:
+        await builder.prepare_vector_store("vs1", **_STORE)
         await builder.get_vector_store("vs1", **_STORE)
         engine = builder.vector_store_sql_engines["vs1"]
         async with engine.connect() as connection:
             result = await connection.execute(text("PRAGMA foreign_keys"))
             assert result.scalar_one() == 1
     finally:
-        await builder.close()
+        await builder.stop()
 
 
 @requires_sqlite_extension_loading
@@ -922,7 +926,7 @@ async def test_a_sqlite_vec_vector_store_engine_loads_sqlite_vec(tmp_path):
             result = await connection.execute(text("SELECT vec_version()"))
             assert result.scalar_one()
     finally:
-        await builder.close()
+        await builder.stop()
 
 
 @pytest.mark.asyncio
@@ -937,8 +941,8 @@ async def test_stores_of_one_sqlite_vector_store_share_its_engine():
 
     def build_store(_params: object) -> MagicMock:
         store = MagicMock()
-        store.startup = AsyncMock()
-        store.shutdown = AsyncMock()
+        store.start = AsyncMock()
+        store.stop = AsyncMock()
         return store
 
     with (
@@ -1000,8 +1004,8 @@ async def test_sqlite_vector_store_default_engine_is_usearch():
             "memmachine_server.common.vector_store.vector_search_engine.usearch_engine.USearchVectorSearchEngine",
         ) as mock_usearch_cls,
     ):
-        mock_store_cls.return_value.startup = AsyncMock()
-        mock_store_cls.return_value.shutdown = AsyncMock()
+        mock_store_cls.return_value.start = AsyncMock()
+        mock_store_cls.return_value.stop = AsyncMock()
         builder = DatabaseManager(conf)
         await builder.get_vector_store("vs1", **_STORE)
 
@@ -1038,19 +1042,19 @@ async def test_sqlite_vector_store_caches_after_first_call():
         ) as mock_store_cls,
     ):
         store = mock_store_cls.return_value
-        store.startup = AsyncMock()
-        store.shutdown = AsyncMock()
+        store.start = AsyncMock()
+        store.stop = AsyncMock()
         builder = DatabaseManager(conf)
         first = await builder.get_vector_store("vs1", **_STORE)
         second = await builder.get_vector_store("vs1", **_STORE)
 
     assert first is second
     assert mock_create.call_count == 1
-    mock_store_cls.return_value.startup.assert_awaited_once()
+    mock_store_cls.return_value.start.assert_awaited_once()
 
 
 @pytest.mark.asyncio
-async def test_sqlite_vector_store_startup_failure_keeps_no_store():
+async def test_sqlite_vector_store_start_failure_keeps_no_store():
     """If startup() fails, no store is kept; the configured vector store's engine stays for close()."""
     conf = _sqlite_vector_store_only_conf(
         sqlite_vector_store_confs={"vs1": SQLiteVectorStoreConf(path="vs.db")}
@@ -1071,16 +1075,14 @@ async def test_sqlite_vector_store_startup_failure_keeps_no_store():
             "memmachine_server.common.vector_store.sqlite_vector_store.SQLiteVectorStore",
         ) as mock_store_cls,
     ):
-        mock_store_cls.return_value.startup = AsyncMock(
-            side_effect=RuntimeError("boom")
-        )
+        mock_store_cls.return_value.start = AsyncMock(side_effect=RuntimeError("boom"))
         builder = DatabaseManager(conf)
         with pytest.raises(VectorStoreConfigurationError, match="failed to start"):
             await builder.get_vector_store("vs1", **_STORE)
 
     assert ("vs1", "c") not in builder.vector_stores
     mock_engine.dispose.assert_not_awaited()
-    await builder.close()
+    await builder.stop()
     mock_engine.dispose.assert_awaited_once()
 
 
@@ -1109,8 +1111,8 @@ async def test_sqlite_vec_vector_store_creates_store_and_engine():
             "memmachine_server.common.vector_store.sqlite_vec_vector_store.load_sqlite_vec_extension",
         ) as mock_load,
     ):
-        mock_store_cls.return_value.startup = AsyncMock()
-        mock_store_cls.return_value.shutdown = AsyncMock()
+        mock_store_cls.return_value.start = AsyncMock()
+        mock_store_cls.return_value.stop = AsyncMock()
         builder = DatabaseManager(conf)
         store = await builder.get_vector_store("vec1", **_STORE)
 
@@ -1124,7 +1126,7 @@ async def test_sqlite_vec_vector_store_creates_store_and_engine():
     assert params_kwargs["vector_store_name"] == "c"
     assert params_kwargs["store_schema"] is _SCHEMA
 
-    mock_store_cls.return_value.startup.assert_awaited_once()
+    mock_store_cls.return_value.start.assert_awaited_once()
     assert ("vec1", "c") in builder.vector_stores
     assert "vec1" in builder.vector_store_sql_engines
 
@@ -1161,10 +1163,10 @@ async def test_get_vector_store_dispatches_to_sqlite_backends():
             "memmachine_server.common.vector_store.sqlite_vec_vector_store.load_sqlite_vec_extension",
         ),
     ):
-        mock_vs_cls.return_value.startup = AsyncMock()
-        mock_vs_cls.return_value.shutdown = AsyncMock()
-        mock_vec_cls.return_value.startup = AsyncMock()
-        mock_vec_cls.return_value.shutdown = AsyncMock()
+        mock_vs_cls.return_value.start = AsyncMock()
+        mock_vs_cls.return_value.stop = AsyncMock()
+        mock_vec_cls.return_value.start = AsyncMock()
+        mock_vec_cls.return_value.stop = AsyncMock()
         builder = DatabaseManager(conf)
         vs = await builder.get_vector_store("vs1", **_STORE)
         vec = await builder.get_vector_store("vec1", **_STORE)
@@ -1203,17 +1205,17 @@ async def test_close_disposes_vector_store_engines_and_shuts_down_stores():
             "memmachine_server.common.vector_store.sqlite_vector_store.SQLiteVectorStore",
         ) as mock_store_cls,
     ):
-        mock_store_cls.return_value.startup = AsyncMock()
-        mock_store_cls.return_value.shutdown = AsyncMock()
+        mock_store_cls.return_value.start = AsyncMock()
+        mock_store_cls.return_value.stop = AsyncMock()
         builder = DatabaseManager(conf)
         await builder.get_vector_store("vs1", **_STORE)
 
         assert ("vs1", "c") in builder.vector_stores
         assert "vs1" in builder.vector_store_sql_engines
 
-        await builder.close()
+        await builder.stop()
 
     assert builder.vector_stores == {}
     assert builder.vector_store_sql_engines == {}
-    mock_store_cls.return_value.shutdown.assert_awaited_once()
+    mock_store_cls.return_value.stop.assert_awaited_once()
     mock_engine.dispose.assert_awaited()

@@ -1,26 +1,17 @@
 """Session data manager abstraction."""
 
-from abc import ABC, abstractmethod
+from abc import abstractmethod
 from enum import StrEnum
 
 from pydantic import BaseModel, JsonValue
 
 from memmachine_server.common.configuration.episodic_config import EpisodicMemoryConf
 from memmachine_server.common.data_types import PropertyValue
+from memmachine_server.common.lifecycle import Lifecycle, Preparable
 
 
-class SessionDataManager(ABC):
+class SessionDataManager(Preparable, Lifecycle):
     """Interface for managing session data and short-term memory."""
-
-    @abstractmethod
-    async def close(self) -> None:
-        """Close the database connection."""
-        raise NotImplementedError
-
-    @abstractmethod
-    async def create_tables(self) -> None:
-        """Create the necessary tables in the database."""
-        raise NotImplementedError
 
     @abstractmethod
     async def drop_tables(self) -> None:

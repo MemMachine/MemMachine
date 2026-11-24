@@ -23,6 +23,8 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from uuid import UUID
 
+from memmachine_server.common.lifecycle import Lifecycle, Preparable
+
 from .data_types import (
     PartitionAlreadyConfirmedError,
     PartitionDeletedError,
@@ -224,7 +226,7 @@ class TombstoneClaim(ABC):
         raise NotImplementedError
 
 
-class PartitionRegistry(ABC):
+class PartitionRegistry(Preparable, Lifecycle):
     """
     The partition registry of one partition namespace.
 
@@ -235,12 +237,8 @@ class PartitionRegistry(ABC):
     """
 
     @abstractmethod
-    async def startup(self) -> None:
-        """
-        Make the registry's durable resources ready for use, creating them idempotently.
-
-        One call serves every registry object over the same resources.
-        """
+    async def prepare(self) -> None:
+        """One call serves every registry object over the same resources."""
         raise NotImplementedError
 
     async def reserve(self, partition_name: str) -> Reservation:

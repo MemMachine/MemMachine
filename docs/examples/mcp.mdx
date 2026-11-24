@@ -12,9 +12,10 @@ Server API using `curl` commands. It can also be found in our [Quick Start Guide
 
 ### Prerequisites
 
-First, ensure your stand alone MCP server is up and running. You can use this sample command to start it:
+First, ensure your stand alone MCP server is up and running. You can use these sample commands to create the schema of the configured databases, then start it:
 
 ```
+MEMORY_CONFIG=config.yml uv run memmachine-server prepare
 MEMORY_CONFIG=config.yml uv run memmachine-mcp-http --host localhost --port 8080
 ```
 
@@ -242,6 +243,12 @@ Replace `Your Name` with your desired user ID. The `memmachine-app` is the defau
 
 Here is an example of working in the development environment with `uv`.  In order to call the command,
 you need to have `uv` installed and issue `uv build` to build the project first.
+
+The desktop app starts the MCP server itself, so create the schema of the configured databases first:
+
+```
+MEMORY_CONFIG=config.yml uv run memmachine-server prepare
+```
 
 ```
 {

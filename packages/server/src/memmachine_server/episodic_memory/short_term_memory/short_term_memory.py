@@ -9,7 +9,6 @@ are summarized asynchronously to maintain context over a longer conversation.
 """
 
 import asyncio
-import contextlib
 import logging
 import string
 from collections import deque
@@ -159,8 +158,6 @@ class ShortTermMemory:
     async def create(cls, params: ShortTermMemoryParams) -> Self:
         """Create a new ShortTermMemory instance."""
         if params.data_manager is not None:
-            with contextlib.suppress(ValueError):
-                await params.data_manager.create_tables()
             try:
                 (
                     summary,

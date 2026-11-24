@@ -14,7 +14,7 @@ from memmachine_server.common.filter.filter_parser import Comparison
 @pytest.fixture
 def wrapped_store():
     store = MagicMock(spec=EpisodeStorage)
-    store.startup = AsyncMock()
+    store.start = AsyncMock()
     store.add_episodes = AsyncMock(return_value=[])
     store.get_episode = AsyncMock()
     store.get_episode_messages = AsyncMock()

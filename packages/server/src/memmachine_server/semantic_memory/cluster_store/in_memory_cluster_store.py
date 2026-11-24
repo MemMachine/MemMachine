@@ -19,8 +19,14 @@ class InMemoryClusterStateStorage(ClusterStateStorage):
         """Initialize empty in-memory state map."""
         self._states: MutableMapping[str, ClusterState] = {}
 
-    async def startup(self) -> None:
+    async def prepare(self) -> None:
         return None
+
+    async def start(self) -> None:
+        return None
+
+    async def stop(self) -> None:
+        pass
 
     async def delete_all(self) -> None:
         self._states.clear()

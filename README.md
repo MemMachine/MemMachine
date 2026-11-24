@@ -99,6 +99,9 @@ MemMachine works seamlessly with your favorite AI frameworks:
 MemMachine includes a native **Model Context Protocol (MCP)** server for seamless integration with Claude Desktop, Cursor, and other MCP-compatible clients:
 
 ```bash
+# Create the schema of the configured databases first, as for the server
+memmachine-server prepare
+
 # Stdio mode (for Claude Desktop)
 memmachine-mcp-stdio
 

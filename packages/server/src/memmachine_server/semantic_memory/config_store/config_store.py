@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
+from memmachine_server.common.lifecycle import Lifecycle, Preparable
 from memmachine_server.semantic_memory.semantic_model import (
     CategoryIdT,
     SemanticCategory,
@@ -13,10 +14,8 @@ from memmachine_server.semantic_memory.semantic_model import (
 
 
 @runtime_checkable
-class SemanticConfigStorage(Protocol):
+class SemanticConfigStorage(Preparable, Lifecycle, Protocol):
     """Contract for persisting and retrieving semantic memory configuration."""
-
-    async def startup(self) -> None: ...
 
     async def delete_all(self) -> None: ...
 

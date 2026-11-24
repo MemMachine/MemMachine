@@ -414,13 +414,19 @@ class SQLiteVecVectorStore(VectorStore):
         return self._store_schema
 
     @override
-    async def startup(self) -> None:
+    async def prepare(self) -> None:
         # create_partition creates each partition's tables, and the store
         # has no others.
         pass
 
     @override
-    async def shutdown(self) -> None:
+    async def start(self) -> None:
+        # create_partition creates each partition's tables, and the store
+        # has no others.
+        pass
+
+    @override
+    async def stop(self) -> None:
         pass
 
     @override

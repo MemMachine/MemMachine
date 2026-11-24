@@ -99,9 +99,15 @@ class ClusterStateStorageSqlAlchemy(ClusterStateStorage):
     def _create_session(self) -> AsyncSession:
         return self._session_factory()
 
-    async def startup(self) -> None:
+    async def prepare(self) -> None:
         async with self._engine.begin() as conn:
             await conn.run_sync(BaseClusterStore.metadata.create_all)
+
+    async def start(self) -> None:
+        pass
+
+    async def stop(self) -> None:
+        pass
 
     async def delete_all(self) -> None:
         async with write_session(self._session_factory) as session:

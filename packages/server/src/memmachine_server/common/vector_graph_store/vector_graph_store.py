@@ -5,18 +5,19 @@ Defines the interface for adding, searching,
 and deleting nodes and edges.
 """
 
-from abc import ABC, abstractmethod
+from abc import abstractmethod
 from collections.abc import Iterable
 
 from memmachine_server.common.data_types import OrderedValue, SimilarityMetric
 from memmachine_server.common.filter.filter_parser import (
     FilterExpr,
 )
+from memmachine_server.common.lifecycle import Lifecycle, Preparable
 
 from .data_types import Edge, Node
 
 
-class VectorGraphStore(ABC):
+class VectorGraphStore(Preparable, Lifecycle):
     """Abstract base class for a vector graph store."""
 
     @abstractmethod
@@ -282,9 +283,4 @@ class VectorGraphStore(ABC):
     @abstractmethod
     async def delete_all_data(self) -> None:
         """Delete all data from the vector graph store."""
-        raise NotImplementedError
-
-    @abstractmethod
-    async def close(self) -> None:
-        """Shut down and release resources."""
         raise NotImplementedError

@@ -87,11 +87,14 @@ class InMemorySemanticStorage(SemanticStorage):
         self._next_history_id = 1
         self._lock = asyncio.Lock()
 
-    async def startup(self):
+    async def prepare(self):
         return None
 
-    async def cleanup(self):
+    async def start(self):
         return None
+
+    async def stop(self) -> None:
+        pass
 
     async def delete_all(self):
         async with self._lock:
