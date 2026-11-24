@@ -79,10 +79,14 @@ backs off, doubling, and a record is no longer taken after repeated
 failures, which is reported. The second delete's retention
 is a condition of its own, so no schedule brings it forward.
 
-The records name no vector store or embedder: the background work writes
-and deletes with the EventMemory's own stores, the deployment's, which
-every partition in its segment store shares. EventMemory runs one indexing
-job, or one tombstone's delete, when asked.
+The records name no vector store or embedder: a deployment has one
+EventMemory, built from its configuration, and every partition in its
+segment store is that EventMemory's. So the background work writes and
+deletes with the EventMemory's own stores. EventMemory runs one indexing
+job, or one tombstone's delete, when asked, and the server, like its
+purges, runs each kind in a loop of its own from startup, whether or not
+any session is opened, with no pause after a job and a short one after
+finding none due.
 
 **Further derived indexes.** Each derived index builds its own records
 from the stored events, segments, and derivatives, keys them its own way,
@@ -285,8 +289,8 @@ erasure. Removing any one piece above breaks one of them.
   deletes run; the events, segments, and derivatives are deleted from SQL
   when the forget commits, and a tombstone keeps only its derivatives'
   UUIDs until the second delete.
-- A deployment's sessions share its vector store, segment store, and
-  embedder. Pointing the deployment at other stores moves no data.
+- A deployment's sessions share its vector store, segment store, embedder,
+  reranker, segmenter, and deriver. Pointing the deployment at other stores moves no data.
 - Recovery needs the embedder, the vector store, and the partition
   registry, and waits out their outages in its backoff. A record or tombstone that keeps failing is
   reported and kept, with a tombstone's derivative UUIDs, and needs an

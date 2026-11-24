@@ -572,10 +572,11 @@ retention is fixed in its code.
   each claim's partition by its UUID before it writes or deletes: a deleted
   partition's indexing job ends without its write, and its tombstone's
   deletes are left to the partition's purge.
-- The service locator builds event memory over the deployment's two stores,
-  gives the resource manager the same two stores for the namespace's purge
-  rounds, and gets a session's partition, creating it when no partition holds
-  the name.
+- The resource manager holds the deployment's one event memory, which serves
+  every session. The service locator builds it over the deployment's two
+  stores, gives the resource manager the same two stores for the namespace's
+  purge rounds, and gets a session's partition from it, creating it when no
+  partition holds the name.
 - Event memory's deployment configuration (`episodic_memory.long_term_memory`)
   names the registry's database (`partition_registry`, required for the
   event backend) and the retention (`tombstone_retention_seconds`), one of

@@ -90,14 +90,10 @@ async def long_term_memory_from_config(
         case DeclarativeLongTermMemoryConf():
             return LongTermMemory(await _declarative_memory(config, resource_manager))
         case EventLongTermMemoryConf():
-            reranker = (
-                await resource_manager.get_reranker(config.reranker, validate=True)
-                if config.reranker is not None
-                else None
-            )
-            event_memory = await _event_memory(
-                config, resource_manager, reranker=reranker
-            )
+            # The deployment's EventMemory serves every session, with the
+            # deployment's segmenter, deriver, and reranker.
+            event_memory = await resource_manager.get_event_memory()
+            reranker = await _event_memory_reranker(resource_manager)
             return LongTermMemory(
                 await _get_or_create_event_memory_partition(
                     event_memory, partition_name_for_session(config.session_id)
@@ -180,8 +176,7 @@ async def delete_long_term_memory_storage(
                 episode.uid for episode in episodes
             )
         case EventLongTermMemoryConf():
-            # Deleting a partition uses no reranker.
-            event_memory = await _event_memory(config, resource_manager, reranker=None)
+            event_memory = await resource_manager.get_event_memory()
             await event_memory.delete_partition(
                 partition_name_for_session(config.session_id)
             )
@@ -212,16 +207,21 @@ async def _declarative_memory(
     )
 
 
-async def _event_memory(
-    config: EventLongTermMemoryConf,
+async def event_memory_from_config(
     resource_manager: InstanceOf[CommonResourceManager],
-    *,
-    reranker: Reranker | None,
 ) -> EventMemory:
-    """An EventMemory on the deployment's stores and embedder, with the session's segmenter and deriver."""
+    """
+    Build the deployment's EventMemory from its long-term memory configuration.
+
+    Raises:
+        ConfigurationError: If the deployment configures no event memory.
+
+    """
     _, segment_store_id, embedder_id = deployment_event_memory_ids(
         resource_manager.config
     )
+    deployment = resource_manager.config.episodic_memory.long_term_memory
+    assert deployment is not None
     embedder = await resource_manager.get_embedder(embedder_id, validate=True)
     segment_store = await resource_manager.get_segment_store(segment_store_id)
     vector_store = await event_backend_vector_store(resource_manager)
@@ -232,13 +232,31 @@ async def _event_memory(
             partition_registry=await _event_memory_partition_registry(
                 resource_manager, segment_store, vector_store
             ),
-            segmenter=_build_segmenter(config.segmenter),
-            deriver=_build_deriver(config.deriver),
+            segmenter=_build_segmenter(
+                deployment.segmenter
+                if deployment.segmenter is not None
+                else PassthroughSegmenterConf()
+            ),
+            deriver=_build_deriver(
+                deployment.deriver
+                if deployment.deriver is not None
+                else WholeTextDeriverConf()
+            ),
             embedder=embedder,
-            reranker=reranker,
+            reranker=await _event_memory_reranker(resource_manager),
             metrics_factory=await resource_manager.get_metrics_factory("prometheus"),
         )
     )
+
+
+async def _event_memory_reranker(
+    resource_manager: InstanceOf[CommonResourceManager],
+) -> Reranker | None:
+    """The deployment's event memory reranker, or None when it configures none."""
+    deployment = resource_manager.config.episodic_memory.long_term_memory
+    if deployment is None or deployment.reranker is None:
+        return None
+    return await resource_manager.get_reranker(deployment.reranker, validate=True)
 
 
 async def _event_memory_partition_registry(
