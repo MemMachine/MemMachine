@@ -291,6 +291,8 @@ async def add_memories(
         )
     except ValueError as e:
         raise RestError(code=422, message="invalid argument", ex=e) from e
+    except SessionNotFoundError as e:
+        raise RestError(code=404, message="Project does not exist", ex=e) from e
     return AddMemoriesResponse(results=results)
 
 

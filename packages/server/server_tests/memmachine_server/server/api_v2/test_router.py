@@ -19,6 +19,7 @@ from memmachine_server.common.errors import (
     SessionAlreadyExistsError,
     SessionNotFoundError,
 )
+from memmachine_server.common.partition_registry import PartitionPendingError
 from memmachine_server.main.memmachine import ALL_MEMORY_TYPES, MemoryType
 from memmachine_server.server.api_v2.router import RestError, get_memmachine
 from memmachine_server.server.api_v2.service import _SessionData
@@ -103,6 +104,25 @@ def test_create_project(client, mock_memmachine):
     assert response.status_code == 409
     response_detail = response.json()["detail"]
     assert "already exists" in response_detail["message"]
+    assert response_detail["trace"] == ""
+
+
+def test_create_project_another_creation_holds_pending_answers_409(
+    client, mock_memmachine
+):
+    mock_memmachine.create_session.side_effect = PartitionPendingError(
+        "memmachine", "test_org/test_proj", datetime(2026, 1, 2, tzinfo=UTC)
+    )
+
+    response = client.post(
+        "/api/v2/projects", json={"org_id": "test_org", "project_id": "test_proj"}
+    )
+
+    assert response.status_code == 409
+    response_detail = response.json()["detail"]
+    assert response_detail["message"] == "Project is being created"
+    assert response_detail["exception"] == "PartitionPendingError"
+    assert "pending since 2026-01-02" in response_detail["internal_error"]
     assert response_detail["trace"] == ""
 
 
@@ -397,6 +417,24 @@ def test_add_memories_refuses_an_invalid_argument_with_422(client, mock_memmachi
     assert response.status_code == 422
     assert "invalid argument" in response.json()["detail"]["message"]
     assert "userId" in response.json()["detail"]["internal_error"]
+
+
+def test_add_memories_to_a_project_deleted_meanwhile_answers_404(
+    client, mock_memmachine
+):
+    payload = {
+        "org_id": "test_org",
+        "project_id": "test_proj",
+        "messages": [{"role": "user", "content": "hello"}],
+    }
+    mock_memmachine.add_episodes.side_effect = SessionNotFoundError(
+        "test_org/test_proj"
+    )
+
+    response = client.post("/api/v2/memories", json=payload)
+
+    assert response.status_code == 404
+    assert response.json()["detail"]["message"] == "Project does not exist"
 
 
 def test_add_memories_episode_type_forwarded(client, mock_memmachine):
