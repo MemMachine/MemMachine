@@ -7,10 +7,6 @@ import pytest
 
 from memmachine_server import MemMachine
 from memmachine_server.common.episode_store import EpisodeEntry
-from memmachine_server.common.filter.filter_parser import parse_filter
-from memmachine_server.common.session_manager.session_data_manager import (
-    SessionDataManager,
-)
 from memmachine_server.main.memmachine import MemoryType
 
 # TODO (@o-love): Blanket mark all tests in this file as integration tests for now
@@ -185,7 +181,12 @@ async def test_memmachine_create_get_and_delete_session(memmachine: MemMachine):
         )
 
         assert session_info.description == "integration-session"
-        assert session_info.episode_memory_conf.session_key == session_key
+        partition_manager = await memmachine._partition_manager()
+        registration = await partition_manager.resolve_partition(session_key)
+        assert registration is not None
+        assert session_info.episode_memory_conf.session_key == str(
+            registration.partition_uuid
+        )
 
         fetched = await memmachine.get_session(session_key)
         assert fetched is not None
@@ -193,11 +194,7 @@ async def test_memmachine_create_get_and_delete_session(memmachine: MemMachine):
 
         await memmachine.delete_session(delete_handle)
         deleted = True
-        session_info = await memmachine.get_session(session_key)
-        assert (
-            session_info is None
-            or session_info.status == SessionDataManager.SessionStatus.Deleted
-        )
+        assert await memmachine.get_session(session_key) is None
     finally:
         if not deleted:
             remaining = await memmachine.get_session(session_key)
@@ -206,31 +203,79 @@ async def test_memmachine_create_get_and_delete_session(memmachine: MemMachine):
 
 
 @pytest.mark.asyncio
-async def test_memmachine_search_sessions_filters_metadata(memmachine: MemMachine):
-    session_manager = await memmachine._resources.get_session_data_manager()
-    created_sessions: list[str] = []
+async def test_memmachine_a_session_created_again_holds_none_of_the_deleted_sessions_episodes(
+    memmachine: MemMachine,
+):
+    session_key = f"session-{uuid4()}"
+    session = _Session(
+        session_key=session_key,
+        org_id=f"org-{session_key}",
+        project_id=f"project-{session_key}",
+    )
 
     try:
-        for topic in ("alpha", "beta"):
-            new_session_key = f"metadata-session-{uuid4()}"
-            created_sessions.append(new_session_key)
-            await session_manager.create_or_validate_session(
-                session_key=new_session_key,
-                configuration={"scope": "integration"},
-                param=memmachine._with_default_episodic_memory_conf(
-                    session_key=new_session_key
-                ),
-                description=f"session-{topic}",
-                metadata={"topic": topic},
-            )
+        await memmachine.create_session(session_key)
+        await memmachine.add_episodes(
+            session,
+            [
+                EpisodeEntry(
+                    content="written before the deletion",
+                    producer_id="tester",
+                    producer_role="user",
+                )
+            ],
+            target_memories=[MemoryType.Episodic],
+        )
+        assert await memmachine.episodes_count(session) == 1
+
+        await memmachine.delete_session(session)
+        assert await memmachine.episodes_count(session) == 0
+
+        await memmachine.create_session(session_key)
+
+        assert await memmachine.episodes_count(session) == 0
+        listed = await memmachine.list_search(
+            session, target_memories=[MemoryType.Episodic]
+        )
+        assert listed.episodic_memory == []
+        found = await memmachine.query_search(
+            session,
+            target_memories=[MemoryType.Episodic],
+            query="written before the deletion",
+        )
+        assert found.episodic_memory is not None
+        assert found.episodic_memory.long_term_memory.episodes == []
+        assert found.episodic_memory.short_term_memory.episodes == []
+    finally:
+        if await memmachine.get_session(session_key) is not None:
+            await memmachine.delete_session(session)
+
+
+@pytest.mark.asyncio
+async def test_memmachine_search_sessions_lists_a_session_until_its_deletion(
+    memmachine: MemMachine,
+):
+    created_sessions = [f"listed-session-{uuid4()}" for _ in range(2)]
+
+    try:
+        for new_session_key in created_sessions:
+            await memmachine.create_session(new_session_key)
 
         all_sessions = await memmachine.search_sessions()
         assert created_sessions[0] in all_sessions
         assert created_sessions[1] in all_sessions
 
-        filter_expr = parse_filter("topic = 'alpha'")
-        filtered = await memmachine.search_sessions(search_filter=filter_expr)
-        assert set(filtered) == {created_sessions[0]}
+        await memmachine.delete_session(
+            _Session(
+                session_key=created_sessions[0],
+                org_id=f"org-{created_sessions[0]}",
+                project_id=f"project-{created_sessions[0]}",
+            )
+        )
+
+        remaining_sessions = await memmachine.search_sessions()
+        assert created_sessions[0] not in remaining_sessions
+        assert created_sessions[1] in remaining_sessions
     finally:
         for key in created_sessions:
             cleanup_session = _Session(

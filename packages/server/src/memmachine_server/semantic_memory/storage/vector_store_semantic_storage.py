@@ -54,7 +54,7 @@ from memmachine_server.semantic_memory.storage.text_sanitizer import sanitize_pg
 
 _DEFAULT_VECTOR_QUERY_LIMIT = 10_000
 # Matches the episode deletion batch (EPISODE_DELETE_BATCH_SIZE in
-# main/memmachine.py); far below SQLite's 32,766 bound parameters.
+# main/partitioned_stores.py); far below SQLite's 32,766 bound parameters.
 _FEATURE_DELETE_BATCH_SIZE = 1000
 
 

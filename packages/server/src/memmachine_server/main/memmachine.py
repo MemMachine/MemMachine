@@ -5,7 +5,7 @@ import contextlib
 import logging
 from asyncio import Task
 from collections.abc import Callable, Coroutine, Iterable, Mapping, Sequence
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any, Final, Protocol
 from uuid import UUID, uuid4
 
@@ -28,8 +28,10 @@ from memmachine_server.common.episode_store import (
 )
 from memmachine_server.common.errors import (
     ConfigurationError,
+    InvalidArgumentError,
     ResourceNotFoundError,
     ResourceNotReadyError,
+    SessionAlreadyExistsError,
     SessionNotFoundError,
 )
 from memmachine_server.common.filter.filter_parser import (
@@ -41,7 +43,15 @@ from memmachine_server.common.filter.filter_parser import (
 from memmachine_server.common.filter.filter_parser import (
     FilterExpr,
     parse_filter,
-    to_property_filter,
+)
+from memmachine_server.common.metrics_factory import OperationTracker
+from memmachine_server.common.partition_registry import (
+    PartitionAlreadyExistsError,
+    PartitionCreateAttemptsExhaustedError,
+    PartitionDeletedError,
+    PartitionManager,
+    PartitionPendingError,
+    Registration,
 )
 from memmachine_server.common.property_keys import validate_user_property_key
 from memmachine_server.common.resource_manager.resource_manager import (
@@ -50,7 +60,6 @@ from memmachine_server.common.resource_manager.resource_manager import (
 from memmachine_server.common.session_manager.session_data_manager import (
     SessionDataManager,
 )
-from memmachine_server.common.sql_lease_lock import LockAcquireTimeoutError
 from memmachine_server.episodic_memory import EpisodicMemory
 from memmachine_server.episodic_memory.long_term_memory.service_locator import (
     deployment_event_memory_ids,
@@ -79,13 +88,28 @@ from memmachine_server.semantic_memory.semantic_session_manager import (
 )
 from memmachine_server.semantic_memory.storage.storage_base import SemanticStorage
 
+from .partitioned_stores import (
+    EpisodePartitionedStore,
+    LongTermMemoryPartitionedStore,
+    SessionDataPartitionedStore,
+)
+
 logger = logging.getLogger(__name__)
 
 
 ALL_MEMORY_TYPES: Final[list[MemoryType]] = list(MemoryType)
-EPISODE_DELETE_BATCH_SIZE: Final[int] = 1000
-DELETION_IDLE_SECONDS: Final[float] = 30.0
-SESSION_DELETE_LEASE_DURATION: Final[timedelta] = timedelta(seconds=30)
+
+_PARTITION_NAMESPACE = "memmachine"
+"""The partition namespace MemMachine owns, the same in every deployment.
+
+Fixed, because the namespace locates the partitions' registrations.
+"""
+
+# The attempts `_get_or_create_partition` makes,
+# _GET_OR_CREATE_RETRY_DELAY_SECONDS apart, before giving up on a partition
+# that stays pending or a name other creators and deleters keep taking.
+_MAX_GET_OR_CREATE_ATTEMPTS = 10
+_GET_OR_CREATE_RETRY_DELAY_SECONDS = 1
 
 
 def _raise_add_episode_errors(
@@ -145,11 +169,6 @@ class MemMachine:
         self._initialize_default_retrieval_agent_configuration()
         self._retrieval_agent: AgentToolBase | None = None
         self._retrieval_agent_lock = asyncio.Lock()
-        self._deletion_queue: asyncio.Queue[MemMachine.SessionData | None] = (
-            asyncio.Queue()
-        )
-        self._delete_worker: asyncio.Task[None] | None = None
-        self._key_to_session: Callable[[str], MemMachine.SessionData] | None = None
         self._started = False
 
     def _initialize_default_episodic_configuration(self) -> None:
@@ -367,113 +386,118 @@ class MemMachine:
 
         return self._retrieval_agent
 
-    async def _delete_session_worker(self) -> None:
-        """Background job that deletes queued sessions."""
-        while True:
-            try:
-                session = await asyncio.wait_for(
-                    self._deletion_queue.get(), timeout=DELETION_IDLE_SECONDS
-                )
-            except TimeoutError:
-                try:
-                    await self._queue_pending_session_deletions(from_worker=True)
-                except Exception:
-                    logger.exception("Failed to scan for pending session deletions")
-                continue
-            if session is None:
-                self._deletion_queue.task_done()
-                return
+    async def _partition_manager(self) -> PartitionManager:
+        """
+        Build the partition manager of MemMachine's partition namespace.
 
-            try:
-                await self._delete_queued_session(session)
-            except Exception:
-                logger.exception("Failed to delete session %s", session.session_key)
-            finally:
-                self._deletion_queue.task_done()
+        A session is a partition of the namespace, named by its session key.
+        Every component holds a session's data under the string of the
+        partition's UUID, so a session created again under a key shares
+        nothing with the session deleted before it.
 
-    async def _delete_queued_session(self, session: SessionData) -> None:
-        lock_service = await self._resources.get_sql_lock_service()
+        Every call gives the same stores, so the managers of every process,
+        and the purge rounds the resource manager runs, are over the same
+        stores.
+        """
+        partitioned_stores = [
+            SessionDataPartitionedStore(self._resources),
+            EpisodePartitionedStore(self._resources),
+            LongTermMemoryPartitionedStore(self._resources),
+        ]
+        partition_registry = await self._resources.get_partition_registry(
+            self._conf.session_manager.database,
+            partition_namespace=_PARTITION_NAMESPACE,
+            tombstone_retention_seconds=(
+                self._conf.session_manager.tombstone_retention_seconds
+            ),
+            partitioned_stores=partitioned_stores,
+        )
+        return PartitionManager(
+            partition_registry,
+            partitioned_stores,
+            tracker=OperationTracker(
+                await self._resources.get_metrics_factory("prometheus"),
+                prefix=_PARTITION_NAMESPACE,
+            ),
+        )
+
+    async def _live_partition(self, session_key: str) -> Registration | None:
+        """
+        Resolve a session key to its live partition, or None when none holds the key.
+
+        A pending partition is not created yet, and a key the registry refuses
+        as a partition name names no partition.
+        """
+        partition_manager = await self._partition_manager()
         try:
-            # The lease prevents concurrent workers during normal operation.
-            # Store deletes still use the session key, so an expired lease
-            # cannot fence a stalled worker from a later session incarnation.
-            async with lock_service.lock(
-                f"session-deletion:{session.session_key}",
-                lease_duration=SESSION_DELETE_LEASE_DURATION,
-                wait_timeout=timedelta(0),
-            ):
-                manager = await self._resources.get_session_data_manager()
-                current = await manager.get_session_info(session.session_key)
-                if (
-                    current is None
-                    or current.status != SessionDataManager.SessionStatus.Deleted
-                ):
-                    return
-                await self._delete_queued_session_data(session, manager)
-        except LockAcquireTimeoutError:
-            # The lease holder will finish or a later database scan will retry.
-            logger.debug("Another worker is deleting session %s", session.session_key)
+            return await partition_manager.resolve_partition(session_key)
+        except (PartitionPendingError, ValueError):
+            return None
 
-    async def _delete_queued_session_data(
-        self, session: SessionData, manager: SessionDataManager
-    ) -> None:
-        semantic_storage = await self._semantic_deletion_storage()
-        async with asyncio.TaskGroup() as tasks:
-            tasks.create_task(
-                self._delete_session_episode_store(
-                    session.session_key, semantic_storage
-                )
-            )
-            if self._conf.episodic_memory.enabled:
-                tasks.create_task(
-                    self._delete_session_episodic_memory(session.session_key)
-                )
-            if semantic_storage is not None:
-                tasks.create_task(
-                    self._delete_session_semantic_memory(session, semantic_storage)
-                )
-        await manager.delete_session(session_key=session.session_key)
-        logger.info("Deleted session %s", session.session_key)
+    async def _get_or_create_partition(self, session_key: str) -> Registration:
+        """
+        Resolve a session key to its live partition, creating the partition when none holds the key.
 
-    async def _queue_pending_session_deletions(
-        self, *, from_worker: bool = False
-    ) -> None:
-        if self._key_to_session is None:
-            return
-        manager = await self._resources.get_session_data_manager()
-        pending = await manager.get_sessions_by_status(
-            SessionDataManager.SessionStatus.Deleted
+        Read-then-create, retried a bounded number of times: a live partition
+        is returned; a pending one is another creator's, which the call waits
+        for; no partition means create, then read again. The call retries
+        when the creation finds the key taken, or the partition is deleted
+        while it is created or before the read after it.
+
+        Raises:
+            ValueError:
+                If the registry refuses the session key as a partition name.
+            PartitionPendingError:
+                If the partition was another creator's and still pending at
+                the last attempt.
+            PartitionCreateAttemptsExhaustedError:
+                If the attempts ran out with the last one losing the key to
+                another creator or deleter.
+
+        """
+        partition_manager = await self._partition_manager()
+        pending_error: PartitionPendingError | None = None
+        for attempt in range(_MAX_GET_OR_CREATE_ATTEMPTS):
+            if attempt:
+                await asyncio.sleep(_GET_OR_CREATE_RETRY_DELAY_SECONDS)
+            try:
+                registration = await partition_manager.resolve_partition(session_key)
+                if registration is None:
+                    await partition_manager.create_partition(session_key)
+                    registration = await partition_manager.resolve_partition(
+                        session_key
+                    )
+            except PartitionPendingError as err:
+                pending_error = err
+                continue
+            except (PartitionAlreadyExistsError, PartitionDeletedError):
+                pending_error = None
+                continue
+            pending_error = None
+            if registration is not None:
+                return registration
+        if pending_error is not None:
+            raise pending_error
+        raise PartitionCreateAttemptsExhaustedError(
+            f"Getting or creating the partition of session {session_key!r} made "
+            f"no progress after {_MAX_GET_OR_CREATE_ATTEMPTS} attempts"
         )
-        if from_worker and not self._started:
-            return
-        for session_key in pending:
-            self._deletion_queue.put_nowait(self._key_to_session(session_key))
 
-    async def _delete_session_episode_store(
-        self,
-        session_key: str,
-        semantic_storage: SemanticStorage | None,
+    @staticmethod
+    async def _require_live_partition(
+        registration: Registration, session_key: str
     ) -> None:
-        episode_store = await self._resources.get_episode_storage()
-        session_filter = FilterComparison(
-            field="session_key",
-            op="=",
-            value=session_key,
-        )
-        while True:
-            episode_ids = await episode_store.get_episode_ids(
-                filter_expr=session_filter,
-                page_size=EPISODE_DELETE_BATCH_SIZE,
-            )
-            if not episode_ids:
-                break
-            if semantic_storage is not None:
-                await semantic_storage.delete_history(episode_ids)
-            await episode_store.delete_episodes(episode_ids)
+        """
+        Raise unless the session's partition is still the one resolved.
 
-    async def _delete_session_episodic_memory(self, session_key: str) -> None:
-        episodic_memory_manager = await self._resources.get_episodic_memory_manager()
-        await episodic_memory_manager.delete_episodic_session(session_key=session_key)
+        Raises:
+            SessionNotFoundError: If the partition was deleted since.
+
+        """
+        try:
+            await registration.require_current()
+        except PartitionDeletedError as err:
+            raise SessionNotFoundError(session_key) from err
 
     async def _delete_session_semantic_memory(
         self,
@@ -499,9 +523,7 @@ class MemMachine:
             return None
         return await self._resources.get_semantic_storage()
 
-    async def start(
-        self, key_to_session: Callable[[str], SessionData] | None = None
-    ) -> None:
+    async def start(self) -> None:
         """
         Start MemMachine background services.
 
@@ -511,9 +533,9 @@ class MemMachine:
         """
         if self._started:
             return
-        self._key_to_session = key_to_session
-        await self._queue_pending_session_deletions()
-        self._delete_worker = asyncio.create_task(self._delete_session_worker())
+        # Starts the registry of MemMachine's partition namespace and its
+        # purge rounds, so this process finishes deletions from its start.
+        await self._partition_manager()
         self._started = True
 
         if self._conf.semantic_memory.enabled:
@@ -535,14 +557,6 @@ class MemMachine:
         if not self._started:
             return
         self._started = False
-        if self._delete_worker is not None:
-            self._delete_worker.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._delete_worker
-        self._delete_worker = None
-        while not self._deletion_queue.empty():
-            self._deletion_queue.get_nowait()
-            self._deletion_queue.task_done()
         if self._conf.semantic_memory.enabled:
             semantic_service = await self._resources.get_semantic_service()
             await semantic_service.stop()
@@ -621,6 +635,11 @@ class MemMachine:
         """
         Create and persist a new session.
 
+        The session's partition is created first, and its record is written
+        under the partition's key. A session whose partition exists is
+        answered when the stored record's data matches, so a creation that
+        stopped before writing its record is completed by the next one.
+
         Args:
             session_key: Unique identifier for the session.
             description: Optional human-readable session description.
@@ -629,27 +648,69 @@ class MemMachine:
         Returns:
             The created session info.
 
+        Raises:
+            InvalidArgumentError:
+                If the registry refuses the session key as a partition name.
+            PartitionPendingError:
+                If another creation holds the session key and has not
+                completed. A caller that takes it for abandoned deletes the
+                session and creates it again.
+            SessionAlreadyExistsError:
+                If the stored session data conflicts with the request.
+            SessionNotFoundError:
+                If the session was deleted while it was created.
+
         """
-        if not self._conf.episodic_memory.enabled:
-            episodic_memory_conf = self._disabled_episodic_conf(session_key)
-        else:
-            episodic_memory_conf = self._with_default_episodic_memory_conf(
-                user_conf=user_conf,
-                session_key=session_key,
-            )
+        # Resolved before the partition is created, so a configuration error
+        # leaves no partition behind.
+        self._episodic_memory_conf(user_conf=user_conf, session_key=session_key)
+
+        partition_manager = await self._partition_manager()
+        try:
+            # A key that is taken is live or pending; resolving it tells which.
+            with contextlib.suppress(PartitionAlreadyExistsError):
+                await partition_manager.create_partition(session_key)
+            registration = await partition_manager.resolve_partition(session_key)
+        except ValueError as err:
+            raise InvalidArgumentError(str(err)) from err
+        if registration is None:
+            raise SessionNotFoundError(session_key)
+        partition_key = str(registration.partition_uuid)
 
         session_data_manager = await self._resources.get_session_data_manager()
-        await session_data_manager.create_or_validate_session(
-            session_key=session_key,
-            configuration={},
-            param=episodic_memory_conf,
-            description=description,
-            metadata={},
+        try:
+            await session_data_manager.create_or_validate_session(
+                session_key=partition_key,
+                configuration={},
+                param=self._episodic_memory_conf(
+                    user_conf=user_conf, session_key=partition_key
+                ),
+                description=description,
+                metadata={},
+            )
+        except SessionAlreadyExistsError as err:
+            raise SessionAlreadyExistsError(session_key) from err
+        await self._require_live_partition(registration, session_key)
+        ret = await session_data_manager.get_session_info(
+            partition_key, status=SessionDataManager.SessionStatus.Active
         )
-        ret = await self.get_session(session_key=session_key)
         if ret is None:
             raise RuntimeError(f"Failed to create session {session_key}")
         return ret
+
+    def _episodic_memory_conf(
+        self,
+        *,
+        user_conf: EpisodicMemoryConfPartial | None,
+        session_key: str,
+    ) -> EpisodicMemoryConf:
+        """Resolve a session's episodic memory configuration, with all memory disabled on a deployment that disables episodic memory."""
+        if not self._conf.episodic_memory.enabled:
+            return self._disabled_episodic_conf(session_key)
+        return self._with_default_episodic_memory_conf(
+            user_conf=user_conf,
+            session_key=session_key,
+        )
 
     async def get_session(
         self, session_key: str
@@ -664,14 +725,25 @@ class MemMachine:
             The session info, or `None` if it does not exist.
 
         """
+        registration = await self._live_partition(session_key)
+        if registration is None:
+            return None
         session_data_manager = await self._resources.get_session_data_manager()
         return await session_data_manager.get_session_info(
-            session_key, status=SessionDataManager.SessionStatus.Active
+            str(registration.partition_uuid),
+            status=SessionDataManager.SessionStatus.Active,
         )
 
     async def delete_session(self, session_data: SessionData) -> None:
         """
         Delete all data associated with a session.
+
+        The session's partition is deleted in one transaction: no request
+        resolves the session once this returns, its key is free, and the
+        partition's purge rounds delete its data once the retention has
+        passed. Semantic sets are named by organization and project, so
+        their features are deleted first, while the key still names this
+        session.
 
         Args:
             session_data: Session context providing the session key.
@@ -683,40 +755,37 @@ class MemMachine:
             SessionNotFoundError: If the session does not exist.
 
         """
-        session_manager = await self._resources.get_session_data_manager()
-        session = await session_manager.get_session_info(session_data.session_key)
-        if session is None:
-            raise SessionNotFoundError(session_data.session_key)
+        partition_manager = await self._partition_manager()
+        try:
+            registration = await partition_manager.resolve_partition(
+                session_data.session_key
+            )
+        except ValueError as err:
+            raise SessionNotFoundError(session_data.session_key) from err
+        except PartitionPendingError:
+            # Deleted like a live partition. No request was served under it,
+            # so semantic memory holds nothing of it.
+            pass
+        else:
+            if registration is None:
+                raise SessionNotFoundError(session_data.session_key)
+            semantic_storage = await self._semantic_deletion_storage()
+            if semantic_storage is not None:
+                await self._delete_session_semantic_memory(
+                    session_data, semantic_storage
+                )
+        await partition_manager.delete_partition(session_data.session_key)
 
-        if session.status == SessionDataManager.SessionStatus.Deleted:
-            return
-
-        await session_manager.update_session_status(
-            session_key=session_data.session_key,
-            status=SessionDataManager.SessionStatus.Deleted,
-        )
-        if self._started:
-            self._deletion_queue.put_nowait(session_data)
-
-    async def search_sessions(
-        self,
-        search_filter: FilterExpr | None = None,
-    ) -> list[str]:
+    async def search_sessions(self) -> list[str]:
         """
-        List active session keys matching a filter.
-
-        Args:
-            search_filter: Optional property filter expression.
+        List the keys of the sessions that exist.
 
         Returns:
-            Keys of active sessions matching the filter.
+            Keys of the sessions whose partitions are live.
 
         """
-        session_data_manager = await self._resources.get_session_data_manager()
-        return await session_data_manager.get_sessions(
-            filters=to_property_filter(search_filter),
-            status=SessionDataManager.SessionStatus.Active,
-        )
+        partition_manager = await self._partition_manager()
+        return await partition_manager.list_partition_names()
 
     async def update_session_episodic_config(
         self,
@@ -741,13 +810,20 @@ class MemMachine:
             SessionNotFoundError: If the session does not exist.
 
         """
+        registration = await self._live_partition(session_key)
+        if registration is None:
+            raise SessionNotFoundError(session_key)
         session_data_manager = await self._resources.get_session_data_manager()
-        await session_data_manager.update_session_episodic_config(
-            session_key=session_key,
-            enabled=enabled,
-            long_term_memory_enabled=long_term_memory_enabled,
-            short_term_memory_enabled=short_term_memory_enabled,
-        )
+        try:
+            await session_data_manager.update_session_episodic_config(
+                session_key=str(registration.partition_uuid),
+                enabled=enabled,
+                long_term_memory_enabled=long_term_memory_enabled,
+                short_term_memory_enabled=short_term_memory_enabled,
+            )
+        except SessionNotFoundError as err:
+            raise SessionNotFoundError(session_key) from err
+        await self._require_live_partition(registration, session_key)
 
     @staticmethod
     def _merge_filter_exprs(
@@ -827,6 +903,8 @@ class MemMachine:
         for entry in episode_entries:
             for key in entry.metadata or {}:
                 validate_user_property_key(key)
+        registration = await self._get_or_create_partition(session_data.session_key)
+        partition_key = str(registration.partition_uuid)
         created_at = datetime.now(UTC)
         # UUID order preserves input order within a batch when timestamps tie.
         batch_ids = sorted(uuid4() for _ in episode_entries)
@@ -841,7 +919,7 @@ class MemMachine:
         ]
         episodes = [
             Episode(
-                session_key=session_data.session_key,
+                session_key=partition_key,
                 metadata=entry.metadata or None,
                 **entry.model_dump(exclude_none=True, exclude={"metadata"}),
             )
@@ -859,10 +937,10 @@ class MemMachine:
 
             async def add_to_episodic_memory() -> None:
                 async with episodic_memory_manager.open_or_create_episodic_memory(
-                    session_key=session_data.session_key,
+                    session_key=partition_key,
                     description="",
                     episodic_memory_config=self._with_default_episodic_memory_conf(
-                        session_key=session_data.session_key
+                        session_key=partition_key
                     ),
                     metadata={},
                 ) as episodic_session:
@@ -875,7 +953,7 @@ class MemMachine:
 
         tasks: list[Coroutine[Any, Any, object]] = [
             episode_storage.add_episodes(
-                session_data.session_key,
+                partition_key,
                 episode_entries,
             )
         ]
@@ -898,6 +976,9 @@ class MemMachine:
         # parallel backends can be detected and repaired.
         results = await asyncio.gather(*tasks, return_exceptions=True)
         _raise_add_episode_errors(task_names, results, episode_ids)
+        # A session deleted while the episodes were written holds none of
+        # them: they are under the deleted partition's key until its purge.
+        await self._require_live_partition(registration, session_data.session_key)
 
         return episode_ids
 
@@ -935,12 +1016,14 @@ class MemMachine:
 
         """
         episodic_memory_manager = await self._resources.get_episodic_memory_manager()
+        registration = await self._get_or_create_partition(session_data.session_key)
+        partition_key = str(registration.partition_uuid)
 
         async with episodic_memory_manager.open_or_create_episodic_memory(
-            session_key=session_data.session_key,
+            session_key=partition_key,
             description="",
             episodic_memory_config=self._with_default_episodic_memory_conf(
-                session_key=session_data.session_key
+                session_key=partition_key
             ),
             metadata={},
         ) as episodic_session:
@@ -1219,25 +1302,31 @@ class MemMachine:
 
         episodic_task: Task | None = None
         semantic_task: Task | None = None
+        episodic_result: list[Episode] | None = None
 
         if MemoryType.Episodic in target_memories:
             episode_storage = await self._resources.get_episode_storage()
-            session_filter = FilterComparison(
-                field="session_key",
-                op="=",
-                value=session_data.session_key,
-            )
-            combined_filter = self._merge_filter_exprs(
-                session_filter,
-                search_filter_expr,
-            )
-            episodic_task = asyncio.create_task(
-                episode_storage.get_episode_messages(
-                    page_size=page_size,
-                    page_num=page_num,
-                    filter_expr=combined_filter,
+            registration = await self._live_partition(session_data.session_key)
+            if registration is None:
+                # No session holds the key, so it has no episodes.
+                episodic_result = []
+            else:
+                session_filter = FilterComparison(
+                    field="session_key",
+                    op="=",
+                    value=str(registration.partition_uuid),
                 )
-            )
+                combined_filter = self._merge_filter_exprs(
+                    session_filter,
+                    search_filter_expr,
+                )
+                episodic_task = asyncio.create_task(
+                    episode_storage.get_episode_messages(
+                        page_size=page_size,
+                        page_num=page_num,
+                        filter_expr=combined_filter,
+                    )
+                )
 
         if self._should_dispatch_to_semantic_memory(target_memories):
             semantic_session = await self._resources.get_semantic_session_manager()
@@ -1256,7 +1345,8 @@ class MemMachine:
 
             semantic_task = asyncio.create_task(_collect_semantic_results())
 
-        episodic_result = await episodic_task if episodic_task else None
+        if episodic_task is not None:
+            episodic_result = await episodic_task
         semantic_result = await semantic_task if semantic_task else None
 
         return MemMachine.ListResults(
@@ -1282,11 +1372,14 @@ class MemMachine:
 
         """
         episode_storage = await self._resources.get_episode_storage()
+        registration = await self._live_partition(session_data.session_key)
+        if registration is None:
+            return 0
 
         session_filter = FilterComparison(
             field="session_key",
             op="=",
-            value=session_data.session_key,
+            value=str(registration.partition_uuid),
         )
 
         search_filter_expr = parse_filter(search_filter) if search_filter else None
@@ -1319,12 +1412,18 @@ class MemMachine:
         episode_storage = await self._resources.get_episode_storage()
         tasks: list[Coroutine[Any, Any, Any]] = []
 
+        registration = await self._live_partition(session_data.session_key)
+        partition_key = (
+            str(registration.partition_uuid) if registration is not None else None
+        )
         episodes = await episode_storage.get_episodes(episode_ids)
         for episode in episodes:
-            if episode.session_key != session_data.session_key:
+            if episode.session_key != partition_key:
                 raise ResourceNotFoundError(
                     f"Episode '{episode.uid}' was not found in this session."
                 )
+        if partition_key is None:
+            return
 
         semantic_storage = await self._semantic_deletion_storage()
         if semantic_storage is not None:
@@ -1336,7 +1435,7 @@ class MemMachine:
         async def delete_from_episodic_memory() -> None:
             try:
                 async with episodic_memory_manager.open_episodic_memory(
-                    session_data.session_key
+                    partition_key
                 ) as episodic_session:
                     await episodic_session.delete_episodes(episode_ids)
             except SessionNotFoundError:

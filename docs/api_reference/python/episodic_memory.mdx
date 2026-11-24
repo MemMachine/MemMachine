@@ -45,7 +45,7 @@ This dataclass defines the environment for a memory instance.
 
 | Attribute | Type | Description |
 | :--- | :--- | :--- |
-| `session_key` | `str` | The `{org_id}/{project_id}` unique identifier. |
+| `session_key` | `str` | The key the session's data is stored under: the UUID of the project's partition. |
 | `long_term_memory` | `LongTermMemory` | The backend vector store instance for this session. |
 | `short_term_memory` | `ShortTermMemory` | The backend relational/cache store for the context window. |
 | `metrics_factory` | `MetricsFactory` | Telemetry provider for monitoring ingestion rates. |

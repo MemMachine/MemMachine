@@ -80,6 +80,7 @@ from memmachine_server.common.errors import (
     SessionAlreadyExistsError,
     SessionNotFoundError,
 )
+from memmachine_server.common.partition_registry import PartitionPendingError
 from memmachine_server.main.memmachine import ALL_MEMORY_TYPES
 from memmachine_server.server.api_v2.config_router import config_router
 from memmachine_server.server.api_v2.exceptions import RestError
@@ -171,6 +172,8 @@ async def create_project(
         raise RestError(code=500, message="configuration error: " + str(e), ex=e) from e
     except SessionAlreadyExistsError as e:
         raise RestError(code=409, message="Project already exists", ex=e) from e
+    except PartitionPendingError as e:
+        raise RestError(code=409, message="Project is being created", ex=e) from e
     except ValueError as e:
         raise RestError(
             code=500, message="server internal error: " + str(e), ex=e

@@ -12,6 +12,7 @@ from memmachine_server.common.errors import (
     SessionAlreadyExistsError,
     SessionNotFoundError,
 )
+from memmachine_server.common.partition_registry import PartitionPendingError
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +84,7 @@ class RestError(HTTPException):
             InvalidNameError,
             InvalidArgumentError,
             ResourceNotReadyError,
+            PartitionPendingError,
         ]
         return any(isinstance(ex, err) for err in known_errors)
 
