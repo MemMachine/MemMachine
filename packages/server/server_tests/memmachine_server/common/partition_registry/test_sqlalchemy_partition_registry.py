@@ -374,23 +374,6 @@ async def test_a_partition_is_pending_until_its_reservation_is_confirmed(
 
 
 @pytest.mark.asyncio
-async def test_only_a_namespaces_live_partitions_are_listed(
-    sqlalchemy_engine, partition_namespace
-):
-    registry = await _registry(sqlalchemy_engine, partition_namespace)
-    other_registry = await _registry(sqlalchemy_engine, f"{partition_namespace}_other")
-
-    for partition_name in ("live", "deleted"):
-        await (await registry._reserve(partition_name)).confirm()
-    await registry._reserve("pending")
-    await (await other_registry._reserve("elsewhere")).confirm()
-    await registry.unregister("deleted")
-
-    assert await registry.list_names() == ["live"]
-    assert await other_registry.list_names() == ["elsewhere"]
-
-
-@pytest.mark.asyncio
 async def test_only_the_reserved_partition_is_confirmed(
     sqlalchemy_engine, partition_namespace
 ):

@@ -455,22 +455,6 @@ class PartitionRegistry(ABC):
         """
         raise NotImplementedError
 
-    @abstractmethod
-    async def list_names(self) -> list[str]:
-        """
-        List the names of the namespace's live partitions.
-
-        Called concurrently with any other call on any process. One read of
-        the registry decides the outcome, reflecting every confirmation and
-        deletion committed before the read. Pending partitions are left out.
-        It only reads, so a call that raises changes nothing.
-
-        Returns:
-            list[str]:
-                The live partitions' names, in no particular order.
-        """
-        raise NotImplementedError
-
     async def unregister(self, partition_name: str) -> None:
         """
         Delete the partition registered under a name, pending or live, and queue its UUID for purge.

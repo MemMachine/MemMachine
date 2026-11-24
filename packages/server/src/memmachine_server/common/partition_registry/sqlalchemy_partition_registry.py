@@ -447,17 +447,6 @@ class SQLAlchemyPartitionRegistry(PartitionRegistry):
         ]
 
     @override
-    async def list_names(self) -> list[str]:
-        async with self._engine.connect() as connection:
-            result = await connection.execute(
-                select(PartitionRow.partition_name).where(
-                    PartitionRow.partition_namespace == self._partition_namespace,
-                    PartitionRow.live.is_(True),
-                )
-            )
-            return list(result.scalars())
-
-    @override
     async def _unregister(self, partition_name: str) -> None:
         async with write_connection(self._engine) as connection:
             await _unregister_where(

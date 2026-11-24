@@ -163,20 +163,6 @@ class PartitionManager:
                 prefix=prefix, after=after, limit=limit
             )
 
-    async def list_partition_names(self) -> list[str]:
-        """
-        List the names of the namespace's live partitions.
-
-        One read of the registry decides the outcome. Pending partitions are
-        left out.
-
-        Returns:
-            list[str]:
-                The live partitions' names, in no particular order.
-        """
-        async with self._tracker("list_partition_names"):
-            return await self._partition_registry.list_names()
-
     async def delete_partition(self, partition_name: str) -> None:
         """
         Delete the partition registered under a name, pending or live.
