@@ -17,6 +17,7 @@ from memmachine_server.common.data_types import (
     PropertyValue,
     SimilarityMetric,
 )
+from memmachine_server.common.errors import SchemaMismatchError
 from memmachine_server.common.filter.filter_parser import (
     And as FilterAnd,
 )
@@ -510,115 +511,171 @@ class MilvusVectorStore(VectorStore):
         return self._store_schema
 
     @override
+    async def prepare(self) -> None:
+        async with self._tracker("prepare"):
+            # Each step runs when it is missing, so the next preparation completes
+            # one that failed part way.
+            index_params = self._client.prepare_index_params()
+            index_params.add_index(
+                field_name=_VECTOR_FIELD,
+                index_name=_VECTOR_FIELD,
+                index_type=_VECTOR_INDEX_TYPE,
+                metric_type=self._SIMILARITY_METRIC_TO_MILVUS_METRIC[
+                    self._store_schema.similarity_metric
+                ],
+                params=_VECTOR_INDEX_PARAMS,
+            )
+            for key in self._store_schema.indexed_properties:
+                index_params.add_index(
+                    field_name=f"{_DECLARED_FIELD_PREFIX}{key}",
+                    index_name=f"{_DECLARED_FIELD_PREFIX}{key}",
+                    index_type="AUTOINDEX",
+                )
+
+            async def _create_collection() -> None:
+                schema = self._client.create_schema(
+                    auto_id=False,
+                    enable_dynamic_field=False,
+                )
+                schema.add_field(
+                    field_name=_ID_FIELD,
+                    datatype=DataType.VARCHAR,
+                    is_primary=True,
+                    max_length=_PRIMARY_ID_LENGTH,
+                )
+                schema.add_field(
+                    field_name=_RECORD_UUID_FIELD,
+                    datatype=DataType.VARCHAR,
+                    max_length=_UUID_LENGTH,
+                )
+                schema.add_field(
+                    field_name=_PARTITION_KEY_FIELD,
+                    datatype=DataType.VARCHAR,
+                    max_length=_UUID_LENGTH,
+                    is_partition_key=True,
+                )
+                schema.add_field(
+                    field_name=_VECTOR_FIELD,
+                    datatype=DataType.FLOAT_VECTOR,
+                    dim=self._store_schema.vector_dimensions,
+                )
+                for key, declared_type in self._store_schema.indexed_properties.items():
+                    if declared_type is str:
+                        schema.add_field(
+                            field_name=f"{_DECLARED_FIELD_PREFIX}{key}",
+                            datatype=DataType.VARCHAR,
+                            max_length=self._max_varchar_length,
+                            nullable=True,
+                        )
+                    else:
+                        schema.add_field(
+                            field_name=f"{_DECLARED_FIELD_PREFIX}{key}",
+                            datatype=_DECLARED_DATA_TYPES[declared_type],
+                            nullable=True,
+                        )
+
+                # Without index_params, so the indexes and the load below are
+                # steps of their own.
+                await self._client.create_collection(
+                    collection_name=self._collection_name,
+                    schema=schema,
+                    properties={"partitionkey.isolation": True},
+                    consistency_level="Bounded",
+                    timeout=self._request_timeout_seconds,
+                )
+
+            # Milvus answers a create of an existing collection with the same
+            # schema with success, so racing creators both go on.
+            if not await self._client.has_collection(
+                self._collection_name,
+                timeout=self._request_timeout_seconds,
+            ):
+                await _create_collection()
+
+            # Index names are their field names, so the ones present say which
+            # fields are indexed. An index a racing creator made is created again
+            # without error.
+            existing = set(
+                await self._client.list_indexes(
+                    self._collection_name,
+                    timeout=self._request_timeout_seconds,
+                )
+            )
+            missing = self._client.prepare_index_params()
+            missing.extend(
+                index for index in index_params if index.index_name not in existing
+            )
+            if missing:
+                await self._client.create_index(
+                    self._collection_name,
+                    missing,
+                    timeout=self._request_timeout_seconds,
+                )
+            # Preparing and then checking refuses a collection of another schema.
+            await self._check_storage()
+
+    @override
     async def startup(self) -> None:
         async with self._tracker("startup"):
-            await self._prepare_storage()
-
-    async def _prepare_storage(self) -> None:
-        """Prepare and load the collection every partition lives in, with its indexes, each step idempotent."""
-        # Each step runs when it is missing, and the collection is loaded, so
-        # the next startup completes one that failed part way.
-        index_params = self._client.prepare_index_params()
-        index_params.add_index(
-            field_name=_VECTOR_FIELD,
-            index_name=_VECTOR_FIELD,
-            index_type=_VECTOR_INDEX_TYPE,
-            metric_type=self._SIMILARITY_METRIC_TO_MILVUS_METRIC[
-                self._store_schema.similarity_metric
-            ],
-            params=_VECTOR_INDEX_PARAMS,
-        )
-        for key in self._store_schema.indexed_properties:
-            index_params.add_index(
-                field_name=f"{_DECLARED_FIELD_PREFIX}{key}",
-                index_name=f"{_DECLARED_FIELD_PREFIX}{key}",
-                index_type="AUTOINDEX",
-            )
-
-        async def _create_collection() -> None:
-            schema = self._client.create_schema(
-                auto_id=False,
-                enable_dynamic_field=False,
-            )
-            schema.add_field(
-                field_name=_ID_FIELD,
-                datatype=DataType.VARCHAR,
-                is_primary=True,
-                max_length=_PRIMARY_ID_LENGTH,
-            )
-            schema.add_field(
-                field_name=_RECORD_UUID_FIELD,
-                datatype=DataType.VARCHAR,
-                max_length=_UUID_LENGTH,
-            )
-            schema.add_field(
-                field_name=_PARTITION_KEY_FIELD,
-                datatype=DataType.VARCHAR,
-                max_length=_UUID_LENGTH,
-                is_partition_key=True,
-            )
-            schema.add_field(
-                field_name=_VECTOR_FIELD,
-                datatype=DataType.FLOAT_VECTOR,
-                dim=self._store_schema.vector_dimensions,
-            )
-            for key, declared_type in self._store_schema.indexed_properties.items():
-                if declared_type is str:
-                    schema.add_field(
-                        field_name=f"{_DECLARED_FIELD_PREFIX}{key}",
-                        datatype=DataType.VARCHAR,
-                        max_length=self._max_varchar_length,
-                        nullable=True,
-                    )
-                else:
-                    schema.add_field(
-                        field_name=f"{_DECLARED_FIELD_PREFIX}{key}",
-                        datatype=_DECLARED_DATA_TYPES[declared_type],
-                        nullable=True,
-                    )
-
-            # Without index_params, so the indexes and the load below are
-            # steps of their own.
-            await self._client.create_collection(
-                collection_name=self._collection_name,
-                schema=schema,
-                properties={"partitionkey.isolation": True},
-                consistency_level="Bounded",
+            await self._check_storage()
+            # Searches need the collection in memory; loading one already
+            # loaded does nothing.
+            await self._client.load_collection(
+                self._collection_name,
                 timeout=self._request_timeout_seconds,
             )
 
-        # Milvus answers a create of an existing collection with the same
-        # schema with success, so racing creators both go on.
+    async def _check_storage(self) -> None:
+        timeout = self._request_timeout_seconds
         if not await self._client.has_collection(
-            self._collection_name,
-            timeout=self._request_timeout_seconds,
+            self._collection_name, timeout=timeout
+        ) or _VECTOR_FIELD not in await self._client.list_indexes(
+            self._collection_name, timeout=timeout
         ):
-            await _create_collection()
-
-        # Index names are their field names, so the ones present say which
-        # fields are indexed. An index a racing creator made is created again
-        # without error.
-        existing = set(
-            await self._client.list_indexes(
-                self._collection_name,
-                timeout=self._request_timeout_seconds,
+            raise SchemaMismatchError(
+                f"The Milvus collection {self._collection_name!r} is missing or "
+                "not fully prepared. Run `memmachine-server prepare`."
             )
+        description = await self._client.describe_collection(
+            self._collection_name, timeout=timeout
         )
-        missing = self._client.prepare_index_params()
-        missing.extend(
-            index for index in index_params if index.index_name not in existing
+        dimensions = next(
+            (
+                int(field["params"]["dim"])
+                for field in description["fields"]
+                if field["name"] == _VECTOR_FIELD
+            ),
+            None,
         )
-        if missing:
-            await self._client.create_index(
-                self._collection_name,
-                missing,
-                timeout=self._request_timeout_seconds,
+        index = await self._client.describe_index(
+            self._collection_name, index_name=_VECTOR_FIELD, timeout=timeout
+        )
+        metric = self._SIMILARITY_METRIC_TO_MILVUS_METRIC[
+            self._store_schema.similarity_metric
+        ]
+        if (
+            dimensions != self._store_schema.vector_dimensions
+            or index.get("metric_type") != metric
+        ):
+            raise SchemaMismatchError(
+                f"The Milvus collection {self._collection_name!r} holds vectors "
+                f"other than this store's: {self._store_schema.vector_dimensions} dimensions "
+                f"by {metric}."
             )
-        # A no-op when the collection is already loaded.
-        await self._client.load_collection(
-            self._collection_name,
-            timeout=self._request_timeout_seconds,
-        )
+        declared_fields = {
+            field["name"]: field["type"]
+            for field in description["fields"]
+            if field["name"].startswith(_DECLARED_FIELD_PREFIX)
+        }
+        declared = {
+            f"{_DECLARED_FIELD_PREFIX}{key}": _DECLARED_DATA_TYPES[property_type]
+            for key, property_type in self._store_schema.indexed_properties.items()
+        }
+        if declared_fields != declared:
+            raise SchemaMismatchError(
+                f"The Milvus collection {self._collection_name!r} holds other "
+                "declared properties than this store's."
+            )
 
     @override
     async def shutdown(self) -> None:
@@ -628,7 +685,7 @@ class MilvusVectorStore(VectorStore):
 
     @override
     async def create_partition(self, partition_uuid: UUID) -> None:
-        # Every partition lives in the collection startup prepared.
+        # Every partition lives in the collection `prepare` created.
         return
 
     @override
@@ -673,5 +730,5 @@ class MilvusVectorStore(VectorStore):
 
     @override
     async def drop_partition(self, partition_uuid: UUID) -> None:
-        # Every partition lives in the collection startup prepared.
+        # Every partition lives in the collection `prepare` created.
         return

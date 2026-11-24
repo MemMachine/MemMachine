@@ -166,6 +166,18 @@ class SegmentStore(PartitionedStore):
     """
 
     @abstractmethod
+    async def prepare(self) -> None:
+        """
+        Create the store's durable resources, or bring them up to date.
+
+        Starting from none, it creates what the store needs; on what an earlier
+        `prepare` created, it brings that up to date through the store's lineage.
+        The caller runs it before `startup`, while no other process uses the
+        store. Run again on what it created, it changes nothing.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
     async def startup(self) -> None:
         """Startup."""
         raise NotImplementedError

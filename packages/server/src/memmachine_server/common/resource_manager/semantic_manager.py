@@ -12,7 +12,7 @@ from memmachine_server.common.configuration import (
 )
 from memmachine_server.common.embedder import Embedder
 from memmachine_server.common.episode_store import EpisodeStorage
-from memmachine_server.common.errors import ResourceNotReadyError
+from memmachine_server.common.errors import ResourceNotReadyError, SchemaMismatchError
 from memmachine_server.common.language_model import LanguageModel
 from memmachine_server.common.metrics_factory import OperationTracker
 from memmachine_server.common.partition_registry import (
@@ -109,6 +109,22 @@ class SemanticResourceManager:
 
         await asyncio.gather(*tasks)
 
+    async def prepare(self) -> None:
+        """
+        Prepare semantic memory's stores.
+
+        Its storage and its config store are each prepared when configured,
+        whether or not semantic memory is enabled. Run it with no server
+        using them, before semantic memory starts.
+        """
+        if self._conf.storage_configured():
+            if self._conf.storage_backend == SemanticMemoryStorageBackend.VECTOR_STORE:
+                await self._prepare_vector_store_semantic_storage()
+            else:
+                await (await self._construct_semantic_storage()).prepare()
+        if self._conf.config_database:
+            await (await self._build_semantic_config_storage()).prepare()
+
     async def get_semantic_storage(self) -> SemanticStorage:
         """Return the semantic storage, building and starting it on first use.
 
@@ -124,7 +140,11 @@ class SemanticResourceManager:
     async def _build_semantic_storage(self) -> SemanticStorage:
         if self._conf.storage_backend == SemanticMemoryStorageBackend.VECTOR_STORE:
             return await self._get_vector_store_semantic_storage()
+        storage = await self._construct_semantic_storage()
+        await storage.startup()
+        return storage
 
+    async def _construct_semantic_storage(self) -> SemanticStorage:
         database = self._conf.database
 
         if not database:
@@ -136,35 +156,118 @@ class SemanticResourceManager:
             sql_engine = await self._resource_manager.get_sql_engine(
                 database, validate=True
             )
-            storage = SqlAlchemyPgVectorSemanticStorage(sql_engine)
-            await storage.startup()
-            return storage
+            return SqlAlchemyPgVectorSemanticStorage(sql_engine)
 
         if self._conf.storage_backend == SemanticMemoryStorageBackend.NEO4J:
             neo4j_engine = await self._resource_manager.get_neo4j_driver(
                 database, validate=True
             )
-            storage = Neo4jSemanticStorage(neo4j_engine)
-            await storage.startup()
-            return storage
+            return Neo4jSemanticStorage(neo4j_engine)
 
-        storage: SemanticStorage
         try:
             sql_engine = await self._resource_manager.get_sql_engine(
                 database, validate=True
             )
-            storage = SqlAlchemyPgVectorSemanticStorage(sql_engine)
+            return SqlAlchemyPgVectorSemanticStorage(sql_engine)
         except ValueError:
             # try graph store
             neo4j_engine = await self._resource_manager.get_neo4j_driver(
                 database, validate=True
             )
-            storage = Neo4jSemanticStorage(neo4j_engine)
+            return Neo4jSemanticStorage(neo4j_engine)
 
+    async def _prepare_vector_store_semantic_storage(self) -> None:
+        (
+            feature_store_name,
+            vector_store_id,
+            store_schema,
+        ) = await self._vector_store_semantic_resources()
+        await self._resource_manager.prepare_vector_store(
+            vector_store_id,
+            vector_store_name=_VECTOR_STORE_NAME,
+            store_schema=store_schema,
+        )
+        partition_registry = await self._resource_manager.build_partition_registry(
+            feature_store_name,
+            partition_namespace=_PARTITION_NAMESPACE,
+            tombstone_retention_seconds=_TOMBSTONE_RETENTION_SECONDS,
+        )
+        await partition_registry.prepare()
+        vector_store = await self._resource_manager.get_vector_store(
+            vector_store_id,
+            vector_store_name=_VECTOR_STORE_NAME,
+            store_schema=store_schema,
+        )
+        # The storage's partition is created here, so starting the storage
+        # finds it; a registry built for preparing runs no purge rounds.
+        partition = await SemanticResourceManager._get_or_create_partition(
+            PartitionManager(
+                partition_registry,
+                [vector_store],
+                tracker=OperationTracker(
+                    await self._resource_manager.get_metrics_factory("prometheus"),
+                    prefix=_PARTITION_NAMESPACE,
+                ),
+            ),
+            vector_store,
+        )
+        sql_engine = await self._resource_manager.get_sql_engine(
+            feature_store_name,
+            validate=True,
+        )
+        await VectorStoreSemanticStorage(sql_engine, partition).prepare()
+
+    async def _get_vector_store_semantic_storage(self) -> SemanticStorage:
+        (
+            feature_store_name,
+            vector_store_id,
+            store_schema,
+        ) = await self._vector_store_semantic_resources()
+        sql_engine = await self._resource_manager.get_sql_engine(
+            feature_store_name,
+            validate=True,
+        )
+        vector_store = await self._resource_manager.get_vector_store(
+            vector_store_id,
+            vector_store_name=_VECTOR_STORE_NAME,
+            store_schema=store_schema,
+        )
+
+        # Semantic memory owns this partition, which `prepare` creates, through
+        # a registry in the database the storage uses.
+        partition_registry = await self._resource_manager.get_partition_registry(
+            feature_store_name,
+            partition_namespace=_PARTITION_NAMESPACE,
+            tombstone_retention_seconds=_TOMBSTONE_RETENTION_SECONDS,
+            partitioned_stores=[vector_store],
+        )
+        partition_manager = PartitionManager(
+            partition_registry,
+            [vector_store],
+            tracker=OperationTracker(
+                await self._resource_manager.get_metrics_factory("prometheus"),
+                prefix=_PARTITION_NAMESPACE,
+            ),
+        )
+        registration = await partition_manager.resolve_partition(_PARTITION_NAME)
+        partition = (
+            None
+            if registration is None
+            else await vector_store.get_partition(registration.partition_uuid)
+        )
+        if partition is None:
+            raise SchemaMismatchError(
+                f"Semantic memory's vector store partition on '{vector_store_id}' "
+                "is missing. Run `memmachine-server prepare`."
+            )
+        storage = VectorStoreSemanticStorage(sql_engine, partition)
         await storage.startup()
         return storage
 
-    async def _get_vector_store_semantic_storage(self) -> SemanticStorage:
+    async def _vector_store_semantic_resources(
+        self,
+    ) -> tuple[str, str, VectorStoreSchema]:
+        """The feature store, the vector store's id, and the schema of the store semantic memory keeps on it."""
         feature_store_name = self._conf.feature_store
         if not feature_store_name:
             raise ResourceNotReadyError(
@@ -179,45 +282,15 @@ class SemanticResourceManager:
                 "semantic_memory",
             )
 
-        sql_engine = await self._resource_manager.get_sql_engine(
-            feature_store_name,
-            validate=True,
-        )
         vector_dimensions = self._conf.vector_dimensions
         if vector_dimensions is None:
             vector_dimensions = (await self._get_default_embedder()).dimensions
-        vector_store = await self._resource_manager.get_vector_store(
-            vector_store_id,
-            vector_store_name=_VECTOR_STORE_NAME,
-            store_schema=VectorStoreSchema(
-                vector_dimensions=vector_dimensions,
-                similarity_metric=self._conf.vector_similarity_metric,
-                indexed_properties={},
-            ),
+        store_schema = VectorStoreSchema(
+            vector_dimensions=vector_dimensions,
+            similarity_metric=self._conf.vector_similarity_metric,
+            indexed_properties={},
         )
-
-        # Semantic memory owns this partition and creates it when the storage
-        # is built, through a registry in the database the storage uses.
-        partition_registry = await self._resource_manager.get_partition_registry(
-            feature_store_name,
-            partition_namespace=_PARTITION_NAMESPACE,
-            tombstone_retention_seconds=_TOMBSTONE_RETENTION_SECONDS,
-            partitioned_stores=[vector_store],
-        )
-        partition = await SemanticResourceManager._get_or_create_partition(
-            PartitionManager(
-                partition_registry,
-                [vector_store],
-                tracker=OperationTracker(
-                    await self._resource_manager.get_metrics_factory("prometheus"),
-                    prefix=_PARTITION_NAMESPACE,
-                ),
-            ),
-            vector_store,
-        )
-        storage = VectorStoreSemanticStorage(sql_engine, partition)
-        await storage.startup()
-        return storage
+        return feature_store_name, vector_store_id, store_schema
 
     @staticmethod
     async def _get_or_create_partition(
@@ -280,6 +353,11 @@ class SemanticResourceManager:
         ) from lost_race
 
     async def get_semantic_config_storage(self) -> SemanticConfigStorage:
+        storage = await self._build_semantic_config_storage()
+        await storage.startup()
+        return storage
+
+    async def _build_semantic_config_storage(self) -> SemanticConfigStorage:
         database = self._conf.config_database
 
         if not database:
@@ -289,15 +367,12 @@ class SemanticResourceManager:
             )
 
         sql_engine = await self._resource_manager.get_sql_engine(database)
-        storage = SemanticConfigStorageSqlAlchemy(sql_engine)
+        storage: SemanticConfigStorage = SemanticConfigStorageSqlAlchemy(sql_engine)
 
         if self._conf.with_config_cache:
             storage = CachingSemanticConfigStorage(
                 wrapped=storage,
             )
-
-        await storage.startup()
-
         return storage
 
     def _get_default_embedder_name(self) -> str:

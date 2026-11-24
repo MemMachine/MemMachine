@@ -5,6 +5,7 @@ import logging
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
 from datetime import UTC, datetime, timedelta, timezone
+from pathlib import Path
 from typing import override
 from uuid import UUID
 
@@ -78,6 +79,11 @@ from memmachine_server.common.payload_codec.plaintext_payload_codec import (
 from memmachine_server.common.properties_json import (
     decode_properties,
     encode_properties,
+)
+from memmachine_server.common.schema_migration import (
+    Lineage,
+    check_lineage,
+    upgrade_lineage,
 )
 from memmachine_server.common.sql import (
     validate_engine_connections,
@@ -206,6 +212,13 @@ class DerivativeLinkRow(BaseSegmentStore):
             "segment_uuid",
         ),
     )
+
+
+SEGMENT_STORE_LINEAGE = Lineage(
+    name="segment_store",
+    versions=Path(__file__).parent / "migrations",
+    metadata=BaseSegmentStore.metadata,
+)
 
 
 class SQLAlchemySegmentStorePartition(SegmentStorePartition):
@@ -931,9 +944,14 @@ class SQLAlchemySegmentStore(SegmentStore):
     # Lifecycle
 
     @override
+    async def prepare(self) -> None:
+        async with self._tracker("prepare"):
+            await upgrade_lineage(self._engine, SEGMENT_STORE_LINEAGE)
+
+    @override
     async def startup(self) -> None:
-        async with self._tracker("startup"), self._engine.begin() as connection:
-            await connection.run_sync(BaseSegmentStore.metadata.create_all)
+        async with self._tracker("startup"):
+            await check_lineage(self._engine, SEGMENT_STORE_LINEAGE)
 
     @override
     async def shutdown(self) -> None:
