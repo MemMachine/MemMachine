@@ -8,6 +8,22 @@ writes into it. Its name is the API's `org_id/project_id`. What the API and
 its documentation call a partition is open (#1812); this document uses the
 registry's word at every layer.
 
+## Scope
+
+This design changes two things: how a partition is identified, and how its
+creation and deletion are sequenced. Its one aim is that a creation or a
+deletion that stops part way is never visible, with as little change to the
+server as that takes.
+
+Every component is left as it is: the session data manager, the episode
+store, the episodic memory manager with its instance cache, short-term and
+long-term memory, and semantic memory keep their schemas, their interfaces,
+and their division of work. They are kept because the aim does not need them
+changed, not because their design is settled, and nothing here depends on
+how a component holds a partition's data beyond the one key it takes.
+[What this design leaves open](#what-this-design-leaves-open) lists what
+that excludes.
+
 ## Problem
 
 A partition's data is spread over several components: its record, its
@@ -186,10 +202,11 @@ then event memory's have passed.
   pending, live, or absent in the registry, and a deleted partition is
   absent, so no request answers for a partition being deleted and a creation
   under a deleted name succeeds at once.
-- **Components keep their keys and interfaces.** The UUID's string is the
-  key each component already takes, and each store is a thin layer over the
-  component's existing operations, so every component stays replaceable on
-  its own.
+- **The change is confined to MemMachine and three stores.** The UUID's
+  string is the key each component already takes, and each store is a thin
+  layer over the component's existing operations. A component that comes to
+  hold partitions by UUID itself removes its store, and nothing else here
+  changes with it.
 - **A memory system keeps its own lifecycle.** MemMachine names event
   memory's partition by its own partition's UUID and deletes that name.
 - **A pending partition is answered as pending.** When to give up on a
@@ -199,10 +216,6 @@ then event memory's have passed.
 
 ## Alternatives considered
 
-- **Each component holding partitions by UUID itself**, with a UUID column
-  or parameter in place of its key. Every component's schema and interface
-  would change together, where the stores here change none and are replaced
-  one at a time.
 - **The partition's row as the registry**, with provisioning, active, and
   deleting states on the row and a job table for deletion. It is a second
   catalog and a second claim protocol beside the partition registry's, and
@@ -219,6 +232,23 @@ then event memory's have passed.
 - **The project's semantic sets deleted in the purge round, by name.** The
   round runs after the name is free, so it would delete the sets of a
   partition created under the name afterwards.
+
+## What this design leaves open
+
+- **Components holding partitions by UUID themselves**, with a UUID column or
+  parameter in place of the session key. It changes each component's schema
+  and interface, which this design avoids, and it removes the stores here
+  one component at a time.
+- **Semantic sets owned by a partition.** They are shared by every partition
+  created under a name (see [Semantic memory](#semantic-memory)).
+- **Whether a request may create a partition.** An add or a search on a
+  name no partition holds creates one.
+- **How the components are divided and composed**: the session data manager
+  holding short-term memory's summary, the instance cache in each process,
+  and MemMachine writing to each memory in turn.
+- **What a pending partition answers to requests other than a creation**,
+  and whether anything deletes one that no caller deletes.
+- **What the partition is called** in the API and its documentation (#1812).
 
 ## Consequences
 
