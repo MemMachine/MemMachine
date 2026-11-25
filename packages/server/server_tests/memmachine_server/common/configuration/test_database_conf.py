@@ -482,3 +482,63 @@ def test_sqlite_vec_vector_store_build_config():
     config = SupportedDB.SQLITE_VEC_VECTOR_STORE.build_config({"path": "vec.db"})
     assert isinstance(config, SQLiteVecVectorStoreConf)
     assert config.path == "vec.db"
+
+
+def test_resolve_paths_takes_relative_sqlite_paths_from_the_directory(tmp_path):
+    databases = DatabasesConf.parse(
+        {
+            "databases": {
+                "sql": {"provider": "sqlite", "config": {"path": "memmachine.db"}},
+                "vs": {
+                    "provider": "sqlite_vector_store",
+                    "config": {"path": "vectors.db", "index_directory": "indexes"},
+                },
+                "vec": {
+                    "provider": "sqlite_vec_vector_store",
+                    "config": {"path": "vec.db"},
+                },
+            }
+        }
+    )
+
+    resolved = databases.resolve_paths(tmp_path)
+
+    assert resolved.relational_db_confs["sql"].path == str(tmp_path / "memmachine.db")
+    assert resolved.sqlite_vector_store_confs["vs"].path == str(tmp_path / "vectors.db")
+    assert resolved.sqlite_vector_store_confs["vs"].index_directory == str(
+        tmp_path / "indexes"
+    )
+    assert resolved.sqlite_vec_vector_store_confs["vec"].path == str(
+        tmp_path / "vec.db"
+    )
+
+
+def test_resolve_paths_keeps_absolute_sqlite_paths(tmp_path):
+    elsewhere = tmp_path / "elsewhere"
+    databases = DatabasesConf.parse(
+        {
+            "databases": {
+                "sql": {
+                    "provider": "sqlite",
+                    "config": {"path": str(elsewhere / "memmachine.db")},
+                },
+                "vs": {
+                    "provider": "sqlite_vector_store",
+                    "config": {
+                        "path": str(elsewhere / "vectors.db"),
+                        "index_directory": str(elsewhere / "indexes"),
+                    },
+                },
+            }
+        }
+    )
+
+    resolved = databases.resolve_paths(tmp_path / "config")
+
+    assert resolved.relational_db_confs["sql"].path == str(elsewhere / "memmachine.db")
+    assert resolved.sqlite_vector_store_confs["vs"].path == str(
+        elsewhere / "vectors.db"
+    )
+    assert resolved.sqlite_vector_store_confs["vs"].index_directory == str(
+        elsewhere / "indexes"
+    )

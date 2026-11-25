@@ -29,7 +29,6 @@ from memmachine_server.common.episode_store import (
     EpisodeStorage,
 )
 from memmachine_server.common.episode_store.episode_sqlalchemy_store import (
-    BaseEpisodeStore,
     SqlAlchemyEpisodeStore,
 )
 from memmachine_server.common.language_model import LanguageModel
@@ -365,6 +364,7 @@ def sqlalchemy_engine(request):
 @pytest_asyncio.fixture
 async def pgvector_semantic_storage(sqlalchemy_pg_engine):
     storage = SqlAlchemyPgVectorSemanticStorage(sqlalchemy_pg_engine)
+    await storage.prepare()
     await storage.startup()
     yield storage
     await storage.delete_all()
@@ -374,6 +374,7 @@ async def pgvector_semantic_storage(sqlalchemy_pg_engine):
 @pytest_asyncio.fixture
 async def in_memory_semantic_storage():
     store = InMemorySemanticStorage()
+    await store.prepare()
     await store.startup()
     yield store
     await store.cleanup()
@@ -417,6 +418,7 @@ async def neo4j_driver(neo4j_container):
 @pytest_asyncio.fixture
 async def neo4j_semantic_storage(neo4j_driver):
     storage = Neo4jSemanticStorage(neo4j_driver)
+    await storage.prepare()
     await storage.startup()
     await storage.delete_all()
     yield storage
@@ -498,10 +500,8 @@ def semantic_storage(request):
 @pytest_asyncio.fixture
 async def semantic_config_storage(sqlalchemy_engine: AsyncEngine):
     engine = sqlalchemy_engine
-    async with engine.begin() as conn:
-        await conn.run_sync(BaseSemanticConfigStore.metadata.create_all)
-
     storage = SemanticConfigStorageSqlAlchemy(engine)
+    await storage.prepare()
     await storage.startup()
 
     yield storage
@@ -513,10 +513,8 @@ async def semantic_config_storage(sqlalchemy_engine: AsyncEngine):
 @pytest_asyncio.fixture
 async def sql_db_episode_storage(sqlalchemy_engine: AsyncEngine):
     engine = sqlalchemy_engine
-    async with engine.begin() as conn:
-        await conn.run_sync(BaseEpisodeStore.metadata.create_all)
-
     storage = SqlAlchemyEpisodeStore(engine)
+    await storage.prepare()
     await storage.startup()
     try:
         await storage.delete_episode_messages()
