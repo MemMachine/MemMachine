@@ -209,14 +209,21 @@ class EmbedderManager(BaseResourceManager[Embedder]):
         api_key = conf.api_key.get_secret_value() or "EMPTY"
 
         params = OpenAIEmbedderParams(
+            # The embedder retries within its time budget; SDK retries under
+            # it would spend that budget unseen.
             client=openai.AsyncOpenAI(
                 api_key=api_key,
                 base_url=conf.base_url,
+                max_retries=0,
             ),
             model=conf.model,
             dimensions=dimensions,
             max_input_length=conf.max_input_length,
             max_retry_interval_seconds=conf.max_retry_interval_seconds,
+            search_retry_budget_seconds=conf.search_retry_budget_seconds,
+            ingest_retry_budget_seconds=conf.ingest_retry_budget_seconds,
+            min_request_time_seconds=conf.min_request_time_seconds,
+            connect_timeout_seconds=conf.connect_timeout_seconds,
             metrics_factory=conf.get_metrics_factory(),
             batch_size=conf.batch_size,
         )
