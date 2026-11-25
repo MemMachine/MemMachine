@@ -191,6 +191,7 @@ async def partition_registry(tmp_path):
             tombstone_retention_seconds=RETENTION_SECONDS,
         ),
     )
+    await registry.prepare()
     await registry.startup()
     yield registry
     await engine.dispose()
@@ -1780,7 +1781,7 @@ async def session_data_manager(tmp_path):
     """A session data manager on a SQLite file."""
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'sessions.db'}")
     manager = SessionDataManagerSQL(engine=engine)
-    await manager.create_tables()
+    await manager.prepare()
     yield manager
     await engine.dispose()
 

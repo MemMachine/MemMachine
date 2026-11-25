@@ -194,11 +194,12 @@ partition under the name.
 ### Retention
 
 The registry is in the session database, and the session manager's
-configuration names the namespace's retention. The retention covers every
-write a request makes under its partition's registration. The event memory
-partition of a deleted MemMachine partition is deleted when a purge round
-reaches it, so its records are purged once the namespace's retention and
-then event memory's have passed.
+configuration names the namespace's retention. `memmachine-server prepare`
+creates the registry's tables there, with every configured store's. The
+retention covers every write a request makes under its partition's
+registration. The event memory partition of a deleted MemMachine partition
+is deleted when a purge round reaches it, so its records are purged once the
+namespace's retention and then event memory's have passed.
 
 ## Decisions
 

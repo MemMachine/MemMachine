@@ -2035,3 +2035,21 @@ class MemMachine:
             tg.create_task(semantic_storage.delete_all())
             tg.create_task(semantic_config_storage.delete_all())
             tg.create_task(episodic_store.delete_all())
+
+
+async def prepare_memmachine_partition_registry(
+    resource_manager: ResourceManagerImpl,
+) -> None:
+    """
+    Prepare the registry of MemMachine's partition namespace.
+
+    Run it with no server using the session manager's database, before one
+    starts.
+    """
+    session_manager = resource_manager.config.session_manager
+    partition_registry = await resource_manager.build_partition_registry(
+        session_manager.database,
+        partition_namespace=_PARTITION_NAMESPACE,
+        tombstone_retention_seconds=session_manager.tombstone_retention_seconds,
+    )
+    await partition_registry.prepare()

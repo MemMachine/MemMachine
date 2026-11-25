@@ -13,7 +13,11 @@ from memmachine_server.common.configuration import (
     Configuration,
 )
 from memmachine_server.common.episode_store import EpisodeEntry
-from memmachine_server.main.memmachine import MemMachine, MemoryType
+from memmachine_server.main.memmachine import (
+    MemMachine,
+    MemoryType,
+    prepare_memmachine_partition_registry,
+)
 
 
 @pytest.fixture
@@ -97,6 +101,7 @@ class TestMemMachineLongMemEval:
     ) -> None:
         memmachine = MemMachine(memmachine_config)
         await memmachine.resource_manager.prepare()
+        await prepare_memmachine_partition_registry(memmachine.resource_manager)
         await memmachine.start()
 
         try:
