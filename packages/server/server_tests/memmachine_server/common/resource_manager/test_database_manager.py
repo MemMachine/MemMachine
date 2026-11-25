@@ -368,6 +368,54 @@ async def test_qdrant_client_kwargs_forwarded(tmp_path):
     assert call_kwargs["api_key"] == "secret-key"
 
 
+async def _build_qdrant_client_kwargs(qdrant_conf: QdrantConf, tmp_path) -> dict:
+    conf = _qdrant_only_conf()
+    conf.qdrant_confs["qdrant1"] = qdrant_conf
+
+    mock_client = AsyncMock()
+    mock_client.get_collections = AsyncMock(return_value=[])
+    mock_client.close = AsyncMock()
+
+    with (
+        patch(
+            "memmachine_server.common.vector_store.qdrant_vector_store.QdrantVectorStoreParams",
+        ),
+        patch(
+            "memmachine_server.common.vector_store.qdrant_vector_store.QdrantVectorStore",
+        ) as mock_store_cls,
+        patch(
+            "qdrant_client.AsyncQdrantClient",
+            return_value=mock_client,
+        ) as mock_cls,
+    ):
+        mock_store_cls.return_value.startup = AsyncMock()
+        builder = DatabaseManager(conf)
+        await builder.async_get_qdrant_client("qdrant1")
+
+    return dict(mock_cls.call_args.kwargs)
+
+
+@pytest.mark.asyncio
+async def test_qdrant_pool_size_forwarded(tmp_path):
+    """pool_size is forwarded to AsyncQdrantClient when configured."""
+    call_kwargs = await _build_qdrant_client_kwargs(
+        QdrantConf(host="localhost", pool_size=64),
+        tmp_path,
+    )
+
+    assert call_kwargs["pool_size"] == 64
+
+
+@pytest.mark.asyncio
+async def test_qdrant_pool_size_omitted_by_default(tmp_path):
+    """Unset pool_size keeps the Qdrant client's own default."""
+    call_kwargs = await _build_qdrant_client_kwargs(
+        QdrantConf(host="localhost"), tmp_path
+    )
+
+    assert "pool_size" not in call_kwargs
+
+
 @pytest.mark.asyncio
 async def test_qdrant_api_key_omitted_when_empty(tmp_path):
     """api_key is not forwarded when it is the empty default."""

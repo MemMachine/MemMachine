@@ -484,6 +484,15 @@ def test_sqlite_vec_vector_store_build_config():
     assert config.path == "vec.db"
 
 
+def test_qdrant_conf_pool_size():
+    default_conf = QdrantConf()
+    assert default_conf.pool_size is None
+
+    conf = SupportedDB.QDRANT.build_config({"pool_size": 64})
+    assert isinstance(conf, QdrantConf)
+    assert conf.pool_size == 64
+
+
 def test_resolve_paths_takes_relative_sqlite_paths_from_the_directory(tmp_path):
     databases = DatabasesConf.parse(
         {
