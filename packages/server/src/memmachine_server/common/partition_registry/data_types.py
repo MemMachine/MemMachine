@@ -6,7 +6,6 @@ Imports nothing from this package.
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Literal
 from uuid import UUID
 
 # The longest partition namespace and partition name a registry holds, in
@@ -47,25 +46,25 @@ class ListedPartition:
     """
     A registered partition, as one listing found it.
 
-    The partition's state is as the listing's read found it, and may have
-    changed since: a pending partition is confirmed or deleted, and a live
-    one deleted, under any holder of this object.
+    Whether the partition is live is as the listing's read found it, and may
+    have changed since: a pending partition is confirmed or deleted, and a
+    live one deleted, under any holder of this object.
 
     Attributes:
         partition_name (str):
             The name the partition is registered under.
         partition_uuid (UUID):
             The partition's UUID.
-        state (Literal["pending", "live"]):
-            "pending" from the reservation of the partition's name until the
-            reservation is confirmed, and "live" from then on.
+        live (bool):
+            Whether the partition's reservation was confirmed. A partition
+            that is not live is pending.
         reserved_at (datetime):
             When the partition's name was reserved, on the database clock.
     """
 
     partition_name: str
     partition_uuid: UUID
-    state: Literal["pending", "live"]
+    live: bool
     reserved_at: datetime
 
 

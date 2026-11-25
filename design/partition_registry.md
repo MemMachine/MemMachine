@@ -178,7 +178,7 @@ class Registration:  # partition_name, partition_uuid
     async def require_current(self) -> None: ...
 
 
-class ListedPartition:  # partition_name, partition_uuid, state, reserved_at
+class ListedPartition:  # partition_name, partition_uuid, live, reserved_at
     ...
 
 
@@ -422,9 +422,9 @@ from the first name after `after`, at most `limit` of them. It is one read:
 the names with a prefix are one run of the primary key that begins at the
 prefix itself, so the read starts there, or after `after`, takes `limit`
 rows in order, and stops at the first name without the prefix. Each
-`ListedPartition` holds the partition's name, its UUID, its state at that
-read, `pending` or `live`, and when its name was reserved (the
-`registered_at` column, which confirming a reservation leaves as it is).
+`ListedPartition` holds the partition's name, its UUID, whether it was live
+at that read, and when its name was reserved (the `registered_at` column,
+which confirming a reservation leaves as it is).
 
 A prefix is the empty string, which every name starts with, or a string
 valid as a partition name: every non-empty start of a name is itself a valid
@@ -729,10 +729,15 @@ differs where a store is remote:
   primary key, so no call's cost grows with the namespace. A limit above the
   cap is refused, so a call that returns fewer partitions than it asked for
   has always reached the end. The cursor is the last name returned.
-- **A listed partition is data, not a handle.** It reports the partition's
-  state as one read found it, which a listing is for, and it offers no
-  operation: acting on a partition takes resolving its name. The state is a
-  string, so a state added later is a new value of the one field.
+- **A listed partition is data, not a handle.** It reports whether the
+  partition was live as one read found it, which a listing is for, and it
+  offers no operation: acting on a partition takes resolving its name.
+- **Whether a partition is live is a boolean**, in the table and in a
+  listing. It is one fact, whether the partition's reservation was
+  confirmed, and reserving and then confirming gives it two values. A
+  deletion has no stage a reader can see. How available a live partition
+  is, such as suspended or moved to colder storage, is another fact, with a
+  column and a field of its own.
 - **`prepare` creates the registry's tables when missing**, as every store's
   `prepare` creates its own durable resources idempotently; `startup`
   creates nothing.
@@ -870,6 +875,10 @@ differs where a store is remote:
   order a group's members end just before the group's prefix with its
   delimiter replaced by the next byte, so the next group is one read of the
   primary key from there, and such a listing takes no change to the tables.
+- **A state of several values in place of the boolean**, as a string in a
+  listing or a column in the table. One field for whether a partition is
+  live and for how available it is would give "live" several values, which
+  every reader of the field would have to tell apart from "pending".
 
 ## Consequences
 

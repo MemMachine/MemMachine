@@ -824,9 +824,9 @@ async def test_a_partition_is_listed_from_its_creation_to_its_deletion(manager):
     await manager.create_partition("q")
 
     listed = await manager.list_partitions(limit=manager.max_list_limit)
-    assert [(partition.partition_name, partition.state) for partition in listed] == [
-        (NAME, "live"),
-        ("q", "live"),
+    assert [(partition.partition_name, partition.live) for partition in listed] == [
+        (NAME, True),
+        ("q", True),
     ]
 
     await manager.delete_partition(NAME)

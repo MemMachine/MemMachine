@@ -2018,10 +2018,10 @@ class _ModelCheckedRegistry:
             self.registry, prefix=prefix, limit=self.rng.randint(1, 3)
         )
         assert [
-            (partition.partition_name, partition.partition_uuid, partition.state)
+            (partition.partition_name, partition.partition_uuid, partition.live)
             for partition in listed
         ] == sorted(
-            (held_name, partition_uuid, "live" if live else "pending")
+            (held_name, partition_uuid, live)
             for held_name, (partition_uuid, live) in self.partitions.items()
             if held_name.startswith(prefix)
         )
@@ -2091,11 +2091,11 @@ async def test_a_listing_answers_the_namespaces_pending_and_live_partitions(
     listed = await registry.list_partitions(limit=registry.max_list_limit)
 
     assert [
-        (partition.partition_name, partition.partition_uuid, partition.state)
+        (partition.partition_name, partition.partition_uuid, partition.live)
         for partition in listed
     ] == [
-        ("live", live.partition_uuid, "live"),
-        ("pending", pending.partition_uuid, "pending"),
+        ("live", live.partition_uuid, True),
+        ("pending", pending.partition_uuid, False),
     ]
     assert all(partition.reserved_at.tzinfo is not None for partition in listed)
 
@@ -2111,7 +2111,7 @@ async def test_a_listed_partition_keeps_its_reservation_time_once_live(
 
     [live] = await registry.list_partitions(limit=1)
 
-    assert (pending.state, live.state) == ("pending", "live")
+    assert (pending.live, live.live) == (False, True)
     assert live.reserved_at == pending.reserved_at
 
 

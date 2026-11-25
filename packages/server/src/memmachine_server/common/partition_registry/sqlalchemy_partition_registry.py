@@ -438,7 +438,7 @@ class SQLAlchemyPartitionRegistry(PartitionRegistry):
             ListedPartition(
                 partition_name=row.partition_name,
                 partition_uuid=row.partition_uuid,
-                state="live" if row.live else "pending",
+                live=row.live,
                 reserved_at=ensure_tz_aware(row.registered_at),
             )
             for row in itertools.takewhile(
