@@ -8,7 +8,7 @@ from uuid import UUID
 
 from memmachine_server.common.metrics_factory import OperationTracker
 
-from .data_types import TombstoneClaimStaleError
+from .data_types import ListedPartition, TombstoneClaimStaleError
 from .partition_registry import PartitionRegistry, Registration
 from .partitioned_store import PartitionedStore
 
@@ -114,6 +114,54 @@ class PartitionManager:
         """
         async with self._tracker("resolve_partition"):
             return await self._partition_registry.resolve(partition_name)
+
+    @property
+    def max_list_limit(self) -> int:
+        """The most partitions one `list_partitions` call may ask for."""
+        return self._partition_registry.max_list_limit
+
+    async def list_partitions(
+        self,
+        *,
+        prefix: str = "",
+        after: str | None = None,
+        limit: int,
+    ) -> list[ListedPartition]:
+        """
+        List the namespace's partitions, pending and live, whose names start with a prefix.
+
+        Partitions are listed in ascending order of their names' UTF-8 bytes,
+        from the first name after `after`. One read of the registry decides
+        the outcome.
+
+        A listing continues from the last name a call returned, and has ended
+        once a call returns fewer partitions than its limit. A partition
+        registered throughout a listing is listed once; one registered or
+        deleted between two of its calls may or may not be listed.
+
+        Args:
+            prefix (str):
+                What a listed partition's name starts with. The empty prefix
+                lists every partition (default: "").
+            after (str | None):
+                The name to list after, which need not be registered. None
+                lists from the first name with the prefix (default: None).
+            limit (int):
+                The most partitions to return, at most `max_list_limit`.
+
+        Returns:
+            list[ListedPartition]:
+                The partitions, in ascending order of their names' bytes.
+
+        Raises:
+            ValueError:
+                If the prefix or `after` is invalid, or the limit is not
+                between 1 and `max_list_limit`.
+        """
+        async with self._tracker("list_partitions"):
+            return await self._partition_registry.list_partitions(
+                prefix=prefix, after=after, limit=limit
+            )
 
     async def delete_partition(self, partition_name: str) -> None:
         """
