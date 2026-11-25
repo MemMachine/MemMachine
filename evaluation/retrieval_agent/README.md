@@ -539,6 +539,10 @@ session_manager:
 
 ## Running Benchmarks
 
+The LoCoMo and WikiMultiHop benchmarks read their datasets from
+`evaluation/data/`. Download them first as described in
+[Datasets](../README.md#datasets).
+
 From `evaluation/retrieval_agent/`:
 
 ```sh
