@@ -66,7 +66,7 @@ behind its choices.
    creates the partition in each store and confirms the reservation, which
    marks the row live. On Qdrant and Milvus, creating the partition does
    nothing, since its records go into the store's one native collection,
-   which startup prepared. A racing creator loses at the registry's primary
+   which `prepare` created. A racing creator loses at the registry's primary
    key, and a pending partition is not answered.
 2. **Get.** The registry resolves the partition name to the live partition
    and answers its registration, and the owner gets each store's handle on

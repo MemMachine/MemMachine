@@ -5,11 +5,10 @@
 
 # Documentation and markdown files (except README.md which is needed for build)
 docs/
-CONTRIBUTING*.md
+CONTRIBUTING.md
 CODE_OF_CONDUCT.md
 GOVERNANCE.md
 SECURITY.md
-STYLE_GUIDE.md
 
 # Docker files (except the main Dockerfile)
 docker-compose*.yml
@@ -82,7 +81,6 @@ temp/
 # Sample and example files
 sample/
 examples/
-maintainers/
 
 # Lock files (keep uv.lock for reproducible builds)
 # uv.lock

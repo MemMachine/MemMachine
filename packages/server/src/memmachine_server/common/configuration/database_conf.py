@@ -2,6 +2,7 @@
 
 from collections.abc import Mapping
 from enum import StrEnum
+from pathlib import Path
 from typing import Any, ClassVar, Self
 
 import yaml
@@ -363,7 +364,10 @@ class SQLiteVectorStoreConf(YamlSerializableMixin):
 
     path: str = Field(
         ...,
-        description="SQLite database file path (used as sqlite+aiosqlite:///<path>)",
+        description=(
+            "SQLite database file path, relative to the configuration file's "
+            "directory unless absolute"
+        ),
     )
     vector_search_engine: SQLiteVectorStoreEngine = Field(
         default=SQLiteVectorStoreEngine.USEARCH,
@@ -372,7 +376,8 @@ class SQLiteVectorStoreConf(YamlSerializableMixin):
     index_directory: str | None = Field(
         default=None,
         description=(
-            "Directory used to persist ANN index files. "
+            "Directory used to persist ANN index files, relative to the "
+            "configuration file's directory unless absolute. "
             "If None, indexes are kept in-memory only and are lost on restart."
         ),
     )
@@ -396,7 +401,10 @@ class SQLiteVecVectorStoreConf(YamlSerializableMixin):
 
     path: str = Field(
         ...,
-        description="SQLite database file path (used as sqlite+aiosqlite:///<path>)",
+        description=(
+            "SQLite database file path, relative to the configuration file's "
+            "directory unless absolute"
+        ),
     )
 
     @model_validator(mode="after")
@@ -413,7 +421,13 @@ class SqlAlchemyConf(MetricsFactoryIdMixin, YamlSerializableMixin, PasswordMixin
     driver: str = Field(..., description="SQLAlchemy driver")
 
     host: str | None = Field(default=None, description="DB connection host")
-    path: str | None = Field(default=None, description="DB file path")
+    path: str | None = Field(
+        default=None,
+        description=(
+            "DB file path, relative to the configuration file's directory "
+            "unless absolute"
+        ),
+    )
     port: int | None = Field(default=None, description="DB connection port")
     user: str | None = Field(default=None, description="DB username")
     password: SecretStr | None = Field(
@@ -724,4 +738,36 @@ class DatabasesConf(BaseModel):
             milvus_confs=milvus_dict,
             sqlite_vector_store_confs=sqlite_vector_store_dict,
             sqlite_vec_vector_store_confs=sqlite_vec_vector_store_dict,
+        )
+
+    def resolve_paths(self, directory: Path) -> Self:
+        """Return a copy whose relative SQLite paths are taken relative to the directory."""
+
+        def resolve(path: str) -> str:
+            return str(directory / path)
+
+        return self.model_copy(
+            update={
+                "relational_db_confs": {
+                    database_id: conf.model_copy(update={"path": resolve(conf.path)})
+                    if conf.dialect == "sqlite" and conf.path
+                    else conf
+                    for database_id, conf in self.relational_db_confs.items()
+                },
+                "sqlite_vector_store_confs": {
+                    database_id: conf.model_copy(
+                        update={
+                            "path": resolve(conf.path),
+                            "index_directory": resolve(conf.index_directory)
+                            if conf.index_directory
+                            else conf.index_directory,
+                        }
+                    )
+                    for database_id, conf in self.sqlite_vector_store_confs.items()
+                },
+                "sqlite_vec_vector_store_confs": {
+                    database_id: conf.model_copy(update={"path": resolve(conf.path)})
+                    for database_id, conf in self.sqlite_vec_vector_store_confs.items()
+                },
+            }
         )

@@ -1,6 +1,5 @@
 """Tests for QdrantVectorStore."""
 
-import asyncio
 import math
 import operator
 import random
@@ -146,6 +145,7 @@ def _params(client, **overrides) -> QdrantVectorStoreParams:
 @pytest_asyncio.fixture
 async def store(any_qdrant_client):
     s = QdrantVectorStore(_params(any_qdrant_client))
+    await s.prepare()
     await s.startup()
     yield s
 
@@ -290,6 +290,7 @@ class TestSimilarityMetrics:
                 store_schema=_schema(similarity_metric=metric),
             )
         )
+        await store.prepare()
         await store.startup()
         partition = await _created(store)
         records = [_make_record(vector=vector) for vector in _METRIC_VECTORS]
@@ -339,6 +340,7 @@ class TestSimilarityMetrics:
                 store_schema=_schema(similarity_metric=metric),
             )
         )
+        await store.prepare()
         await store.startup()
         partition = await _created(store)
         records = [_make_record(vector=vector) for vector in _METRIC_VECTORS]
@@ -1230,6 +1232,7 @@ class TestPartitionIsolation:
                 ),
             )
         )
+        await store.prepare()
         await store.startup()
         partition_a = await _created(store)
         partition_b = await _created(store)
@@ -1280,6 +1283,7 @@ class TestPartitionIsolation:
         other = QdrantVectorStore(
             _params(store._client, vector_store_name=f"{VECTOR_STORE_NAME}_other")
         )
+        await other.prepare()
         await other.startup()
         partition_uuid = uuid4()
         await store.create_partition(partition_uuid)
@@ -1366,6 +1370,7 @@ class TestPurge:
         dropped = QdrantVectorStore(
             _params(any_qdrant_client, vector_store_name="dropped_native")
         )
+        await dropped.prepare()
         await dropped.startup()
         partition = await _created(dropped)
         await partition.upsert(
@@ -1570,6 +1575,7 @@ class TestAgainstAModel:
                 store_schema=_schema(indexed_properties=_MODEL_INDEXED_PROPERTIES),
             )
         )
+        await store.prepare()
         await store.startup()
         rng = random.Random(_MODEL_SEED)
         run = _ModelRun(store, rng, sorted(uuid4() for _ in range(_MODEL_POOL_SIZE)))
@@ -1617,6 +1623,7 @@ class TestMetrics:
         mock_factory.get_histogram.return_value = mock_histogram
 
         store = QdrantVectorStore(_params(qdrant_client, metrics_factory=mock_factory))
+        await store.prepare()
         await store.startup()
 
         partition_uuid = uuid4()
@@ -1658,13 +1665,12 @@ class TestCollectionProvisioningAcrossWorkers:
     ):
         """A collection that exists without its indexes still gets them.
 
-        A second store starting, another worker's or a retry after one died
-        between the two calls, finds the collection there and creates the
-        indexes it lacks.
+        A preparation retried after one died between the two calls finds the
+        collection there and creates the indexes it lacks.
         """
         native = "raced"
 
-        # Stand in for a startup that got as far as the collection and no further.
+        # Stand in for a preparation that got as far as the collection and no further.
         await qdrant_client.create_collection(
             collection_name=native,
             vectors_config=models.VectorParams(
@@ -1673,7 +1679,7 @@ class TestCollectionProvisioningAcrossWorkers:
         )
 
         store = QdrantVectorStore(_params(qdrant_client, vector_store_name=native))
-        await store.startup()
+        await store.prepare()
         try:
             info = await qdrant_client.get_collection(native)
             indexed = set(info.payload_schema or {})
@@ -1688,57 +1694,6 @@ class TestCollectionProvisioningAcrossWorkers:
         finally:
             await qdrant_client.delete_collection(native)
 
-    @staticmethod
-    def _together(monkeypatch, targets: list, attribute: str) -> None:
-        """Make each target's `attribute` wait until every target has called it, so the calls overlap."""
-        barrier = asyncio.Barrier(len(targets))
-        for target in targets:
-            method = getattr(target, attribute)
-
-            async def together(*args, method=method, **kwargs):
-                await barrier.wait()
-                return await method(*args, **kwargs)
-
-            monkeypatch.setattr(target, attribute, together)
-
-    @pytest.mark.asyncio
-    @pytest.mark.parametrize("prefer_grpc", [False, True], ids=["rest", "grpc"])
-    async def test_two_stores_preparing_their_storage_at_once_both_succeed(
-        self, new_qdrant_client, monkeypatch, prefer_grpc
-    ):
-        """Two workers start stores of one name at once, so both prepare the
-        native collection they share at the same moment. Both startups
-        succeed, and a partition each worker creates holds its own
-        records."""
-        client_a = new_qdrant_client(prefer_grpc=prefer_grpc)
-        client_b = new_qdrant_client(prefer_grpc=prefer_grpc)
-        native = f"race_storage_{'grpc' if prefer_grpc else 'rest'}"
-
-        store_a = QdrantVectorStore(_params(client_a, vector_store_name=native))
-        store_b = QdrantVectorStore(_params(client_b, vector_store_name=native))
-        self._together(monkeypatch, [store_a, store_b], "_prepare_storage")
-
-        try:
-            async with asyncio.timeout(60):
-                await asyncio.gather(store_a.startup(), store_b.startup())
-            first = await _created(store_a)
-            second = await _created(store_b)
-            records = {
-                partition: _make_record(vector=_normalize([1.0, 0.0, 0.0]))
-                for partition in (first, second)
-            }
-            for partition, record in records.items():
-                await partition.upsert(records=[record])
-            for partition, record in records.items():
-                [result] = await partition.query(
-                    query_vectors=[record.vector], limit=10
-                )
-                assert [match.record_uuid for match in result.matches] == [record.uuid]
-        finally:
-            await client_a.delete_collection(native)
-            await client_a.close()
-            await client_b.close()
-
 
 @pytest.mark.integration
 class TestStrictMode:
@@ -1747,6 +1702,7 @@ class TestStrictMode:
     @pytest.mark.asyncio
     async def test_the_collection_is_strict(self, qdrant_client):
         store = QdrantVectorStore(_params(qdrant_client))
+        await store.prepare()
         await store.startup()
         info = await qdrant_client.get_collection(VECTOR_STORE_NAME)
         assert info.config.strict_mode_config is not None
@@ -1771,6 +1727,7 @@ class TestStrictMode:
     async def test_a_predicate_of_another_type_matches_nothing(self, qdrant_client):
         """The store answers a mistyped leaf itself; the server would refuse it."""
         store = QdrantVectorStore(_params(qdrant_client))
+        await store.prepare()
         await store.startup()
         partition = await _created(store)
         held = _make_record(vector=_normalize([1.0, 0.0, 0.0]), properties={"age": 5})
@@ -1799,7 +1756,7 @@ class TestStrictModeIsRequested:
     """Local mode does not record strict mode, so the request itself is checked."""
 
     @pytest.mark.asyncio
-    async def test_startup_creates_the_collection_strict(self, monkeypatch):
+    async def test_prepare_creates_the_collection_strict(self, monkeypatch):
         client = AsyncQdrantClient(location=":memory:")
         requested: dict[str, models.StrictModeConfig | None] = {}
         original = client.create_collection
@@ -1810,7 +1767,7 @@ class TestStrictModeIsRequested:
 
         monkeypatch.setattr(client, "create_collection", recording_create_collection)
         store = QdrantVectorStore(_params(client))
-        await store.startup()
+        await store.prepare()
 
         assert set(requested) == {VECTOR_STORE_NAME}
         config = requested[VECTOR_STORE_NAME]

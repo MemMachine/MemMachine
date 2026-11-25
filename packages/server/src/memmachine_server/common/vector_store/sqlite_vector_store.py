@@ -673,14 +673,17 @@ class SQLiteVectorStore(VectorStore):
         return self._store_schema
 
     @override
-    async def startup(self) -> None:
-        if self._started:
-            return
-
+    async def prepare(self) -> None:
         if self._index_directory is not None:
             self._index_directory.mkdir(parents=True, exist_ok=True)
         async with self._sqlalchemy_engine.begin() as connection:
             await connection.run_sync(BaseSQLiteVectorStore.metadata.create_all)
+
+    @override
+    async def startup(self) -> None:
+        if self._started:
+            return
+
         await self._replay_pending_operations()
 
         self._started = True

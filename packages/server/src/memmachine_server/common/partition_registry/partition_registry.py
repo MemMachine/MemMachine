@@ -235,12 +235,19 @@ class PartitionRegistry(ABC):
     """
 
     @abstractmethod
-    async def startup(self) -> None:
+    async def prepare(self) -> None:
         """
-        Make the registry's durable resources ready for use, creating them idempotently.
+        Create the registry's durable resources, starting from none.
 
-        One call serves every registry object over the same resources.
+        The caller runs it before `startup`, while no other process uses the
+        registry. Run again on what it created, it changes nothing. One call
+        serves every registry object over the same resources.
         """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def startup(self) -> None:
+        """Start the registry on the durable resources `prepare` created."""
         raise NotImplementedError
 
     async def reserve(self, partition_name: str) -> Reservation:
