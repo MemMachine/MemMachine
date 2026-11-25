@@ -28,7 +28,6 @@ from .data_types import (
     PartitionAlreadyConfirmedError,
     PartitionDeletedError,
     validate_partition_name,
-    validate_partition_name_prefix,
 )
 
 logger = logging.getLogger(__name__)
@@ -395,8 +394,9 @@ class PartitionRegistry(ABC):
 
         Args:
             prefix (str):
-                What a listed partition's name starts with. The empty prefix
-                lists every partition (default: "").
+                What a listed partition's name starts with: a string valid
+                as a partition name, or the empty string, which lists every
+                partition (default: "").
             after (str | None):
                 The name to list after, which need not be registered. None
                 lists from the first name with the prefix (default: None).
@@ -409,10 +409,13 @@ class PartitionRegistry(ABC):
 
         Raises:
             ValueError:
-                If the prefix or `after` is invalid, or the limit is not
-                between 1 and `max_list_limit`.
+                If the prefix is neither empty nor valid as a partition
+                name, `after` is invalid as a partition name, or the limit
+                is not between 1 and `max_list_limit`.
         """
-        validate_partition_name_prefix(prefix)
+        # Every non-empty start of a partition name is a valid partition name.
+        if prefix:
+            validate_partition_name(prefix)
         if after is not None:
             validate_partition_name(after)
         if not 1 <= limit <= self.max_list_limit:
@@ -428,9 +431,10 @@ class PartitionRegistry(ABC):
         """
         List the registered partitions, pending and live, whose names start with a prefix.
 
-        Called by `list_partitions` with a valid prefix, a valid `after`, and
-        a limit between 1 and `max_list_limit`, concurrently with any other
-        call on any process. One read of the registry decides the outcome,
+        Called by `list_partitions` with a prefix that is empty or valid as
+        a partition name, an `after` that is None or valid as a partition
+        name, and a limit between 1 and `max_list_limit`, concurrently with
+        any other call on any process. One read of the registry decides the outcome,
         reflecting every reservation, confirmation, and deletion committed
         before the read. Names are compared and ordered by their UTF-8
         bytes. It only reads, so a call that raises changes nothing.

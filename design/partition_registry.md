@@ -178,7 +178,7 @@ class Registration:  # partition_name, partition_uuid
     async def require_current(self) -> None: ...
 
 
-class ListedPartition:  # partition_name, partition_uuid, live, registered_at
+class ListedPartition:  # partition_name, partition_uuid, state, reserved_at
     ...
 
 
@@ -422,12 +422,18 @@ from the first name after `after`, at most `limit` of them. It is one read:
 the names with a prefix are one run of the primary key that begins at the
 prefix itself, so the read starts there, or after `after`, takes `limit`
 rows in order, and stops at the first name without the prefix. Each
-`ListedPartition` holds the partition's name, its UUID, whether it was live
-at that read, and when it was registered.
+`ListedPartition` holds the partition's name, its UUID, its state at that
+read, `pending` or `live`, and when its name was reserved (the
+`registered_at` column, which confirming a reservation leaves as it is).
 
-The limit is required and at most `max_list_limit`, which whoever builds the
-registry sets. A call with a larger limit, an invalid prefix, or an invalid
-`after` raises `ValueError` before it reads.
+A prefix is the empty string, which every name starts with, or a string
+valid as a partition name: every non-empty start of a name is itself a valid
+name, so the registry checks a prefix as one and has no further rule for
+prefixes. How long a group's prefix may be depends on the names under it,
+which is its owner's to decide. The limit is required and at most
+`max_list_limit`, which whoever builds the registry sets. A call with a
+larger limit, a prefix that is neither, or an `after` that is not valid as a
+partition name raises `ValueError` before it reads.
 
 `after` is a name and nothing more: the last name the previous call
 returned. The registry keeps no state for a listing, so a cursor never
@@ -723,9 +729,10 @@ differs where a store is remote:
   primary key, so no call's cost grows with the namespace. A limit above the
   cap is refused, so a call that returns fewer partitions than it asked for
   has always reached the end. The cursor is the last name returned.
-- **A listed partition is data, not a handle.** It reports whether the
-  partition was live as one read found it, which a listing is for, and it
-  offers no operation: acting on a partition takes resolving its name.
+- **A listed partition is data, not a handle.** It reports the partition's
+  state as one read found it, which a listing is for, and it offers no
+  operation: acting on a partition takes resolving its name. The state is a
+  string, so a state added later is a new value of the one field.
 - **`prepare` creates the registry's tables when missing**, as every store's
   `prepare` creates its own durable resources idempotently; `startup`
   creates nothing.

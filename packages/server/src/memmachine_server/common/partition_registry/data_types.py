@@ -6,6 +6,7 @@ Imports nothing from this package.
 
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
 # The longest partition namespace and partition name a registry holds, in
@@ -41,40 +42,31 @@ def validate_partition_name(partition_name: str) -> None:
         )
 
 
-def validate_partition_name_prefix(prefix: str) -> None:
-    """Raise ValueError unless the prefix is at most `_PARTITION_NAME_MAX_BYTES` bytes and free of NUL."""
-    if "\x00" in prefix or len(prefix.encode()) > _PARTITION_NAME_MAX_BYTES:
-        raise ValueError(
-            f"Partition name prefix {prefix!r} must be at most "
-            f"{_PARTITION_NAME_MAX_BYTES} bytes and free of NUL characters"
-        )
-
-
 @dataclass(frozen=True)
 class ListedPartition:
     """
     A registered partition, as one listing found it.
 
-    Whether the partition is live is as the listing's read found it, and may
-    have changed since: a pending partition is confirmed or deleted, and a
-    live one deleted, under any holder of this object.
+    The partition's state is as the listing's read found it, and may have
+    changed since: a pending partition is confirmed or deleted, and a live
+    one deleted, under any holder of this object.
 
     Attributes:
         partition_name (str):
             The name the partition is registered under.
         partition_uuid (UUID):
             The partition's UUID.
-        live (bool):
-            Whether the partition's reservation was confirmed. A partition
-            that is not live is pending.
-        registered_at (datetime):
+        state (Literal["pending", "live"]):
+            "pending" from the reservation of the partition's name until the
+            reservation is confirmed, and "live" from then on.
+        reserved_at (datetime):
             When the partition's name was reserved, on the database clock.
     """
 
     partition_name: str
     partition_uuid: UUID
-    live: bool
-    registered_at: datetime
+    state: Literal["pending", "live"]
+    reserved_at: datetime
 
 
 class PartitionAlreadyExistsError(Exception):

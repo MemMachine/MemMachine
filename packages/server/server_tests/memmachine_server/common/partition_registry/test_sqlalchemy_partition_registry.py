@@ -2018,10 +2018,10 @@ class _ModelCheckedRegistry:
             self.registry, prefix=prefix, limit=self.rng.randint(1, 3)
         )
         assert [
-            (partition.partition_name, partition.partition_uuid, partition.live)
+            (partition.partition_name, partition.partition_uuid, partition.state)
             for partition in listed
         ] == sorted(
-            (held_name, partition_uuid, live)
+            (held_name, partition_uuid, "live" if live else "pending")
             for held_name, (partition_uuid, live) in self.partitions.items()
             if held_name.startswith(prefix)
         )
@@ -2091,13 +2091,28 @@ async def test_a_listing_answers_the_namespaces_pending_and_live_partitions(
     listed = await registry.list_partitions(limit=registry.max_list_limit)
 
     assert [
-        (partition.partition_name, partition.partition_uuid, partition.live)
+        (partition.partition_name, partition.partition_uuid, partition.state)
         for partition in listed
     ] == [
-        ("live", live.partition_uuid, True),
-        ("pending", pending.partition_uuid, False),
+        ("live", live.partition_uuid, "live"),
+        ("pending", pending.partition_uuid, "pending"),
     ]
-    assert all(partition.registered_at.tzinfo is not None for partition in listed)
+    assert all(partition.reserved_at.tzinfo is not None for partition in listed)
+
+
+@pytest.mark.asyncio
+async def test_a_listed_partition_keeps_its_reservation_time_once_live(
+    sqlalchemy_engine, partition_namespace
+):
+    registry = await _registry(sqlalchemy_engine, partition_namespace)
+    reservation = await registry._reserve("a")
+    [pending] = await registry.list_partitions(limit=1)
+    await reservation.confirm()
+
+    [live] = await registry.list_partitions(limit=1)
+
+    assert (pending.state, live.state) == ("pending", "live")
+    assert live.reserved_at == pending.reserved_at
 
 
 @pytest.mark.asyncio
@@ -2178,7 +2193,7 @@ async def test_a_listing_refuses_arguments_outside_its_bounds(
     registry = await _registry(sqlalchemy_engine, partition_namespace, max_list_limit=5)
     await registry._reserve("a")
 
-    with pytest.raises(ValueError, match=r"Limit|prefix|Partition name"):
+    with pytest.raises(ValueError, match=r"Limit|Partition name"):
         await registry.list_partitions(**arguments)
 
     assert len(await registry.list_partitions(limit=registry.max_list_limit)) == 1
