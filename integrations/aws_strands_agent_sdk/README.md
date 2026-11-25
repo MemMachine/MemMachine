@@ -11,7 +11,7 @@ MemMachine provides memory tools that can be integrated into AWS Strands Agent S
 Ensure you have the required dependencies:
 
 ```bash
-pip install memmachine
+pip install memmachine-client
 # If using AWS Strands Agent SDK
 pip install strands-agents bedrock-agentcore
 ```

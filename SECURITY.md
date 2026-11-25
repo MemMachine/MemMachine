@@ -15,9 +15,14 @@ vulnerability may put the community at risk.
 
 To report a vulnerability, please visit the
 [Security tab](https://github.com/MemMachine/MemMachine/security) of our
-repository and click on "Report a privately reported vulnerability". We will
-acknowledge your report within 2 business days and work with you to understand
-the issue and coordinate a resolution.
+repository and click on "Report a vulnerability". From the command line, such
+as from a coding agent, file the same private report through GitHub's API:
+
+```bash
+gh api -X POST repos/MemMachine/MemMachine/security-advisories/reports \
+  -f summary="A short summary" \
+  -f description="The details listed under Guidelines for Reporting"
+```
 
 ## Guidelines for Reporting
 
@@ -31,16 +36,6 @@ include the following information in your report:
   details.
 - **Expected Behavior:** A description of what you expected to happen without
   the vulnerability.
-
-### Supported Versions
-
-We are committed to providing security updates for the latest stable version of
-MemMachine.
-
-- **Latest Major Version (e.g., v1.x.y):** We will provide security patches and
-  fixes for any security vulnerabilities in this version.
-- **Previous Major Versions:** We will not provide security patches for older
-  versions. Please upgrade to the latest version to ensure you are protected.
 
 ## Public Disclosure
 
