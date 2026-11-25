@@ -738,19 +738,6 @@ differs where a store is remote:
   deletion has no stage a reader can see. How available a live partition
   is, such as suspended or moved to colder storage, is another fact, with a
   column and a field of its own.
-- **The registry answers for one name at a time.** Its responsibility is a
-  partition's identity and lifecycle: which names are taken, the UUID under
-  each, and what is left to purge. `resolve` is its only read of a
-  partition, and nothing lists, counts, or searches a namespace's
-  partitions. What a partition is for, what it is grouped and shown by, and
-  how its owner's callers query it are the owner's business logic, and the
-  registry knows nothing of what a name means to its owner. An owner that
-  lists its partitions keeps a record of each in its own data, with whatever
-  it lists by, queries those records, and resolves each candidate's name: a
-  candidate is a partition when its registration is live under the UUID its
-  record was written for. The registry stays the one place that decides
-  whether a partition exists, and an owner's record is a candidate, never
-  proof.
 - **`prepare` creates the registry's tables when missing**, as every store's
   `prepare` creates its own durable resources idempotently; `startup`
   creates nothing.
@@ -892,35 +879,6 @@ differs where a store is remote:
   listing or a column in the table. One field for whether a partition is
   live and for how available it is would give "live" several values, which
   every reader of the field would have to tell apart from "pending".
-
-- **The registry listing a namespace's partitions** (`list_names`). It fails
-  on three counts:
-  - **Scale.** A namespace holds every tenant of a deployment. A listing
-    with no arguments reads all of them for each call, however few its
-    caller wants, and its result has no bound a caller can set. It reads the
-    table that every operation's `resolve` reads.
-  - **What a bound takes on.** A name prefix bounds a listing without the
-    registry knowing what the names mean, and name stores commonly offer
-    one. It serves only a grouping that is the leading part of a name, and
-    it has to be specified, indexed, and tested in the registry for every
-    database the registry runs on, since prefix matching and the indexes
-    that serve it differ between them. A filter, an order, or a page beyond
-    the prefix encodes how the owner presents its tenants, which the
-    registry is built not to know.
-  - **What the next query needs.** A caller that wants more than every name
-    wants partitions by creation time or by an attribute, in a page, or
-    counted. The registry holds a name, a UUID, and a registration time. The
-    attributes are in the owner's data, which need not be in the registry's
-    database, so the registry would keep a copy of them or answer without
-    them, and each query would be another operation on its interface.
-
-  An owner's own records answer all of these with the owner's schema and
-  indexes, and one `resolve` for each candidate keeps the answer consistent
-  with the registry. The records cannot show a partition whose record was
-  never written, so an owner writes each record in a store's
-  `create_partition`, while the partition is pending, and every live
-  partition has one. An owner's need to list or search its partitions is a
-  reason to add to the owner's records, never to the registry.
 
 ## Consequences
 
