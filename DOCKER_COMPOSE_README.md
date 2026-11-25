@@ -190,3 +190,8 @@ The `configuration.yml` file contains MemMachine-specific settings:
 - Set database hosts to the service names (`postgres`, `qdrant`, `neo4j`), not `localhost`; inside a container `localhost` is the container itself
 
 This ensures MemMachine can properly connect to the Docker services and use your OpenAI API key for embeddings and LLM operations.
+
+**3. Stores Use the Compose Services**
+Every store in `configuration.yml` must use the PostgreSQL, Qdrant, or Neo4j
+service. Compose prepares the stores in a container of its own before the
+server starts, so a SQLite store's file there is not the file the server opens.
