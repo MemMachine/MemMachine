@@ -60,14 +60,14 @@ def mock_conf():
 
 
 class FakeEmbedder(Embedder):
-    async def ingest_embed(
+    async def _ingest_embed(
         self,
         inputs: list[object],
         max_attempts: int = 1,
     ) -> list[list[float]]:
         return []
 
-    async def search_embed(
+    async def _search_embed(
         self,
         queries: list[object],
         max_attempts: int = 1,

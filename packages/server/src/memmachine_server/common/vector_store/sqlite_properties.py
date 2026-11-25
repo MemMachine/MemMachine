@@ -27,6 +27,7 @@ from sqlalchemy import (
     or_,
 )
 from sqlalchemy.sql.elements import ColumnElement
+from sqlalchemy.types import TypeEngine
 
 from memmachine_server.common.data_types import PropertyType, PropertyValue
 from memmachine_server.common.filter.filter_parser import (
@@ -58,18 +59,21 @@ def epoch_microseconds(value: datetime) -> int:
 
 def property_columns(indexed_properties: Mapping[str, PropertyType]) -> list[Column]:
     """One nullable column per declared key, typed by the key's declared type."""
-    columns: list[Column] = []
-    for key, property_type in indexed_properties.items():
-        if property_type is bool:
-            column_type = Boolean()
-        elif property_type is int or property_type is datetime:
-            column_type = BigInteger()
-        elif property_type is float:
-            column_type = Float()
-        else:
-            column_type = Text()
-        columns.append(Column(property_column_name(key), column_type, nullable=True))
-    return columns
+    return [
+        Column(property_column_name(key), _column_type(property_type), nullable=True)
+        for key, property_type in indexed_properties.items()
+    ]
+
+
+def _column_type(property_type: PropertyType) -> TypeEngine:
+    """The SQL type of a declared property's column."""
+    if property_type is bool:
+        return Boolean()
+    if property_type is int or property_type is datetime:
+        return BigInteger()
+    if property_type is float:
+        return Float()
+    return Text()
 
 
 def property_column_names(indexed_properties: Mapping[str, PropertyType]) -> list[str]:

@@ -3,7 +3,7 @@
 import asyncio
 import logging
 import random
-from collections.abc import AsyncGenerator, Awaitable, Callable, Iterator
+from collections.abc import AsyncGenerator, Awaitable, Callable, Generator
 from contextlib import asynccontextmanager, contextmanager
 from datetime import timedelta
 from uuid import UUID, uuid4
@@ -242,7 +242,7 @@ class _InjectedFailureError(Exception):
 @contextmanager
 def _failing_statement(
     engine: AsyncEngine, prefix: str, armed: Callable[[], bool] = lambda: True
-) -> Iterator[None]:
+) -> Generator[None, None, None]:
     """Fail the first statement on the engine that starts with `prefix` once `armed()` holds."""
     failed = False
 

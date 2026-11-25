@@ -9,7 +9,7 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager, suppress
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Self, cast
+from typing import Any, Self
 from uuid import UUID
 
 from fastapi import FastAPI
@@ -63,12 +63,9 @@ class McpResponse(BaseModel):
     """Error message"""
 
 
-org_id_context_var: contextvars.ContextVar[str | None] = cast(
-    contextvars.ContextVar[str | None],
-    contextvars.ContextVar(
-        "org_id_context",
-        default=None,
-    ),
+org_id_context_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "org_id_context",
+    default=None,
 )
 
 
@@ -83,12 +80,9 @@ def get_current_org_id() -> str | None:
     return org_id_context_var.get()
 
 
-proj_id_context_var: contextvars.ContextVar[str | None] = cast(
-    contextvars.ContextVar[str | None],
-    contextvars.ContextVar(
-        "proj_id_context",
-        default=None,
-    ),
+proj_id_context_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "proj_id_context",
+    default=None,
 )
 
 
@@ -104,12 +98,9 @@ def get_current_proj_id() -> str | None:
 
 
 # Context variable to hold the current user for this request
-user_id_context_var: contextvars.ContextVar[str | None] = cast(
-    contextvars.ContextVar[str | None],
-    contextvars.ContextVar(
-        "user_id_context",
-        default=None,
-    ),
+user_id_context_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "user_id_context",
+    default=None,
 )
 
 
