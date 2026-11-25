@@ -16,7 +16,7 @@ from unittest.mock import (
 
 import pytest
 from pydantic import SecretStr
-from sqlalchemy import inspect
+from sqlalchemy import inspect, text
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from memmachine_server.common.configuration import (
@@ -214,6 +214,35 @@ def test_resource_manager_config_property(invalid_configure):
 
 
 @pytest.mark.asyncio
+async def test_relative_sqlite_path_opens_beside_the_config_file(
+    invalid_configure, tmp_path, monkeypatch
+):
+    """Every process loading the file opens one database, wherever it started."""
+    config_directory = tmp_path / "config"
+    config_directory.mkdir()
+    invalid_configure.resources.databases.relational_db_confs = {
+        SQLDB_ID: SqlAlchemyConf(dialect="sqlite", driver="aiosqlite", path="m.db"),
+    }
+    config_file = config_directory / "cfg.yml"
+    config_file.write_text(invalid_configure.to_yaml(), encoding="utf-8")
+    working_directory = tmp_path / "elsewhere"
+    working_directory.mkdir()
+    monkeypatch.chdir(working_directory)
+
+    resource_manager = ResourceManagerImpl(
+        Configuration.load_yml_file(str(config_file))
+    )
+    try:
+        engine = await resource_manager.get_sql_engine(SQLDB_ID)
+        async with engine.begin() as connection:
+            await connection.execute(text("CREATE TABLE t (x INTEGER)"))
+    finally:
+        await resource_manager.close()
+
+    assert (config_directory / "m.db").is_file()
+
+
+@pytest.mark.asyncio
 async def test_sql_lock_service_uses_session_database_and_is_shared(
     invalid_configure, tmp_path
 ):
@@ -229,6 +258,7 @@ async def test_sql_lock_service_uses_session_database_and_is_shared(
     }
     resource_manager = ResourceManagerImpl(invalid_configure)
     try:
+        await (await resource_manager._build_sql_lock_service()).prepare()
         first, second = await asyncio.gather(
             resource_manager.get_sql_lock_service(),
             resource_manager.get_sql_lock_service(),
@@ -570,6 +600,10 @@ async def test_purge_rounds_are_timed_under_their_namespace_with_the_prometheus_
     monkeypatch.setattr(ResourceManagerImpl, "get_metrics_factory", get_metrics_factory)
     purge_rounds = _record_purge_rounds(monkeypatch)
 
+    registry = await invalid_resource_manager.build_partition_registry(
+        "db", partition_namespace="a", tombstone_retention_seconds=1
+    )
+    await registry.prepare()
     await invalid_resource_manager.get_partition_registry(
         "db",
         partition_namespace="a",

@@ -381,6 +381,14 @@ class DatabaseManager:
             f"VectorGraphStore '{name}' not found in neo4j_confs or nebula_graph_confs"
         )
 
+    async def prepare_graph_stores(self) -> None:
+        """Prepare every configured graph store."""
+        # A Neo4j graph store creates its indexes as its labels grow, so only
+        # NebulaGraph stores have anything to create ahead of use.
+        for name in self.conf.nebula_graph_confs:
+            graph_store = await self.get_vector_graph_store(name)
+            await graph_store.prepare()
+
     @staticmethod
     async def validate_neo4j_driver(name: str, driver: AsyncDriver) -> None:
         """Validate connectivity to a Neo4j instance."""
@@ -532,36 +540,6 @@ class DatabaseManager:
                 session_config=session_config,
                 session_pool_config=session_pool_config,
             )
-
-            # Initialize schema, graph type, and graph
-            try:
-                # Create schema if not exists
-                await client.execute(f"CREATE SCHEMA IF NOT EXISTS {conf.schema_name}")
-                logger.info("Ensured schema exists: %s", conf.schema_name)
-
-                # Set session to the schema
-                await client.execute(f"SESSION SET SCHEMA {conf.schema_name}")
-
-                # Create empty graph type if not exists
-                await client.execute(
-                    f"CREATE GRAPH TYPE IF NOT EXISTS {conf.graph_type_name} AS {{}}"
-                )
-                logger.info("Ensured graph type exists: %s", conf.graph_type_name)
-
-                # Create graph based on the graph type
-                await client.execute(
-                    f"CREATE GRAPH IF NOT EXISTS {conf.graph_name} TYPED {conf.graph_type_name}"
-                )
-                logger.info("Ensured graph exists: %s", conf.graph_name)
-
-                # Set session to the graph
-                await client.execute(f"SESSION SET GRAPH {conf.graph_name}")
-
-            except Exception as e:
-                await client.close()
-                raise ValueError(
-                    f"Failed to initialize NebulaGraph schema/graph for '{name}': {e}"
-                ) from e
 
             if validate:
                 await self.validate_nebula_client(name, client)
@@ -980,6 +958,22 @@ class DatabaseManager:
                 self.vector_stores[key] = store
             return store
 
+    async def prepare_vector_store(
+        self,
+        vector_store_id: str,
+        *,
+        vector_store_name: str,
+        store_schema: VectorStoreSchema,
+    ) -> None:
+        """Prepare the store of one name on a configured vector store, without starting it."""
+        store = await self._construct_vector_store(
+            vector_store_id,
+            self._vector_store_conf(vector_store_id),
+            vector_store_name,
+            store_schema,
+        )
+        await store.prepare()
+
     def _vector_store_conf(
         self, vector_store_id: str
     ) -> QdrantConf | MilvusConf | SQLiteVectorStoreConf | SQLiteVecVectorStoreConf:
@@ -1001,38 +995,41 @@ class DatabaseManager:
     ) -> VectorStore:
         conf = self._vector_store_conf(vector_store_id)
         try:
-            match conf:
-                case QdrantConf():
-                    store = await self._build_qdrant_store(
-                        vector_store_id,
-                        conf,
-                        vector_store_name,
-                        store_schema,
-                    )
-                case MilvusConf():
-                    store = await self._build_milvus_store(
-                        vector_store_id,
-                        conf,
-                        vector_store_name,
-                        store_schema,
-                    )
-                case SQLiteVectorStoreConf():
-                    store = await self._build_sqlite_vector_store(
-                        vector_store_id,
-                        conf,
-                        vector_store_name,
-                        store_schema,
-                    )
-                case SQLiteVecVectorStoreConf():
-                    store = await self._build_sqlite_vec_vector_store(
-                        vector_store_id,
-                        conf,
-                        vector_store_name,
-                        store_schema,
-                    )
+            store = await self._construct_vector_store(
+                vector_store_id, conf, vector_store_name, store_schema
+            )
             await store.startup()
         except Exception as e:
             raise VectorStoreConfigurationError(
                 f"Vector store {vector_store_name!r} on '{vector_store_id}' failed to start: {e}",
             ) from e
         return store
+
+    async def _construct_vector_store(
+        self,
+        vector_store_id: str,
+        conf: QdrantConf
+        | MilvusConf
+        | SQLiteVectorStoreConf
+        | SQLiteVecVectorStoreConf,
+        vector_store_name: str,
+        store_schema: VectorStoreSchema,
+    ) -> VectorStore:
+        """Construct the store of one name on a configured vector store, without starting it."""
+        match conf:
+            case QdrantConf():
+                return await self._build_qdrant_store(
+                    vector_store_id, conf, vector_store_name, store_schema
+                )
+            case MilvusConf():
+                return await self._build_milvus_store(
+                    vector_store_id, conf, vector_store_name, store_schema
+                )
+            case SQLiteVectorStoreConf():
+                return await self._build_sqlite_vector_store(
+                    vector_store_id, conf, vector_store_name, store_schema
+                )
+            case SQLiteVecVectorStoreConf():
+                return await self._build_sqlite_vec_vector_store(
+                    vector_store_id, conf, vector_store_name, store_schema
+                )

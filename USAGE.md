@@ -56,11 +56,15 @@ pip install "memmachine-server[gpu]"
 After installation, users can run the server:
 
 ```bash
-# Using the Python package
-# Note: The config file can be named cfg.yml or configuration.yml
-memmachine-server --config cfg.yml
-# or
-memmachine-server --config configuration.yml
+# Using the Python package. Both commands read the configuration file named
+# by MEMORY_CONFIG, or else ~/.config/memmachine/cfg.yml, or else cfg.yml in
+# the working directory.
+
+# Create the schema of the configured databases before starting the server.
+memmachine-server prepare
+
+# Start the server.
+memmachine-server
 
 # Or if using Docker, the compose script handles this automatically
 ```

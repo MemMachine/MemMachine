@@ -307,6 +307,7 @@ def milvus_client(request):
 async def _started_store(client: AsyncMilvusClient, **overrides) -> MilvusVectorStore:
     """A started store."""
     vector_store = MilvusVectorStore(_params(client, **overrides))
+    await vector_store.prepare()
     await vector_store.startup()
     return vector_store
 
@@ -350,8 +351,9 @@ async def test_every_request_carries_the_timeout(store, monkeypatch):
         spies[name] = MagicMock(wraps=getattr(store._client, name))
         monkeypatch.setattr(store._client, name, spies[name])
 
-    # A collection of its own, so startup creates it through the spies.
+    # A collection of its own, so `prepare` creates it through the spies.
     timed = MilvusVectorStore(_params(store._client, vector_store_name="timed"))
+    await timed.prepare()
     await timed.startup()
     partition = await _created(timed)
     vector = _normalize([1.0, 0.0, 0.0])
@@ -399,10 +401,10 @@ async def partition(store):
 class TestPartitionLifecycle:
     @pytest.mark.asyncio
     @pytest.mark.parametrize("failing_step", ["create_index", "load_collection"])
-    async def test_a_startup_that_failed_part_way_is_as_if_never_attempted(
+    async def test_a_preparation_that_failed_part_way_is_as_if_never_attempted(
         self, store, monkeypatch, failing_step
     ):
-        """The next startup completes the native collection a failed one left behind."""
+        """The next preparation and startup complete what a failed one left behind."""
         partial = MilvusVectorStore(
             _params(
                 store._client,
@@ -414,12 +416,16 @@ class TestPartitionLifecycle:
         async def refuse(*args, **kwargs):
             raise pymilvus.MilvusException(message=f"{failing_step} refused")
 
+        async def prepare() -> None:
+            await partial.prepare()
+            await partial.startup()
+
         with monkeypatch.context() as patch:
             patch.setattr(store._client, failing_step, refuse)
             with pytest.raises(pymilvus.MilvusException, match="refused"):
-                await partial.startup()
+                await prepare()
 
-        await partial.startup()
+        await prepare()
         partition = await _created(partial)
         vector = _normalize([1.0, 0.0, 0.0])
         record = _make_record(vector=vector, properties={"name": "alice"})
@@ -444,6 +450,7 @@ class TestPartitionLifecycle:
         digit_first = MilvusVectorStore(
             _params(store._client, vector_store_name="0_digit_first")
         )
+        await digit_first.prepare()
         await digit_first.startup()
         partition = await _created(digit_first)
         await _purge(digit_first, partition._partition_uuid)
@@ -578,59 +585,6 @@ async def _require_usable(partition: MilvusVectorStorePartition) -> None:
         property_filter=Comparison(field="name", op="=", value="usable"),
     )
     assert [match.record_uuid for match in result.matches] == [record.uuid]
-
-
-class TestConcurrentPreparation:
-    @pytest.mark.asyncio
-    async def test_a_startup_finding_the_native_collection_mid_preparation_completes_it(
-        self, store, other_store, monkeypatch
-    ):
-        """Two stores of one name start at once, and the second finds the
-        native collection the first created but has not yet indexed or
-        loaded. The second's startup completes it, so its partition is usable
-        before the first startup goes on, and both stores' partitions end
-        usable with every index."""
-        # A name of its own, so the first startup creates the native collection.
-        first = MilvusVectorStore(
-            _params(
-                store._client,
-                vector_store_name="raced_preparation",
-                store_schema=_schema(indexed_properties={"name": str}),
-            )
-        )
-        second = MilvusVectorStore(
-            _params(
-                other_store._client,
-                vector_store_name="raced_preparation",
-                store_schema=_schema(indexed_properties={"name": str}),
-            )
-        )
-        first_created = asyncio.Event()
-        second_done = asyncio.Event()
-        create_native_collection = store._client.create_collection
-
-        async def create_and_hold(*args, **kwargs):
-            await create_native_collection(*args, **kwargs)
-            first_created.set()
-            await asyncio.wait_for(second_done.wait(), 60)
-
-        monkeypatch.setattr(store._client, "create_collection", create_and_hold)
-
-        async def start_second() -> None:
-            try:
-                await asyncio.wait_for(first_created.wait(), 60)
-                await second.startup()
-                await _require_usable(await _created(second))
-            finally:
-                second_done.set()
-
-        await asyncio.gather(first.startup(), start_second())
-
-        await _require_usable(await _created(first))
-        assert set(await store._client.list_indexes(first._collection_name)) == {
-            "vector",
-            "_p_name",
-        }
 
 
 class TestUpsertAndQuery:
@@ -1344,6 +1298,7 @@ class TestScores:
                 store_schema=_schema(similarity_metric=metric),
             )
         )
+        await scored.prepare()
         await scored.startup()
         partition = await _created(scored)
         record = _make_record(vector=[1.2, 1.6, 0.0])

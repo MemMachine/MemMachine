@@ -57,7 +57,7 @@ class SQLLeaseStore:
             raise ValueError("SQL lease locks require PostgreSQL or SQLite")
         self._engine = engine
 
-    async def startup(self) -> None:
+    async def prepare(self) -> None:
         """Create the lock and durable fencing counter tables."""
         # It reads the schema before it writes, and on SQLite a transaction
         # that has read cannot wait for another connection's write lock.
@@ -69,6 +69,9 @@ class SQLLeaseStore:
             else:
                 statement = pg_insert(_counter).values(**values)
             await conn.execute(statement.on_conflict_do_nothing(index_elements=["id"]))
+
+    async def startup(self) -> None:
+        pass
 
     async def _lock_resource(
         self, conn: AsyncConnection, key: str, *, create: bool = False

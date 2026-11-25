@@ -50,10 +50,9 @@ class MockShortTermMemoryDataManager(SessionDataManager):
 
     def __init__(self):
         self.data = {}
-        self.tables_created = False
 
-    async def create_tables(self):
-        self.tables_created = True
+    async def prepare(self):
+        pass
 
     async def drop_tables(self):
         pass
@@ -74,7 +73,6 @@ class MockShortTermMemoryDataManager(SessionDataManager):
 
     async def close(self):
         self.data = {}
-        self.tables_created = False
 
     async def create_or_validate_session(
         self,
