@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
@@ -19,7 +19,10 @@ from memmachine_server.common.errors import (
     SessionAlreadyExistsError,
     SessionNotFoundError,
 )
-from memmachine_server.common.partition_registry import PartitionPendingError
+from memmachine_server.common.partition_registry import (
+    ListedPartition,
+    PartitionPendingError,
+)
 from memmachine_server.main.memmachine import ALL_MEMORY_TYPES, MemoryType
 from memmachine_server.server.api_v2.router import RestError, get_memmachine
 from memmachine_server.server.api_v2.service import _SessionData
@@ -75,8 +78,7 @@ def test_create_project(client, mock_memmachine):
 
     mock_memmachine.create_session.assert_awaited_once()
     call_args = mock_memmachine.create_session.call_args[1]
-    assert call_args["session_data"].session_key == "test_org/test_proj"
-    assert call_args["session_data"].org_id == "test_org"
+    assert call_args["session_key"] == "test_org/test_proj"
     assert call_args["description"] == "A test project"
     assert call_args["user_conf"].long_term_memory.embedder == "openai"
     assert call_args["user_conf"].long_term_memory.reranker == "cohere"
@@ -311,23 +313,30 @@ def test_get_episode_count(client, mock_memmachine):
 
 
 def test_list_projects(client, mock_memmachine):
+    registered_at = datetime(2026, 1, 1, tzinfo=UTC)
     mock_memmachine.search_sessions.return_value = [
-        "org1/proj1",
-        "org1/proj2",
-        "org2/proj2",
-        "org10/proj3",
-        "not-project-session",
+        ListedPartition(
+            partition_name="org1/proj1",
+            partition_uuid=uuid4(),
+            live=True,
+            registered_at=registered_at,
+        ),
+        ListedPartition(
+            partition_name="org1/proj2",
+            partition_uuid=uuid4(),
+            live=False,
+            registered_at=registered_at,
+        ),
     ]
 
     response = client.post("/api/v2/projects/list", json={"org_id": "org1"})
 
     assert response.status_code == 200
-    data = response.json()
-    assert len(data) == 2
-    assert data[0] == {"org_id": "org1", "project_id": "proj1"}
-    assert data[1] == {"org_id": "org1", "project_id": "proj2"}
-
-    mock_memmachine.search_sessions.assert_awaited_once_with("org1")
+    assert response.json() == [
+        {"org_id": "org1", "project_id": "proj1", "state": "active"},
+        {"org_id": "org1", "project_id": "proj2", "state": "pending"},
+    ]
+    mock_memmachine.search_sessions.assert_awaited_once_with("org1/")
 
 
 def test_list_projects_requires_org_id(client, mock_memmachine):

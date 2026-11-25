@@ -491,7 +491,7 @@ async def test_create_session_passes_generated_config(
         )
     )
     await memmachine.create_session(
-        DummySessionData("alpha"),
+        "alpha",
         description="demo",
         user_conf=user_conf,
     )
@@ -1595,7 +1595,7 @@ async def test_a_sessions_record_is_written_while_its_partition_is_pending(
 
     session_manager.create_or_validate_session.side_effect = record_written
 
-    await machine.create_session(DummySessionData("alpha"), description="demo")
+    await machine.create_session("alpha", description="demo")
 
     # Written by the creation, then checked once the partition is live.
     assert states == ["pending", "live"]
@@ -1604,7 +1604,7 @@ async def test_a_sessions_record_is_written_while_its_partition_is_pending(
         assert call.kwargs["session_key"] == partition_key
         assert call.kwargs["param"].session_key == partition_key
         assert call.kwargs["description"] == "demo"
-        assert call.kwargs["metadata"] == {"org_id": "org", "partition_name": "alpha"}
+        assert call.kwargs["metadata"] == {}
     session_manager.get_session_info.assert_awaited_once_with(
         partition_key, status=SessionDataManager.SessionStatus.Active
     )
@@ -1617,7 +1617,7 @@ async def test_creating_a_session_whose_partition_is_live_checks_its_record(
     machine, session_manager = _session_machine(minimal_conf, patched_resource_manager)
     partition_key = await _create_partition(partition_registry, "alpha")
 
-    await machine.create_session(DummySessionData("alpha"))
+    await machine.create_session("alpha")
 
     partitioned_store.create_partition.assert_not_awaited()
     kwargs = session_manager.create_or_validate_session.await_args.kwargs
@@ -1632,7 +1632,7 @@ async def test_creating_a_session_another_creation_holds_pending_raises_pending(
     await partition_registry.reserve("alpha")
 
     with pytest.raises(PartitionPendingError):
-        await machine.create_session(DummySessionData("alpha"))
+        await machine.create_session("alpha")
 
     session_manager.create_or_validate_session.assert_not_awaited()
     assert await machine.get_session("alpha") is None
@@ -1648,7 +1648,7 @@ async def test_a_stored_record_that_conflicts_names_the_session_not_its_partitio
     )
 
     with pytest.raises(SessionAlreadyExistsError, match="'alpha'"):
-        await machine.create_session(DummySessionData("alpha"))
+        await machine.create_session("alpha")
 
 
 @pytest.mark.asyncio
@@ -1665,9 +1665,7 @@ async def test_an_invalid_configuration_creates_no_partition(
     machine, _ = _session_machine(conf, patched_resource_manager)
 
     with pytest.raises(ConfigurationError, match="no event memory"):
-        await machine.create_session(
-            DummySessionData("alpha"), user_conf=_EVENT_PROJECT
-        )
+        await machine.create_session("alpha", user_conf=_EVENT_PROJECT)
 
     assert await partition_registry.resolve("alpha") is None
 
@@ -1679,7 +1677,7 @@ async def test_a_session_key_the_registry_refuses_is_an_invalid_argument(
     machine, _ = _session_machine(minimal_conf, patched_resource_manager)
 
     with pytest.raises(InvalidArgumentError, match="Partition name"):
-        await machine.create_session(DummySessionData("x" * 256))
+        await machine.create_session("x" * 256)
 
     assert await machine.get_session("x" * 256) is None
     with pytest.raises(SessionNotFoundError):
@@ -1691,7 +1689,7 @@ async def test_deleting_a_session_frees_its_key_for_a_session_with_another_parti
     minimal_conf, patched_resource_manager, partition_registry
 ):
     machine, session_manager = _session_machine(minimal_conf, patched_resource_manager)
-    await machine.create_session(DummySessionData("alpha"))
+    await machine.create_session("alpha")
     first_key = await _partition_key(partition_registry, "alpha")
 
     await machine.delete_session(DummySessionData("alpha"))
@@ -1700,7 +1698,7 @@ async def test_deleting_a_session_frees_its_key_for_a_session_with_another_parti
     # The record stays for the partition's purge, under the deleted key.
     session_manager.delete_session.assert_not_awaited()
 
-    await machine.create_session(DummySessionData("alpha"))
+    await machine.create_session("alpha")
 
     second_key = await _partition_key(partition_registry, "alpha")
     assert second_key != first_key
@@ -1815,65 +1813,42 @@ async def test_a_session_created_by_an_add_has_its_record(
     )
 
     assert await machine.get_session("org/a") is not None
-    assert await machine.search_sessions("org") == ["org/a"]
 
 
 @pytest.mark.asyncio
-async def test_search_sessions_lists_an_organizations_sessions(
-    minimal_conf, patched_resource_manager, session_data_manager, session_data_store
+async def test_search_sessions_lists_the_pending_and_live_sessions_with_a_key_prefix(
+    minimal_conf, patched_resource_manager, partition_registry
 ):
-    machine = _machine_with_records(
-        minimal_conf, patched_resource_manager, session_data_manager
-    )
-    for session_key, org_id in (
-        ("org/a", "org"),
-        ("org/b", "org"),
-        ("other/c", "other"),
-    ):
-        await machine.create_session(DummySessionData(session_key, org_id=org_id))
+    machine, _ = _session_machine(minimal_conf, patched_resource_manager)
+    for session_key in ("org/a", "org/deleted", "other/c"):
+        await machine.create_session(session_key)
+    await machine.delete_session(DummySessionData("org/deleted"))
+    await partition_registry.reserve("org/pending")
 
-    assert sorted(await machine.search_sessions("org")) == ["org/a", "org/b"]
-    assert await machine.search_sessions("other") == ["other/c"]
-    assert await machine.search_sessions("unused") == []
+    listed = await machine.search_sessions("org/")
+
+    assert [(session.partition_name, session.live) for session in listed] == [
+        ("org/a", True),
+        ("org/pending", False),
+    ]
+    assert listed[0].partition_uuid == UUID(
+        await _partition_key(partition_registry, "org/a")
+    )
 
 
 @pytest.mark.asyncio
-async def test_search_sessions_lists_a_session_while_its_partition_is_live(
-    minimal_conf,
-    patched_resource_manager,
-    partition_registry,
-    session_data_manager,
-    session_data_store,
+async def test_search_sessions_reads_a_listing_longer_than_one_registry_read(
+    minimal_conf, patched_resource_manager, partition_registry
 ):
-    machine = _machine_with_records(
-        minimal_conf, patched_resource_manager, session_data_manager
-    )
-    session = DummySessionData("org/a", org_id="org")
-    await machine.create_session(session)
-    deleted_key = await _partition_key(partition_registry, "org/a")
+    partition_registry._max_list_limit = 2
+    machine, _ = _session_machine(minimal_conf, patched_resource_manager)
+    session_keys = [f"org/{index}" for index in range(5)]
+    for session_key in session_keys:
+        await machine.create_session(session_key)
 
-    await machine.delete_session(session)
+    listed = await machine.search_sessions("org/")
 
-    # The record stays for the partition's purge, and the session is gone.
-    assert await session_data_manager.get_session_info(deleted_key) is not None
-    assert await machine.search_sessions("org") == []
-
-    await machine.create_session(session)
-
-    assert await machine.search_sessions("org") == ["org/a"]
-
-
-@pytest.mark.asyncio
-async def test_search_sessions_and_get_session_agree_on_a_session_without_a_record(
-    minimal_conf, patched_resource_manager, partition_registry, session_data_manager
-):
-    machine = _machine_with_records(
-        minimal_conf, patched_resource_manager, session_data_manager
-    )
-    await _create_partition(partition_registry, "org/a")
-
-    assert await machine.search_sessions("org") == []
-    assert await machine.get_session("org/a") is None
+    assert [session.partition_name for session in listed] == session_keys
 
 
 @pytest.mark.asyncio
@@ -1933,7 +1908,6 @@ async def test_an_add_creates_its_session_and_writes_under_the_partition_key(
     opened = episodic_manager.open_or_create_episodic_memory.call_args.kwargs
     assert opened["session_key"] == partition_key
     assert opened["episodic_memory_config"].session_key == partition_key
-    assert opened["metadata"] == {"org_id": "org", "partition_name": "alpha"}
 
 
 @pytest.mark.asyncio

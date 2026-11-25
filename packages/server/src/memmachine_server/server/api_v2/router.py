@@ -162,7 +162,7 @@ async def create_project(
         ltm_partial = _ltm_partial_from_project_config(spec.config)
         user_conf = EpisodicMemoryConfPartial(long_term_memory=ltm_partial)
         session = await memmachine.create_session(
-            session_data=session_data,
+            session_key=session_data.session_key,
             description=spec.description,
             user_conf=user_conf,
         )
@@ -241,16 +241,15 @@ async def list_projects(
     memmachine: Annotated[MemMachine, Depends(get_memmachine)],
 ) -> list[dict[str, str]]:
     """List projects in one organization."""
-    sessions = await memmachine.search_sessions(spec.org_id)
+    prefix = f"{spec.org_id}/"
+    sessions = await memmachine.search_sessions(prefix)
     return [
         {
-            "org_id": org_id,
-            "project_id": project_id,
+            "org_id": spec.org_id,
+            "project_id": session.partition_name.removeprefix(prefix),
+            "state": "active" if session.live else "pending",
         }
-        for org_id, project_id in (
-            session.split("/", 1) for session in sessions if "/" in session
-        )
-        if org_id == spec.org_id
+        for session in sessions
     ]
 
 

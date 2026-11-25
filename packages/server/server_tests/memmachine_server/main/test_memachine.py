@@ -98,7 +98,7 @@ async def test_memmachine_list_search_paginates_semantic(memmachine: MemMachine)
     set_metadata = {
         "work_type": "pagination",
     }
-    await memmachine.create_session(session_info)
+    await memmachine.create_session(session_info.session_key)
     await memmachine.create_semantic_set_type(
         session_data=session_info,
         is_org_level=False,
@@ -176,7 +176,7 @@ async def test_memmachine_create_get_and_delete_session(memmachine: MemMachine):
 
     try:
         session_info = await memmachine.create_session(
-            delete_handle,
+            session_key,
             description="integration-session",
         )
 
@@ -214,7 +214,7 @@ async def test_memmachine_a_session_created_again_holds_none_of_the_deleted_sess
     )
 
     try:
-        await memmachine.create_session(session)
+        await memmachine.create_session(session_key)
         await memmachine.add_episodes(
             session,
             [
@@ -231,7 +231,7 @@ async def test_memmachine_a_session_created_again_holds_none_of_the_deleted_sess
         await memmachine.delete_session(session)
         assert await memmachine.episodes_count(session) == 0
 
-        await memmachine.create_session(session)
+        await memmachine.create_session(session_key)
 
         assert await memmachine.episodes_count(session) == 0
         listed = await memmachine.list_search(
@@ -255,24 +255,30 @@ async def test_memmachine_a_session_created_again_holds_none_of_the_deleted_sess
 async def test_memmachine_search_sessions_lists_a_session_until_its_deletion(
     memmachine: MemMachine,
 ):
-    org_id = f"listed-org-{uuid4()}"
-    created_sessions = [f"listed-session-{uuid4()}" for _ in range(2)]
+    prefix = f"listed-{uuid4()}/"
     sessions = [
-        _Session(session_key=key, org_id=org_id, project_id=f"project-{key}")
-        for key in created_sessions
+        _Session(
+            session_key=f"{prefix}{name}",
+            org_id=f"org-{name}",
+            project_id=f"project-{name}",
+        )
+        for name in ("a", "b")
     ]
 
     try:
         for session in sessions:
-            await memmachine.create_session(session)
+            await memmachine.create_session(session.session_key)
 
-        assert sorted(await memmachine.search_sessions(org_id)) == sorted(
-            created_sessions
-        )
+        listed = await memmachine.search_sessions(prefix)
+        assert [(session.partition_name, session.live) for session in listed] == [
+            (f"{prefix}a", True),
+            (f"{prefix}b", True),
+        ]
 
         await memmachine.delete_session(sessions[0])
 
-        assert await memmachine.search_sessions(org_id) == [created_sessions[1]]
+        listed = await memmachine.search_sessions(prefix)
+        assert [session.partition_name for session in listed] == [f"{prefix}b"]
     finally:
         for session in sessions:
             remaining = await memmachine.get_session(session.session_key)

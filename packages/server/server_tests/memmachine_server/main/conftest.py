@@ -315,7 +315,7 @@ async def session_data(memmachine: MemMachine):
 
     await semantic_session.delete_feature_set(session_data=s_data)
 
-    await memmachine.create_session(s_data)
+    await memmachine.create_session(s_data.session_key)
 
     yield s_data
 

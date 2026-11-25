@@ -67,9 +67,8 @@ remove is invisible, and a partition manager's purge rounds remove it.
 
 ### What a component holds under the key
 
-- The session data manager holds the partition's record, with its name, its
-  organization, its description, and its settings, and short-term memory's
-  summary.
+- The session data manager holds the partition's record, with its
+  description and settings, and short-term memory's summary.
 - The episode store holds the partition's episodes.
 - Event memory holds the event memory partition named by the key, and
   declarative memory holds the collections named by the key.
@@ -110,10 +109,11 @@ enabled, so a deletion reaches data written while a memory was enabled.
 
 The partition manager reserves the name, creates the partition in every
 store, and confirms the reservation. The session data manager's store writes
-the record under the key, with the partition's name, organization,
-description, and settings, and the long-term memory store creates the event
-memory partition. Both happen while the partition is pending, so every live
-partition has its record and its long-term storage.
+the record under the key, with the partition's description and settings,
+and the long-term memory store creates the event memory partition, when the
+deployment configures event memory. Both happen while the partition is
+pending, so every live partition has its record and its event memory
+partition.
 
 A creation under a name that a live partition holds creates nothing. It
 compares its settings with the stored record's: equal settings answer the
@@ -164,16 +164,15 @@ backoff, and dead-lettering.
 
 ### Listing
 
-Listing an organization's partitions reads MemMachine's own records. The
-records that name the organization are the candidates, and a candidate is
-listed when resolving its name answers a live registration whose UUID is the
-record's key. A deleted partition's record waits for the purge like the rest
-of its data, and it fails that check from the moment the deletion commits. A
-partition created again under the name is listed by its own record.
+Listing an organization's partitions is the registry's
+[listing by name prefix](partition_registry.md#operations): the partitions
+whose names start with the organization's id and the delimiter. A partition
+is listed from the reservation of its name to its deletion, with whether it
+is live, so a partition left pending is listed, as pending. No component is
+read.
 
-The registry answers for one name at a time and lists nothing (see its
-[decisions](partition_registry.md#decisions)). What a listing selects by,
-its order, and its size are MemMachine's, and they change with the record.
+The registry caps how many partitions one call answers. MemMachine reads an
+organization's listing a page at a time, and answers all of it.
 
 ### Semantic memory
 
@@ -206,19 +205,17 @@ then event memory's have passed.
 - **One UUID for everything a partition owns, minted by the registry.** A
   name created again starts empty in every component, and a late write or a
   late purge reaches only the partition it was meant for. Outside the
-  registry, only a partition's record holds its name, so renaming a
-  partition rewrites one record, a store's naming rules meet the UUID and
-  never a caller's text, and a deleted partition's tombstone carries no
-  name.
+  registry, nothing a partition owns holds its name, so renaming a
+  partition rewrites no component's records, a store's naming rules meet
+  the UUID and never a caller's text, and what waits for a purge is held
+  without the name.
 - **The registry decides whether a partition exists.** A partition is
   pending, live, or absent in the registry, and a deleted partition is
   absent, so no request answers for a partition being deleted and a creation
   under a deleted name succeeds at once.
-- **MemMachine lists partitions from its own records, and the registry
-  confirms each.** The record carries what a listing selects by, so a
-  listing can gain a filter, an order, or a page without a change to the
-  registry. Getting a partition and listing it read the same record behind
-  the same check, so they agree.
+- **A listing is the registry's.** The registry knows every partition,
+  pending ones included, and an organization is the start of its
+  partitions' names, so MemMachine keeps no index of its own for listing.
 - **The change is confined to MemMachine and three stores.** The UUID's
   string is the key each component already takes, and each store is a thin
   layer over the component's existing operations. A component that comes to
@@ -247,13 +244,11 @@ then event memory's have passed.
   one. A purge addressed by UUID is safe without a lease, and the
   registry's claim on a tombstone keeps two purges apart.
 - **The delete request deleting the record**, so that a listing reads the
-  records without checking them. The records would be a second source for
-  which partitions exist, right only while every deletion reaches them.
-- **A listing from the registry.** Every call would read every name in the
-  namespace to answer for one organization, and bounding it would put
-  MemMachine's organizations, and later its paging and filters, into the
-  registry (see the registry's
-  [alternatives](partition_registry.md#alternatives-considered)).
+  records. The records would be a second source for which partitions exist.
+- **A listing from the records, each checked against the registry.** Every
+  record would hold its partition's name and organization, a listing would
+  read the registry once for each record, and a partition left pending
+  before its record was written would be listed nowhere.
 - **A creation replacing a partition left pending**, after a wait. How long
   a creation may take before it counts as abandoned is a policy the server
   would hold for every caller.
@@ -284,14 +279,20 @@ then event memory's have passed.
   sets, named by organization and project, would not follow one.
 - **Paging a listing.** A listing answers all of an organization's
   partitions at once.
+- **Creating everything a partition has before it is confirmed.**
+  Declarative memory creates a partition's collections and indexes at the
+  partition's first write, and semantic memory creates a set at the set's
+  first write.
 - **What the partition is called** in the API and its documentation (#1812).
 
 ## Consequences
 
 - A request reads the registry once before its work, and a write reads it
   once more.
-- A listing reads the organization's records, and then one record and one
-  registration for each.
+- A listing of an organization reads the registry once for each page of
+  the organization's partitions, and no component.
+- A listing shows a partition left pending, which getting it does not
+  answer.
 - A deleted partition's data is unreachable from the deletion and is
   physically deleted after the namespace's retention, and its event memory
   records after event memory's retention as well.
