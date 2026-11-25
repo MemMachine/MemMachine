@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 from typing import TYPE_CHECKING
 
 from memmachine_server.common.embedder import Embedder
@@ -16,8 +15,6 @@ if TYPE_CHECKING:
         OpenAIEmbedderConf,
         SentenceTransformerEmbedderConf,
     )
-
-logger = logging.getLogger(__name__)
 
 
 class EmbedderManager(BaseResourceManager[Embedder]):
@@ -54,13 +51,13 @@ class EmbedderManager(BaseResourceManager[Embedder]):
         """Trigger lazy initialization of all embedders concurrently."""
         return await self.build_all_with_error_tracking(self.get_all_names())
 
-    async def get_embedder(self, name: str, validate: bool = False) -> Embedder:
+    async def get_embedder(self, name: str) -> Embedder:
         """Return a named embedder, building it on first access."""
-        return await self._get_resource_with_locking(name, validate=validate)
+        return await self._get_resource_with_locking(name)
 
-    async def _build_resource(self, name: str, validate: bool = False) -> Embedder:
+    async def _build_resource(self, name: str) -> Embedder:
         """Build an embedder by name."""
-        return await self._build_embedder(name, validate=validate)
+        return await self._build_embedder(name)
 
     def remove_embedder(self, name: str) -> bool:
         """
@@ -132,17 +129,7 @@ class EmbedderManager(BaseResourceManager[Embedder]):
         else:
             raise ValueError(f"Unknown embedder provider: {provider}")
 
-    @staticmethod
-    async def _validate_embedder(name: str, embedder: Embedder) -> None:
-        """Validate that the embedder is working."""
-        try:
-            logger.info("Validating embedder '%s' is working.", name)
-            _ = await embedder.search_embed(["a"])
-            logger.info("Embedder '%s' is valid.", name)
-        except Exception as e:
-            raise InvalidEmbedderError(f"embedder '{name}' is invalid. {e}") from e
-
-    async def _build_embedder(self, name: str, validate: bool) -> Embedder:
+    async def _build_embedder(self, name: str) -> Embedder:
         """Construct an embedder based on provider."""
         ret: Embedder | None = None
         if name in self.conf.amazon_bedrock:
@@ -153,8 +140,6 @@ class EmbedderManager(BaseResourceManager[Embedder]):
             ret = self._build_sentence_transformer_embedders(name)
         if ret is None:
             raise InvalidEmbedderError(f"Embedder with name {name} not found.")
-        if validate:
-            await self._validate_embedder(name, ret)
         return ret
 
     def _build_amazon_bedrock_embedders(self, name: str) -> Embedder:

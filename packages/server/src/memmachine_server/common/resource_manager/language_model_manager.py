@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import logging
-
 from pydantic import SecretStr
 
 from memmachine_server.common.configuration.language_model_conf import (
@@ -16,8 +14,6 @@ from memmachine_server.common.configuration.language_model_conf import (
 from memmachine_server.common.errors import InvalidLanguageModelError
 from memmachine_server.common.language_model.language_model import LanguageModel
 from memmachine_server.common.resource_manager.base_manager import BaseResourceManager
-
-logger = logging.getLogger(__name__)
 
 
 class LanguageModelManager(BaseResourceManager[LanguageModel]):
@@ -60,15 +56,13 @@ class LanguageModelManager(BaseResourceManager[LanguageModel]):
         """Build all configured language models and return the cache."""
         return await self.build_all_with_error_tracking(self.get_all_names())
 
-    async def get_language_model(
-        self, name: str, validate: bool = False
-    ) -> LanguageModel:
+    async def get_language_model(self, name: str) -> LanguageModel:
         """Return a named language model, building it on first access."""
-        return await self._get_resource_with_locking(name, validate=validate)
+        return await self._get_resource_with_locking(name)
 
-    async def _build_resource(self, name: str, validate: bool = False) -> LanguageModel:
+    async def _build_resource(self, name: str) -> LanguageModel:
         """Build a language model by name."""
-        return await self._build_language_model(name, validate=validate)
+        return await self._build_language_model(name)
 
     def remove_language_model(self, name: str) -> bool:
         """
@@ -156,26 +150,7 @@ class LanguageModelManager(BaseResourceManager[LanguageModel]):
         else:
             raise ValueError(f"Unknown language model provider: {provider}")
 
-    @staticmethod
-    async def _validate_language_model(
-        name: str, language_model: LanguageModel
-    ) -> None:
-        """Validate that the language model is working."""
-        try:
-            logger.info("Validating language model '%s' ...", name)
-            _ = await language_model.generate_response(
-                system_prompt="a",
-                user_prompt="b",
-            )
-            logger.info("Language model '%s' is valid.", name)
-        except Exception as e:
-            raise InvalidLanguageModelError(
-                f"language model '{name}' is invalid. {e}"
-            ) from e
-
-    async def _build_language_model(
-        self, name: str, validate: bool = False
-    ) -> LanguageModel:
+    async def _build_language_model(self, name: str) -> LanguageModel:
         """Construct a language model based on provider."""
         ret: LanguageModel | None = None
         if name in self.conf.openai_responses_language_model_confs:
@@ -190,8 +165,6 @@ class LanguageModelManager(BaseResourceManager[LanguageModel]):
             raise InvalidLanguageModelError(
                 f"Language model with name {name} not found."
             )
-        if validate:
-            await self._validate_language_model(name, ret)
         return ret
 
     def _build_openai_responses_language_model(self, name: str) -> LanguageModel:
