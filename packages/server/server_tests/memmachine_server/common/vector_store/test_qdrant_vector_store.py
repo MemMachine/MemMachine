@@ -1,6 +1,5 @@
 """Tests for QdrantVectorStore."""
 
-import asyncio
 import math
 import operator
 import random
@@ -1694,19 +1693,6 @@ class TestCollectionProvisioningAcrossWorkers:
             )
         finally:
             await qdrant_client.delete_collection(native)
-
-    @staticmethod
-    def _together(monkeypatch, targets: list, attribute: str) -> None:
-        """Make each target's `attribute` wait until every target has called it, so the calls overlap."""
-        barrier = asyncio.Barrier(len(targets))
-        for target in targets:
-            method = getattr(target, attribute)
-
-            async def together(*args, method=method, **kwargs):
-                await barrier.wait()
-                return await method(*args, **kwargs)
-
-            monkeypatch.setattr(target, attribute, together)
 
 
 @pytest.mark.integration
