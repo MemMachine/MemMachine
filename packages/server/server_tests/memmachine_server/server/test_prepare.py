@@ -88,6 +88,9 @@ def test_prepare_command_creates_every_selectable_store(
     configuration_path, monkeypatch
 ):
     monkeypatch.setattr(sys, "argv", ["memmachine-server", "prepare"])
+    # The entry point loads the developer's .env into the process environment,
+    # where it would stay for every later test.
+    monkeypatch.setattr(app, "load_dotenv", lambda *_args, **_kwargs: None)
 
     app.main()
 
