@@ -10,6 +10,7 @@ from memmachine_server.common.configuration.mixin_confs import (
     ApiKeyMixin,
     AWSCredentialsMixin,
     MetricsFactoryIdMixin,
+    WithValueFromEnv,
     YamlSerializableMixin,
 )
 from memmachine_server.common.language_model.amazon_bedrock_language_model import (
@@ -99,7 +100,7 @@ class OpenAIChatCompletionsLanguageModelConf(
 
 
 class LiteLLMLanguageModelConf(
-    MetricsFactoryIdMixin, YamlSerializableMixin, ApiKeyMixin
+    MetricsFactoryIdMixin, YamlSerializableMixin, WithValueFromEnv
 ):
     """Configuration for LiteLLM-backed language models.
 
@@ -154,6 +155,13 @@ class LiteLLMLanguageModelConf(
         description="Max retry interval in seconds when retrying API calls.",
         gt=0,
     )
+
+    @field_validator("api_key", mode="before")
+    @classmethod
+    def resolve_api_key(cls, v: SecretStr | str) -> SecretStr | str | None:
+        """Resolve environment variable references in the API key."""
+        v = cls._resolve_env(v)
+        return SecretStr(v) if isinstance(v, str) else v
 
     @field_validator("api_base")
     @classmethod

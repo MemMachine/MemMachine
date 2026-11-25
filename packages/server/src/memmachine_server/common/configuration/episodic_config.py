@@ -354,7 +354,7 @@ class EpisodicMemoryConf(MetricsFactoryIdMixin, YamlSerializableMixin):
         min_length=1,
         description="The unique identifier for the session",
     )
-    metrics_factory_id: str = Field(
+    metrics_factory_id: str | None = Field(
         default="prometheus",
         description="ID of the metrics factory",
     )

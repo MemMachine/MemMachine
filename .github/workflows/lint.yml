@@ -92,3 +92,15 @@ jobs:
 
       - name: Type check server package (Python 3.12+)
         run: uv run --frozen --all-extras ty check --project packages/server --python-version ${{ matrix.python-version }}
+
+  # One check for branch protection to require: it fails when any ty job failed,
+  # and its name stays the same when the ty jobs' matrices change.
+  ty:
+    # !cancelled() runs this job after a failed ty job too; a skipped required check counts as passing.
+    if: ${{ !github.event.pull_request.draft && !cancelled() }}
+    needs: [ ty-static-check-common, ty-static-check-client, ty-static-check-server ]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail if any ty job failed or was cancelled
+        if: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}
+        run: exit 1

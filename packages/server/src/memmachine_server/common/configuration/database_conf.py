@@ -15,6 +15,7 @@ from memmachine_server.common.configuration.mixin_confs import (
     WithValueFromEnv,
     YamlSerializableMixin,
 )
+from memmachine_server.common.errors import InvalidPasswordError
 
 
 class Neo4jConf(MetricsFactoryIdMixin, YamlSerializableMixin, PasswordMixin):
@@ -406,7 +407,7 @@ class SQLiteVecVectorStoreConf(YamlSerializableMixin):
         return self
 
 
-class SqlAlchemyConf(MetricsFactoryIdMixin, YamlSerializableMixin, PasswordMixin):
+class SqlAlchemyConf(MetricsFactoryIdMixin, YamlSerializableMixin, WithValueFromEnv):
     """Configuration for SQLAlchemy-backed relational databases."""
 
     dialect: str = Field(..., description="SQL dialect")
@@ -527,6 +528,15 @@ class SqlAlchemyConf(MetricsFactoryIdMixin, YamlSerializableMixin, PasswordMixin
         return (
             f"{self.schema_part}{self.auth_part}{self.host_and_port}{self.path_or_db}"
         )
+
+    @field_validator("password", mode="before")
+    @classmethod
+    def resolve_password(cls, v: SecretStr | str) -> SecretStr:
+        """Resolve environment variable references in the password."""
+        resolved = cls._resolve_env(v)
+        if not isinstance(resolved, str):
+            raise InvalidPasswordError("password must be a string or SecretStr")
+        return SecretStr(resolved)
 
     @model_validator(mode="after")
     def validate_sqlite(self) -> Self:

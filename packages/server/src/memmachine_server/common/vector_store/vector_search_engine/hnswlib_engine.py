@@ -6,7 +6,7 @@ import math
 from collections.abc import Callable, Container, Iterable, Mapping, Sequence
 from typing import ClassVar, override
 
-import hnswlib  # ty: ignore[unresolved-import]  # C extension, no py.typed
+import hnswlib  # ty: ignore[import-not-found]  # C extension, no py.typed
 import numpy as np
 
 from memmachine_server.common.data_types import SimilarityMetric
