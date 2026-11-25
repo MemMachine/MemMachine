@@ -85,7 +85,43 @@ class OpenAIEmbedderConf(MetricsFactoryIdMixin, YamlSerializableMixin, ApiKeyMix
     )
     max_retry_interval_seconds: int = Field(
         default=120,
-        description="Maximal retry interval in seconds when retrying API calls",
+        description=(
+            "Longest backoff in seconds between attempts when the provider "
+            "does not say how long to wait, and longest spacing between "
+            "requests while the provider is rate-limiting"
+        ),
+        gt=0,
+    )
+    search_retry_budget_seconds: float = Field(
+        default=10.0,
+        description=(
+            "Seconds a search embedding may take, attempts and waits between "
+            "them included"
+        ),
+        gt=0,
+    )
+    ingest_retry_budget_seconds: float = Field(
+        default=60.0,
+        description=(
+            "Seconds an ingestion embedding may take, attempts and waits "
+            "between them included"
+        ),
+        gt=0,
+    )
+    min_request_time_seconds: float = Field(
+        default=0.25,
+        description=(
+            "An attempt starts only if at least this many seconds of the "
+            "budget remain after any wait"
+        ),
+        gt=0,
+    )
+    connect_timeout_seconds: float = Field(
+        default=2.0,
+        description=(
+            "Seconds an attempt may spend connecting, so an unreachable "
+            "endpoint fails without spending the budget"
+        ),
         gt=0,
     )
     batch_size: int | None = Field(

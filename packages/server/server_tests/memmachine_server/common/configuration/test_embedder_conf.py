@@ -126,6 +126,15 @@ def test_open_ai_embeder_without_key():
     assert conf.api_key.get_secret_value() == ""
 
 
+def test_open_ai_embedder_retry_budget_defaults():
+    conf = OpenAIEmbedderConf(model="text-embedding-ada-002")
+    assert conf.search_retry_budget_seconds == 10.0
+    assert conf.ingest_retry_budget_seconds == 60.0
+    assert conf.min_request_time_seconds == 0.25
+    assert conf.connect_timeout_seconds == 2.0
+    assert conf.max_retry_interval_seconds == 120
+
+
 @pytest.fixture(autouse=True)
 def clear_env(monkeypatch):
     for var in ["MY_KEY_ID", "AWS_SECRET_ACCESS_KEY"]:
