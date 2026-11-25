@@ -1,0 +1,421 @@
+# Builds the OpenClaw plugin and runs it inside released OpenClaw hosts against
+# a local MemMachine server. No job calls a hosted language model: the server's
+# embedder and language model point at a local stand-in for the OpenAI API, and
+# the plugin's tools are called through the Gateway's /tools/invoke endpoint
+# instead of an agent turn.
+
+name: Test the OpenClaw plugin
+
+on:
+  pull_request:
+    paths:
+      - 'integrations/openclaw/**'
+      - '.github/workflows/openclaw-plugin-host-test.yml'
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: openclaw-plugin-host-test-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    if: ${{ !github.event.pull_request.draft }}
+    name: Type check, unit tests, and smoke test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: integrations/openclaw
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22.x'
+
+      - run: npm ci --ignore-scripts
+      - run: npm run lint
+      - run: npm test
+      - run: npm run test:smoke
+
+  host:
+    if: ${{ !github.event.pull_request.draft }}
+    name: OpenClaw ${{ matrix.host }}, plugin package from ${{ matrix.package }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        # 2026.4.10 is the low end of the plugin's openclaw peer range,
+        # 2026.7.35 the newest release the plugin type-checks against, and
+        # 2026.11.10 the newest release.
+        host: ['2026.4.10', '2026.7.35', '2026.11.10']
+        package: [main, pull request]
+        include:
+          # 2026.4.10 has no npm-pack: source and installs archives with
+          # their dependencies. Later hosts install archives without
+          # dependencies, so the tarball goes through npm-pack:, which installs
+          # it like a registry package.
+          - host: '2026.4.10'
+            install-source: ''
+            install-flags: ''
+            inspect-flags: ''
+          - host: '2026.7.35'
+            install-source: 'npm-pack:'
+            install-flags: '--force'
+            inspect-flags: '--runtime'
+          - host: '2026.11.10'
+            install-source: 'npm-pack:'
+            install-flags: '--force --accept-capabilities'
+            inspect-flags: '--runtime'
+    env:
+      MEMMACHINE_PORT: '8080'
+      FAKE_OPENAI_PORT: '8931'
+      GATEWAY_PORT: '18789'
+      OPENCLAW_GATEWAY_TOKEN: ci-gateway-token
+      PLUGIN_ID: openclaw-memmachine
+      ORG_ID: openclaw-ci
+      PROJECT_ID: openclaw-ci
+      LOGS: ${{ github.workspace }}/../openclaw-host-test-logs
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Use the plugin package from main
+        if: matrix.package == 'main'
+        run: |
+          git fetch --depth=1 origin main
+          git checkout FETCH_HEAD -- integrations/openclaw
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24.x'
+
+      - name: Pack the plugin
+        working-directory: integrations/openclaw
+        run: |
+          set -euo pipefail
+          mkdir -p "$LOGS"
+          npm ci --ignore-scripts
+          npm run build
+          tarball="$(npm pack --json --pack-destination "$RUNNER_TEMP" | jq -r '.[0].filename')"
+          echo "PLUGIN_TARBALL=$RUNNER_TEMP/$tarball" >> "$GITHUB_ENV"
+          jq '{dependencies, peerDependencies}' package.json
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: '3.12'
+
+      - name: Start a MemMachine server
+        run: |
+          set -euo pipefail
+          state="$RUNNER_TEMP/memmachine"
+          mkdir -p "$state"
+
+          cat > "$state/fake_openai.py" <<'EOF'
+          """A local stand-in for the OpenAI embeddings and Responses APIs."""
+
+          import base64
+          import hashlib
+          import json
+          import math
+          import re
+          import struct
+          import sys
+          from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+
+          def embed(text, dimensions):
+              """Hash each lowercase word into one of `dimensions` buckets and normalize."""
+              vector = [0.0] * dimensions
+              for word in re.findall(r"[a-z0-9]+", text.lower()):
+                  digest = hashlib.sha256(word.encode()).digest()
+                  vector[int.from_bytes(digest[:4], "little") % dimensions] += 1.0
+              norm = math.sqrt(sum(value * value for value in vector))
+              if norm == 0:
+                  vector[0] = 1.0
+                  return vector
+              return [value / norm for value in vector]
+
+
+          class Handler(BaseHTTPRequestHandler):
+              def do_POST(self):
+                  body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                  if self.path.endswith("/embeddings"):
+                      texts = body["input"] if isinstance(body["input"], list) else [body["input"]]
+                      dimensions = body.get("dimensions", 256)
+                      data = []
+                      for index, text in enumerate(texts):
+                          vector = embed(text, dimensions)
+                          if body.get("encoding_format") == "base64":
+                              vector = base64.b64encode(
+                                  struct.pack(f"<{dimensions}f", *vector)
+                              ).decode()
+                          data.append({"object": "embedding", "index": index, "embedding": vector})
+                      self.reply(200, {
+                          "object": "list",
+                          "data": data,
+                          "model": body.get("model", "fake"),
+                          "usage": {"prompt_tokens": 0, "total_tokens": 0},
+                      })
+                  elif self.path.endswith("/responses"):
+                      self.reply(200, {
+                          "id": "resp_fake",
+                          "object": "response",
+                          "created_at": 0,
+                          "status": "completed",
+                          "model": body.get("model", "fake"),
+                          "output": [{
+                              "type": "message",
+                              "id": "msg_fake",
+                              "status": "completed",
+                              "role": "assistant",
+                              "content": [{"type": "output_text", "text": "{}", "annotations": []}],
+                          }],
+                          "usage": {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
+                      })
+                  else:
+                      self.reply(404, {"error": {"message": f"no stand-in for {self.path}"}})
+
+              def reply(self, status, payload):
+                  encoded = json.dumps(payload).encode()
+                  self.send_response(status)
+                  self.send_header("Content-Type", "application/json")
+                  self.send_header("Content-Length", str(len(encoded)))
+                  self.end_headers()
+                  self.wfile.write(encoded)
+
+
+          ThreadingHTTPServer(("127.0.0.1", int(sys.argv[1])), Handler).serve_forever()
+          EOF
+
+          cat > "$state/configuration.yml" <<EOF
+          logging:
+            level: info
+            path: $LOGS/memmachine.log
+          server:
+            host: 127.0.0.1
+            port: $MEMMACHINE_PORT
+          episode_store:
+            database: local_sql
+          episodic_memory:
+            long_term_memory:
+              backend: event
+              embedder: local_embedder
+              vector_store: local_vectors
+              segment_store: local_sql
+              partition_registry: local_sql
+            short_term_memory:
+              llm_model: local_model
+              message_capacity: 500
+          session_manager:
+            database: local_sql
+          semantic_memory:
+            llm_model: local_model
+            embedding_model: local_embedder
+            storage_backend: vector_store
+            feature_store: local_sql
+            vector_collection: local_vectors
+            vector_dimensions: 256
+            config_database: local_sql
+          prompt:
+            default_project_categories:
+            - profile_prompt
+          resources:
+            databases:
+              local_sql:
+                provider: sqlite
+                config:
+                  path: $state/memmachine.db
+              local_vectors:
+                provider: sqlite_vector_store
+                config:
+                  path: $state/vectors.db
+            embedders:
+              local_embedder:
+                provider: openai
+                config:
+                  model: text-embedding-3-small
+                  api_key: not-used
+                  base_url: http://127.0.0.1:$FAKE_OPENAI_PORT/v1
+                  dimensions: 256
+            language_models:
+              local_model:
+                provider: openai-responses
+                config:
+                  model: gpt-4o-mini
+                  api_key: not-used
+                  base_url: http://127.0.0.1:$FAKE_OPENAI_PORT/v1
+          EOF
+
+          nohup python "$state/fake_openai.py" "$FAKE_OPENAI_PORT" > "$LOGS/fake-openai.log" 2>&1 &
+          export MEMORY_CONFIG="$state/configuration.yml"
+          uv sync --frozen
+          uv run --frozen memmachine-server prepare
+          nohup uv run --frozen memmachine-server > "$LOGS/memmachine-server.out" 2>&1 &
+
+          base="http://127.0.0.1:$MEMMACHINE_PORT/api/v2"
+          for _ in $(seq 1 60); do
+            curl -sf "$base/health" > /dev/null && break
+            sleep 2
+          done
+          curl -sSf "$base/health"
+          echo
+          curl -sSf -X POST "$base/projects" -H 'Content-Type: application/json' \
+            -d "{\"org_id\":\"$ORG_ID\",\"project_id\":\"$PROJECT_ID\",\"description\":\"\",\"config\":{\"reranker\":\"\",\"embedder\":\"\"}}"
+          echo
+
+      - name: Install OpenClaw ${{ matrix.host }}
+        run: |
+          set -euo pipefail
+          npm install -g "openclaw@${{ matrix.host }}"
+          openclaw --version
+
+      - name: Install the plugin
+        run: |
+          set -euo pipefail
+          openclaw plugins install "${{ matrix.install-source }}$PLUGIN_TARBALL" ${{ matrix.install-flags }} 2>&1 \
+            | tee "$LOGS/plugins-install.log"
+
+      - name: Configure OpenClaw
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'EOF'
+          import fs from "node:fs";
+          import os from "node:os";
+          import path from "node:path";
+
+          const env = process.env;
+          const file = path.join(os.homedir(), ".openclaw", "openclaw.json");
+          const cfg = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : {};
+          const id = env.PLUGIN_ID;
+          cfg.gateway = {
+            ...cfg.gateway,
+            mode: "local",
+            port: Number(env.GATEWAY_PORT),
+            auth: { mode: "token", token: env.OPENCLAW_GATEWAY_TOKEN },
+          };
+          cfg.plugins = {
+            ...cfg.plugins,
+            enabled: true,
+            allow: [id],
+            slots: { ...cfg.plugins?.slots, memory: id },
+            entries: {
+              ...cfg.plugins?.entries,
+              [id]: {
+                ...cfg.plugins?.entries?.[id],
+                enabled: true,
+                config: {
+                  baseUrl: `http://127.0.0.1:${env.MEMMACHINE_PORT}/api/v2`,
+                  orgId: env.ORG_ID,
+                  projectId: env.PROJECT_ID,
+                  userId: "ci-user",
+                  autoRecall: true,
+                  autoCapture: true,
+                },
+              },
+            },
+          };
+          cfg.tools = {
+            ...cfg.tools,
+            allow: ["memory_search", "memory_store", "memory_get", "memory_list", "memory_forget"],
+          };
+          fs.mkdirSync(path.dirname(file), { recursive: true });
+          fs.writeFileSync(file, `${JSON.stringify(cfg, null, 2)}\n`);
+          console.log(JSON.stringify({ gateway: { ...cfg.gateway, auth: "<redacted>" }, plugins: cfg.plugins, tools: cfg.tools }, null, 2));
+          EOF
+
+      - name: Show the plugin as OpenClaw loads it
+        run: |
+          set -uo pipefail
+          openclaw plugins list --json > "$LOGS/plugins-list.json" 2> "$LOGS/plugins-list.err"
+          echo "plugins list exit $?"
+          jq --arg id "$PLUGIN_ID" '[.plugins[]? | select(.id == $id)]' "$LOGS/plugins-list.json" || cat "$LOGS/plugins-list.json"
+          openclaw plugins inspect "$PLUGIN_ID" ${{ matrix.inspect-flags }} --json > "$LOGS/plugins-inspect.json" 2> "$LOGS/plugins-inspect.err"
+          echo "plugins inspect exit $?"
+          cat "$LOGS/plugins-inspect.json" "$LOGS/plugins-inspect.err"
+
+      - name: Start the Gateway
+        run: |
+          set -euo pipefail
+          nohup openclaw gateway run --port "$GATEWAY_PORT" --auth token --token "$OPENCLAW_GATEWAY_TOKEN" \
+            > "$LOGS/gateway.log" 2>&1 &
+          for _ in $(seq 1 90); do
+            code="$(curl -s -o /dev/null -w '%{http_code}' -X POST "http://127.0.0.1:$GATEWAY_PORT/tools/invoke" \
+              -H "Authorization: Bearer $OPENCLAW_GATEWAY_TOKEN" -H 'Content-Type: application/json' -d '{}' || true)"
+            if [ "$code" != "000" ]; then
+              echo "Gateway answered with HTTP $code"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Gateway did not start"
+          cat "$LOGS/gateway.log"
+          exit 1
+
+      - name: Store, search, and list a memory through the plugin's tools
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'EOF'
+          const env = process.env;
+          const url = `http://127.0.0.1:${env.GATEWAY_PORT}/tools/invoke`;
+
+          async function invoke(tool, args) {
+            const response = await fetch(url, {
+              method: "POST",
+              headers: {
+                Authorization: `Bearer ${env.OPENCLAW_GATEWAY_TOKEN}`,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({ tool, args, sessionKey: "main" }),
+            });
+            const text = await response.text();
+            console.log(`${tool} ${JSON.stringify(args)} -> HTTP ${response.status}\n${text.slice(0, 4000)}\n`);
+            if (!response.ok) {
+              throw new Error(`${tool} returned HTTP ${response.status}`);
+            }
+            return text;
+          }
+
+          // The query shares words with the stored text but not the marker, so
+          // the marker can only come back from MemMachine. The stand-in
+          // embedder's scores mean nothing, so the search sets no threshold.
+          const marker = `marker${Date.now()}`;
+          await invoke("memory_store", { text: `The CI marker is ${marker}.` });
+
+          let found = false;
+          for (let attempt = 0; attempt < 15 && !found; attempt += 1) {
+            found = (await invoke("memory_search", { query: "The CI marker is", minScore: 0 })).includes(marker);
+            if (!found) {
+              await new Promise((resolve) => setTimeout(resolve, 2000));
+            }
+          }
+          if (!found) {
+            throw new Error("memory_search never returned the stored memory");
+          }
+          if (!(await invoke("memory_list", {})).includes(marker)) {
+            throw new Error("memory_list did not return the stored memory");
+          }
+          console.log("The plugin stored, searched, and listed a memory in MemMachine.");
+          EOF
+
+      - name: Run the plugin's CLI command
+        run: |
+          set -euo pipefail
+          openclaw memmachine stats | tee "$LOGS/memmachine-stats.out"
+          total="$(sed -n '/^{/,/^}/p' "$LOGS/memmachine-stats.out" | jq '.total')"
+          if [ "$total" -lt 1 ]; then
+            echo "memmachine stats counted $total episodes"
+            exit 1
+          fi
+
+      - name: Show logs
+        if: always()
+        run: |
+          for file in "$LOGS"/*; do
+            echo "::group::$(basename "$file")"
+            tail -c 20000 "$file"
+            echo "::endgroup::"
+          done
