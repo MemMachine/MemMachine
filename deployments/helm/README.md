@@ -44,7 +44,7 @@ postgres-pvc         neo4j-pvc              ← only if enabled: true
  postgresql/data)
 ```
 
-**Startup order**: Three `initContainers` (`wait-for-postgres`, `wait-for-neo4j`, `wait-for-qdrant`) use `busybox` + `nc` to poll TCP connectivity before the main container starts. The host/port probed are taken from `postgres.host`/`postgres.port` `neo4j.host`/`neo4j.port` and `qdrant.host`/`qdrant.port`, so they work for both in-cluster and external endpoints.
+**Startup order**: Three `initContainers` (`wait-for-postgres`, `wait-for-neo4j`, `wait-for-qdrant`) use `busybox` + `nc` to poll TCP connectivity before the main container starts. The host/port probed are taken from `postgres.host`/`postgres.port` `neo4j.host`/`neo4j.port` and `qdrant.host`/`qdrant.port`, so they work for both in-cluster and external endpoints. After them, a `prepare` init container runs `memmachine-server prepare`, and the main container starts only once it has succeeded.
 
 **Network model**: When deployed in-cluster, PostgreSQL and Neo4j are only reachable inside the cluster (ClusterIP). When `enabled: false`, MemMachine connects directly to the externally configured host. Only the MemMachine API is exposed externally via a NodePort.
 

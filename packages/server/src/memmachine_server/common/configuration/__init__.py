@@ -652,6 +652,18 @@ class Configuration(BaseModel):
         """Return the path to the configuration file, if loaded from file."""
         return self._config_file_path
 
+    @property
+    def database_directory(self) -> Path:
+        """
+        The directory that relative SQLite paths resolve against.
+
+        It is the configuration file's directory, or the working directory for
+        a configuration not loaded from a file.
+        """
+        if self._config_file_path is None:
+            return Path()
+        return Path(self._config_file_path).parent
+
     def save(self, path: str | None = None) -> None:
         """
         Save the configuration to a YAML file.

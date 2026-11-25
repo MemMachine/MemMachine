@@ -61,6 +61,7 @@ async def registry(tmp_path):
             tombstone_retention_seconds=0,
         ),
     )
+    await registry.prepare()
     await registry.startup()
     yield registry
     await engine.dispose()

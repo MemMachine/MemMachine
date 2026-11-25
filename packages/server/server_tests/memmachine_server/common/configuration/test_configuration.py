@@ -173,6 +173,19 @@ def test_config_file_path_none_when_not_loaded_from_file():
     assert conf_direct.config_file_path is None
 
 
+def test_database_directory_is_the_config_file_directory():
+    config_path = find_config_file("episodic_memory_config.gpu.sample")
+    conf = Configuration.load_yml_file(str(config_path))
+    assert conf.database_directory == config_path.parent
+
+
+def test_database_directory_is_the_working_directory_without_a_file():
+    config_path = find_config_file("episodic_memory_config.gpu.sample")
+    data = yaml.safe_load(Configuration.load_yml_file(str(config_path)).to_yaml())
+    conf_direct = Configuration(**data)
+    assert conf_direct.database_directory.resolve() == Path.cwd()
+
+
 def test_save_configuration_to_file(tmp_path):
     """Test that save() writes configuration to a file."""
     config_path = find_config_file("episodic_memory_config.gpu.sample")
