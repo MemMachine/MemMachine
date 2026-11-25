@@ -63,10 +63,29 @@ async def test_dropping_a_partition_without_a_record_succeeds(resource_manager):
 
 
 @pytest.mark.asyncio
+async def test_creating_a_partition_writes_its_record_under_its_key(resource_manager):
+    create_session_record = AsyncMock()
+    partition_uuid = uuid4()
+
+    await SessionDataPartitionedStore(
+        resource_manager, create_session_record
+    ).create_partition(partition_uuid)
+
+    create_session_record.assert_awaited_once_with(str(partition_uuid))
+
+
+@pytest.mark.asyncio
+async def test_a_store_built_without_a_record_refuses_to_create_a_partition(
+    resource_manager,
+):
+    with pytest.raises(RuntimeError, match="without a session record"):
+        await SessionDataPartitionedStore(resource_manager).create_partition(uuid4())
+
+
+@pytest.mark.asyncio
 async def test_a_partitions_record_is_left_to_the_drop(resource_manager):
     store = SessionDataPartitionedStore(resource_manager)
 
-    await store.create_partition(uuid4())
     assert await store.purge_partition(uuid4()) is False
 
     resource_manager.get_session_data_manager.assert_not_awaited()

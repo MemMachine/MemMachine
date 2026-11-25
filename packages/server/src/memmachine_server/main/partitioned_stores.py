@@ -8,6 +8,7 @@ key, so each store here addresses a partition's data in its component by
 """
 
 import contextlib
+from collections.abc import Awaitable, Callable
 from typing import Final, override
 from uuid import UUID
 
@@ -36,19 +37,36 @@ class SessionDataPartitionedStore(PartitionedStore):
     The session data manager as a partitioned store.
 
     A partition's record, with its short-term memory summary, is held under
-    the partition's key. The record is the partition's own storage: whoever
-    creates the partition writes it, since the record holds the partition's
-    settings, and the drop deletes it, after every store's purge has read
-    what it needs from it.
+    the partition's key. The record is the partition's own storage: creating
+    the partition writes it, so every live partition has its record, and the
+    drop deletes it, after every store's purge has read what it needs from
+    it.
     """
 
-    def __init__(self, resource_manager: ResourceManagerImpl) -> None:
-        """Initialize with the resource manager that provides the session data manager."""
+    def __init__(
+        self,
+        resource_manager: ResourceManagerImpl,
+        create_session_record: Callable[[str], Awaitable[None]] | None = None,
+    ) -> None:
+        """
+        Initialize with the resource manager that provides the session data manager.
+
+        Args:
+            resource_manager:
+                Provides the session data manager.
+            create_session_record:
+                Writes the record of the partition being created, under the
+                key it is given. A store built without it creates no
+                partition.
+        """
         self._resource_manager = resource_manager
+        self._create_session_record = create_session_record
 
     @override
     async def create_partition(self, partition_uuid: UUID) -> None:
-        return
+        if self._create_session_record is None:
+            raise RuntimeError("Built without a session record to create")
+        await self._create_session_record(str(partition_uuid))
 
     @override
     async def purge_partition(self, partition_uuid: UUID) -> bool:
@@ -57,8 +75,8 @@ class SessionDataPartitionedStore(PartitionedStore):
     @override
     async def drop_partition(self, partition_uuid: UUID) -> None:
         session_data_manager = await self._resource_manager.get_session_data_manager()
-        # A partition whose creation stopped before its record was written,
-        # or whose record an earlier drop deleted, has none.
+        # A partition whose creation stopped before this store's step, or
+        # whose record an earlier drop deleted, has none.
         with contextlib.suppress(SessionNotFoundError):
             await session_data_manager.delete_session(str(partition_uuid))
 

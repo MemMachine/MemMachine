@@ -4,7 +4,14 @@ import asyncio
 import contextlib
 import logging
 from asyncio import Task
-from collections.abc import Callable, Coroutine, Iterable, Mapping, Sequence
+from collections.abc import (
+    Awaitable,
+    Callable,
+    Coroutine,
+    Iterable,
+    Mapping,
+    Sequence,
+)
 from datetime import UTC, datetime
 from typing import Any, Final, Protocol
 from uuid import UUID, uuid4
@@ -391,7 +398,10 @@ class MemMachine:
 
         return self._retrieval_agent
 
-    async def _partition_manager(self) -> PartitionManager:
+    async def _partition_manager(
+        self,
+        create_session_record: Callable[[str], Awaitable[None]] | None = None,
+    ) -> PartitionManager:
         """
         Build the partition manager of MemMachine's partition namespace.
 
@@ -400,26 +410,33 @@ class MemMachine:
         partition's UUID, so a session created again under a key shares
         nothing with the session deleted before it.
 
-        Every call gives the same stores, so the managers of every process,
-        and the purge rounds the resource manager runs, are over the same
-        stores.
+        Every call gives stores over the same components, so the managers of
+        every process, and the purge rounds the resource manager runs, purge
+        and drop the same data. A manager that creates a partition is built
+        with the function that writes the partition's record.
         """
-        partitioned_stores = [
-            SessionDataPartitionedStore(self._resources),
-            EpisodePartitionedStore(self._resources),
-            LongTermMemoryPartitionedStore(self._resources),
-        ]
+        episode_store = EpisodePartitionedStore(self._resources)
+        long_term_memory_store = LongTermMemoryPartitionedStore(self._resources)
         partition_registry = await self._resources.get_partition_registry(
             self._conf.session_manager.database,
             partition_namespace=_PARTITION_NAMESPACE,
             tombstone_retention_seconds=(
                 self._conf.session_manager.tombstone_retention_seconds
             ),
-            partitioned_stores=partitioned_stores,
+            # Purge rounds create no partition, so their store takes no record.
+            partitioned_stores=[
+                SessionDataPartitionedStore(self._resources),
+                episode_store,
+                long_term_memory_store,
+            ],
         )
         return PartitionManager(
             partition_registry,
-            partitioned_stores,
+            [
+                SessionDataPartitionedStore(self._resources, create_session_record),
+                episode_store,
+                long_term_memory_store,
+            ],
             tracker=OperationTracker(
                 await self._resources.get_metrics_factory("prometheus"),
                 prefix=_PARTITION_NAMESPACE,
@@ -439,15 +456,16 @@ class MemMachine:
         except (PartitionPendingError, ValueError):
             return None
 
-    async def _get_or_create_partition(self, session_key: str) -> Registration:
+    async def _get_or_create_partition(self, session_data: SessionData) -> Registration:
         """
-        Resolve a session key to its live partition, creating the partition when none holds the key.
+        Resolve a session to its live partition, creating the partition when none holds the session's key.
 
         Read-then-create, retried a bounded number of times: a live partition
         is returned; a pending one is another creator's, which the call waits
-        for; no partition means create, then read again. The call retries
-        when the creation finds the key taken, or the partition is deleted
-        while it is created or before the read after it.
+        for; no partition means create, with the deployment's default
+        settings, then read again. The call retries when the creation finds
+        the key taken, or the partition is deleted while it is created or
+        before the read after it.
 
         Raises:
             ValueError:
@@ -460,6 +478,7 @@ class MemMachine:
                 another creator or deleter.
 
         """
+        session_key = session_data.session_key
         partition_manager = await self._partition_manager()
         pending_error: PartitionPendingError | None = None
         for attempt in range(_MAX_GET_OR_CREATE_ATTEMPTS):
@@ -468,7 +487,7 @@ class MemMachine:
             try:
                 registration = await partition_manager.resolve_partition(session_key)
                 if registration is None:
-                    await partition_manager.create_partition(session_key)
+                    await self._create_partition(session_data)
                     registration = await partition_manager.resolve_partition(
                         session_key
                     )
@@ -640,10 +659,9 @@ class MemMachine:
         """
         Create and persist a new session.
 
-        The session's partition is created first, and its record is written
-        under the partition's key. A session whose partition exists is
-        answered when the stored record's data matches, so a creation that
-        stopped before writing its record is completed by the next one.
+        The session's partition is created with its record, written under
+        the partition's key. A session whose partition exists is answered
+        when the stored record's data matches.
 
         Args:
             session_data: The session's key and its organization.
@@ -675,7 +693,9 @@ class MemMachine:
         try:
             # A key that is taken is live or pending; resolving it tells which.
             with contextlib.suppress(PartitionAlreadyExistsError):
-                await partition_manager.create_partition(session_key)
+                await self._create_partition(
+                    session_data, description=description, user_conf=user_conf
+                )
             registration = await partition_manager.resolve_partition(session_key)
         except ValueError as err:
             raise InvalidArgumentError(str(err)) from err
@@ -683,26 +703,84 @@ class MemMachine:
             raise SessionNotFoundError(session_key)
         partition_key = str(registration.partition_uuid)
 
-        session_data_manager = await self._resources.get_session_data_manager()
         try:
-            await session_data_manager.create_or_validate_session(
-                session_key=partition_key,
-                configuration={},
-                param=self._episodic_memory_conf(
-                    user_conf=user_conf, session_key=partition_key
-                ),
+            # A partition found live is checked against the request.
+            await self._create_or_validate_session_record(
+                partition_key,
+                session_data,
                 description=description,
-                metadata=self._session_record_metadata(session_data),
+                user_conf=user_conf,
             )
         except SessionAlreadyExistsError as err:
             raise SessionAlreadyExistsError(session_key) from err
         await self._require_live_partition(registration, session_key)
+        session_data_manager = await self._resources.get_session_data_manager()
         ret = await session_data_manager.get_session_info(
             partition_key, status=SessionDataManager.SessionStatus.Active
         )
         if ret is None:
             raise RuntimeError(f"Failed to create session {session_key}")
         return ret
+
+    async def _create_partition(
+        self,
+        session_data: SessionData,
+        *,
+        description: str = "",
+        user_conf: EpisodicMemoryConfPartial | None = None,
+    ) -> None:
+        """
+        Create a session's partition, with the session's record.
+
+        The record is written while the partition is pending, so every live
+        partition has its record.
+
+        Raises:
+            ValueError:
+                If the registry refuses the session key as a partition name.
+            PartitionAlreadyExistsError:
+                If the session key is taken, by a live or a pending
+                partition.
+
+        """
+
+        async def create_session_record(partition_key: str) -> None:
+            await self._create_or_validate_session_record(
+                partition_key,
+                session_data,
+                description=description,
+                user_conf=user_conf,
+            )
+
+        partition_manager = await self._partition_manager(create_session_record)
+        await partition_manager.create_partition(session_data.session_key)
+
+    async def _create_or_validate_session_record(
+        self,
+        partition_key: str,
+        session_data: SessionData,
+        *,
+        description: str,
+        user_conf: EpisodicMemoryConfPartial | None,
+    ) -> None:
+        """
+        Write a session's record under its partition's key, or accept the stored record when its data matches.
+
+        Raises:
+            SessionAlreadyExistsError:
+                If the stored record's data differs.
+
+        """
+        session_data_manager = await self._resources.get_session_data_manager()
+        await session_data_manager.create_or_validate_session(
+            session_key=partition_key,
+            configuration={},
+            param=self._episodic_memory_conf(
+                user_conf=user_conf, session_key=partition_key
+            ),
+            description=description,
+            metadata=self._session_record_metadata(session_data),
+        )
 
     def _episodic_memory_conf(
         self,
@@ -932,7 +1010,7 @@ class MemMachine:
         for entry in episode_entries:
             for key in entry.metadata or {}:
                 validate_user_property_key(key)
-        registration = await self._get_or_create_partition(session_data.session_key)
+        registration = await self._get_or_create_partition(session_data)
         partition_key = str(registration.partition_uuid)
         created_at = datetime.now(UTC)
         # UUID order preserves input order within a batch when timestamps tie.
@@ -1045,7 +1123,7 @@ class MemMachine:
 
         """
         episodic_memory_manager = await self._resources.get_episodic_memory_manager()
-        registration = await self._get_or_create_partition(session_data.session_key)
+        registration = await self._get_or_create_partition(session_data)
         partition_key = str(registration.partition_uuid)
 
         async with episodic_memory_manager.open_or_create_episodic_memory(

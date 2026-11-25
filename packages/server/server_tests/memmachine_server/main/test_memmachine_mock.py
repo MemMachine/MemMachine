@@ -62,6 +62,7 @@ from memmachine_server.common.sql import enable_sqlite_explicit_begin
 from memmachine_server.episodic_memory import EpisodicMemory
 from memmachine_server.main import memmachine as memmachine_module
 from memmachine_server.main.memmachine import MemMachine, MemoryType
+from memmachine_server.main.partitioned_stores import SessionDataPartitionedStore
 from memmachine_server.retrieval_agent.common.agent_api import AgentToolBase
 from memmachine_server.semantic_memory.semantic_memory import with_has_set_ids
 from memmachine_server.semantic_memory.semantic_model import SemanticFeature
@@ -224,6 +225,14 @@ def patched_resource_manager(monkeypatch, partition_registry, partitioned_store)
         MagicMock(return_value=fake_manager),
     )
     return fake_manager
+
+
+@pytest.fixture
+def session_data_store(monkeypatch, partitioned_store) -> None:
+    """MemMachine's own session data store, in place of the stores' double."""
+    monkeypatch.setattr(
+        memmachine_module, "SessionDataPartitionedStore", SessionDataPartitionedStore
+    )
 
 
 async def _partition_key(
@@ -1570,31 +1579,39 @@ async def test_start_starts_the_registry_of_memmachines_partition_namespace(
 
 
 @pytest.mark.asyncio
-async def test_a_session_is_created_in_the_stores_before_its_record_is_written(
-    minimal_conf, patched_resource_manager, partition_registry, partitioned_store
+async def test_a_sessions_record_is_written_while_its_partition_is_pending(
+    minimal_conf, patched_resource_manager, partition_registry, session_data_store
 ):
     machine, session_manager = _session_machine(minimal_conf, patched_resource_manager)
+    states: list[str] = []
 
-    async def created_before_the_record(partition_uuid: UUID) -> None:
-        session_manager.create_or_validate_session.assert_not_awaited()
+    async def record_written(**kwargs) -> None:
+        try:
+            registration = await partition_registry.resolve("alpha")
+        except PartitionPendingError:
+            states.append("pending")
+        else:
+            states.append("absent" if registration is None else "live")
 
-    partitioned_store.create_partition.side_effect = created_before_the_record
+    session_manager.create_or_validate_session.side_effect = record_written
 
     await machine.create_session(DummySessionData("alpha"), description="demo")
 
+    # Written by the creation, then checked once the partition is live.
+    assert states == ["pending", "live"]
     partition_key = await _partition_key(partition_registry, "alpha")
-    partitioned_store.create_partition.assert_awaited_with(UUID(partition_key))
-    kwargs = session_manager.create_or_validate_session.await_args.kwargs
-    assert kwargs["session_key"] == partition_key
-    assert kwargs["param"].session_key == partition_key
-    assert kwargs["metadata"] == {"org_id": "org", "partition_name": "alpha"}
+    for call in session_manager.create_or_validate_session.await_args_list:
+        assert call.kwargs["session_key"] == partition_key
+        assert call.kwargs["param"].session_key == partition_key
+        assert call.kwargs["description"] == "demo"
+        assert call.kwargs["metadata"] == {"org_id": "org", "partition_name": "alpha"}
     session_manager.get_session_info.assert_awaited_once_with(
         partition_key, status=SessionDataManager.SessionStatus.Active
     )
 
 
 @pytest.mark.asyncio
-async def test_a_creation_that_stopped_before_its_record_is_completed_by_the_next(
+async def test_creating_a_session_whose_partition_is_live_checks_its_record(
     minimal_conf, patched_resource_manager, partition_registry, partitioned_store
 ):
     machine, session_manager = _session_machine(minimal_conf, patched_resource_manager)
@@ -1781,8 +1798,29 @@ def _machine_with_records(
 
 
 @pytest.mark.asyncio
+async def test_a_session_created_by_an_add_has_its_record(
+    minimal_conf, patched_resource_manager, session_data_manager, session_data_store
+):
+    episode_storage = MagicMock()
+    episode_storage.add_episodes = AsyncMock()
+    patched_resource_manager.get_episode_storage = AsyncMock(
+        return_value=episode_storage
+    )
+    machine = _machine_with_records(
+        minimal_conf, patched_resource_manager, session_data_manager
+    )
+
+    await machine.add_episodes(
+        DummySessionData("org/a", org_id="org"), [_ENTRY], target_memories=[]
+    )
+
+    assert await machine.get_session("org/a") is not None
+    assert await machine.search_sessions("org") == ["org/a"]
+
+
+@pytest.mark.asyncio
 async def test_search_sessions_lists_an_organizations_sessions(
-    minimal_conf, patched_resource_manager, session_data_manager
+    minimal_conf, patched_resource_manager, session_data_manager, session_data_store
 ):
     machine = _machine_with_records(
         minimal_conf, patched_resource_manager, session_data_manager
@@ -1801,7 +1839,11 @@ async def test_search_sessions_lists_an_organizations_sessions(
 
 @pytest.mark.asyncio
 async def test_search_sessions_lists_a_session_while_its_partition_is_live(
-    minimal_conf, patched_resource_manager, partition_registry, session_data_manager
+    minimal_conf,
+    patched_resource_manager,
+    partition_registry,
+    session_data_manager,
+    session_data_store,
 ):
     machine = _machine_with_records(
         minimal_conf, patched_resource_manager, session_data_manager

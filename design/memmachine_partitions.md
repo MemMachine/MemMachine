@@ -92,7 +92,7 @@ partitions by UUID itself replaces its store here alone.
 
 | Store over | Create | Purge | Drop |
 |---|---|---|---|
-| The session data manager | Nothing. | Finds nothing. | Deletes the record, and the summary by cascade. |
+| The session data manager | Writes the partition's record. | Finds nothing. | Deletes the record, and the summary by cascade. |
 | The episode store | Nothing. | Deletes one batch of the key's episodes, after the batch's history and citations in semantic memory. | Nothing. |
 | Long-term memory | Creates the event memory partition named by the key, when the deployment configures event memory. | Deletes that event memory partition by name, and the declarative nodes of a partition whose record selects declarative memory. | Nothing. |
 
@@ -108,29 +108,28 @@ enabled, so a deletion reaches data written while a memory was enabled.
 
 ### Creation
 
-Creating a partition is two steps:
+The partition manager reserves the name, creates the partition in every
+store, and confirms the reservation. The session data manager's store writes
+the record under the key, with the partition's name, organization,
+description, and settings, and the long-term memory store creates the event
+memory partition. Both happen while the partition is pending, so every live
+partition has its record and its long-term storage.
 
-1. The partition manager reserves the name, creates the partition in every
-   store, and confirms the reservation. The long-term memory store's step
-   creates the event memory partition, so a confirmed partition has its
-   long-term storage.
-2. MemMachine resolves the name and inserts the record under the key, unless
-   a record is there. The record holds the partition's name and its
-   organization. Settings equal to the stored record's answer the partition,
-   and different ones raise `SessionAlreadyExistsError`.
+A creation under a name that a live partition holds creates nothing. It
+compares its settings with the stored record's: equal settings answer the
+partition, and different ones raise `SessionAlreadyExistsError`.
 
-A creation that stops before it confirms leaves the partition pending. A
-pending partition is not answered: getting it finds none, and creating a
-partition under its name raises the registry's `PartitionPendingError`,
-which carries when the partition was reserved. Whether that creation was
-abandoned is its caller's decision: the caller deletes the partition and
-creates it again. A creation that stops between confirming and writing its
-record is completed by the next creation under the name. Until then the
-partition has no record: getting it finds none, and no listing shows it.
+A creation that stops before it confirms leaves the partition pending, with
+or without its record. A pending partition is not answered: getting it finds
+none, and creating a partition under its name raises the registry's
+`PartitionPendingError`, which carries when the partition was reserved.
+Whether that creation was abandoned is its caller's decision: the caller
+deletes the partition and creates it again, and the deleted partition's
+purge drops whatever record it had.
 
 An add or a search on a name that no partition holds creates the partition
-with the deployment's default settings, and waits a bounded number of times
-for a partition another creator holds pending.
+the same way, with the deployment's default settings, and waits a bounded
+number of times for a partition another creator holds pending.
 
 ### Requests and fencing
 
