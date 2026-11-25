@@ -108,7 +108,7 @@ class ResourceManagerImpl:
         self._conf = conf
         self._conf.logging.apply()
         self._database_manager: DatabaseManager = DatabaseManager(
-            self._conf.resources.databases
+            self._conf.resources.databases.resolve_paths(self._conf.database_directory)
         )
         self._embedder_manager: EmbedderManager = EmbedderManager(
             self._conf.resources.embedders

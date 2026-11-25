@@ -16,7 +16,7 @@ from unittest.mock import (
 
 import pytest
 from pydantic import SecretStr
-from sqlalchemy import inspect
+from sqlalchemy import inspect, text
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from memmachine_server.common.configuration import (
@@ -211,6 +211,35 @@ def test_resource_manager_config_property(invalid_configure):
     """Test that config property returns the configuration."""
     resource_manager = ResourceManagerImpl(invalid_configure)
     assert resource_manager.config == invalid_configure
+
+
+@pytest.mark.asyncio
+async def test_relative_sqlite_path_opens_beside_the_config_file(
+    invalid_configure, tmp_path, monkeypatch
+):
+    """Every process loading the file opens one database, wherever it started."""
+    config_directory = tmp_path / "config"
+    config_directory.mkdir()
+    invalid_configure.resources.databases.relational_db_confs = {
+        SQLDB_ID: SqlAlchemyConf(dialect="sqlite", driver="aiosqlite", path="m.db"),
+    }
+    config_file = config_directory / "cfg.yml"
+    config_file.write_text(invalid_configure.to_yaml(), encoding="utf-8")
+    working_directory = tmp_path / "elsewhere"
+    working_directory.mkdir()
+    monkeypatch.chdir(working_directory)
+
+    resource_manager = ResourceManagerImpl(
+        Configuration.load_yml_file(str(config_file))
+    )
+    try:
+        engine = await resource_manager.get_sql_engine(SQLDB_ID)
+        async with engine.begin() as connection:
+            await connection.execute(text("CREATE TABLE t (x INTEGER)"))
+    finally:
+        await resource_manager.close()
+
+    assert (config_directory / "m.db").is_file()
 
 
 @pytest.mark.asyncio

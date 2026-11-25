@@ -12,6 +12,9 @@ it covers.
 calls `prepare` on every store the configuration names, and exits. It is
 the same executable as the server and runs from the same image, so the setup
 step and the servers share one code version and one configuration.
+A relative SQLite path resolves against the configuration file's directory,
+so every process loading the file opens the same database wherever it was
+started.
 
 The setup step relies on assumptions a serving process cannot make:
 
