@@ -20,3 +20,8 @@ updates:
       uv-workspace:
         patterns:
           - "*"
+        # A ruff or ty release can fail CI on unchanged code, so each comes in
+        # its own pull request instead of holding back the rest of the group.
+        exclude-patterns:
+          - "ruff"
+          - "ty"
