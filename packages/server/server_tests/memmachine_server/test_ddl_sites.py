@@ -214,7 +214,7 @@ def test_every_ddl_site_is_placed():
         if _is_revision(relative):
             continue
         visitor = _DDLSites()
-        visitor.visit(ast.parse(path.read_text()))
+        visitor.visit(ast.parse(path.read_text(encoding="utf-8")))
         found |= {(relative, qualname) for qualname in visitor.sites}
 
     assert found - (_PREPARE | _REQUEST_PATH | _TEST_HELPERS) == set()
