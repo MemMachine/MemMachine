@@ -192,7 +192,7 @@ async def test_prepare_handles_integrity_error_from_concurrent_enum_creation():
 @pytest.mark.asyncio
 async def test_prepare_handles_programming_error_from_concurrent_enum_creation():
     """asyncpg maps DuplicateObjectError to ProgrammingError rather than
-    IntegrityError.  Startup must handle both."""
+    IntegrityError.  Prepare must handle both."""
     engine, _conn, _sync_conn = _make_pg_engine()
 
     create_all_called = False

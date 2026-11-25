@@ -583,8 +583,6 @@ class MilvusVectorStore(VectorStore):
                     timeout=self._request_timeout_seconds,
                 )
 
-            # Milvus answers a create of an existing collection with the same
-            # schema with success, so racing creators both go on.
             if not await self._client.has_collection(
                 self._collection_name,
                 timeout=self._request_timeout_seconds,
@@ -592,8 +590,7 @@ class MilvusVectorStore(VectorStore):
                 await _create_collection()
 
             # Index names are their field names, so the ones present say which
-            # fields are indexed. An index a racing creator made is created again
-            # without error.
+            # fields are indexed.
             existing = set(
                 await self._client.list_indexes(
                     self._collection_name,
