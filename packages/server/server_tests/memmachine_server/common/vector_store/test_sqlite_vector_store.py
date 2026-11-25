@@ -1785,3 +1785,69 @@ class TestPartitionResources:
 @pytest.mark.asyncio
 async def test_the_store_answers_the_schema_it_was_built_with(store):
     assert store.store_schema == _schema()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["upsert", "startup", "query", "delete"])
+async def test_sqlite_variable_limit(tmp_path, operation):
+    """Large ID lists must work on SQLite builds with a 999-variable limit."""
+    engine = create_async_engine(
+        f"sqlite+aiosqlite:///{tmp_path / 'limited.db'}",
+        insertmanyvalues_page_size=100,
+    )
+    enable_sqlite_explicit_begin(engine)
+    enable_sqlite_foreign_keys(engine)
+    vector_store = SQLiteVectorStore(_params(engine))
+    try:
+        await vector_store.startup()
+        partition = await _created(vector_store)
+        records = [_make_record(vector=[1.0, 0.0, 0.0]) for _ in range(1005)]
+        if operation != "upsert":
+            await partition.upsert(records=records)
+        if operation == "startup":
+            # Leave every operation unapplied so startup replays all of them.
+            async with async_sessionmaker(engine)() as session, session.begin():
+                await session.execute(
+                    update(_PendingOperationRow).values(applied=False)
+                )
+        async with engine.connect() as connection:
+            raw = await connection.get_raw_connection()
+            driver = raw.driver_connection
+            assert driver is not None
+            await driver._execute(
+                driver._conn.setlimit, sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER, 999
+            )
+        if operation == "upsert":
+            await partition.upsert(records=records)
+        elif operation == "startup":
+            await vector_store.shutdown()
+            vector_store = SQLiteVectorStore(_params(engine))
+            await vector_store.startup()
+        elif operation == "query":
+            # Test SQL hydration independently of approximate nearest-neighbor recall.
+            async with engine.connect() as connection:
+                row_ids = (
+                    await connection.scalars(select(partition._records_table.c.row_id))
+                ).all()
+            matches = await partition._build_matches(
+                row_id_to_score=dict.fromkeys(row_ids, 1.0), score_threshold=None
+            )
+            assert {match.record_uuid for match in matches} == {
+                record.uuid for record in records
+            }
+        elif operation == "delete":
+            # Duplicates spanning batches must still delete each record once.
+            await partition.delete(record_uuids=(record.uuid for record in records * 2))
+            assert await _stored(partition) == {}
+        if operation != "delete":
+            assert set(await _stored(partition)) == {record.uuid for record in records}
+        async with engine.connect() as connection:
+            unapplied = await connection.scalar(
+                select(func.count())
+                .select_from(_PendingOperationRow)
+                .where(_PendingOperationRow.applied.is_(False))
+            )
+        assert unapplied == 0
+    finally:
+        await vector_store.shutdown()
+        await engine.dispose()

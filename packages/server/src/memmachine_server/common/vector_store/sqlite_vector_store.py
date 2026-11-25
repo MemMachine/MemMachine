@@ -10,6 +10,7 @@ replayed.
 import asyncio
 from collections import defaultdict
 from collections.abc import Callable, Iterable, Mapping, Sequence
+from itertools import batched
 from pathlib import Path
 from typing import override
 from uuid import UUID
@@ -70,6 +71,10 @@ from .utils import (
 )
 from .vector_search_engine import VectorSearchEngine
 from .vector_store import VectorStore, VectorStoreParams, VectorStorePartition
+
+# Leave room for partition identifiers and UPDATE values below SQLite's
+# historical 999-variable limit.
+_SQL_ID_BATCH_SIZE = 900
 
 
 class IndexLoadError(RuntimeError):
@@ -381,19 +386,18 @@ class SQLiteVectorStorePartition(VectorStorePartition):
             await self._search_engine.add(engine_vectors)
 
             async with write_session(self._create_session) as session:
-                await session.execute(
-                    update(_PendingOperationRow)
-                    .where(
-                        _PendingOperationRow.vector_store_name
-                        == self._vector_store_name,
-                        _PendingOperationRow.partition_uuid == self._partition_uuid,
-                        _PendingOperationRow.record_row_id.in_(
-                            list(engine_vectors.keys())
-                        ),
-                        _PendingOperationRow.applied.is_(False),
+                for batch in batched(engine_vectors, _SQL_ID_BATCH_SIZE):
+                    await session.execute(
+                        update(_PendingOperationRow)
+                        .where(
+                            _PendingOperationRow.vector_store_name
+                            == self._vector_store_name,
+                            _PendingOperationRow.partition_uuid == self._partition_uuid,
+                            _PendingOperationRow.record_row_id.in_(batch),
+                            _PendingOperationRow.applied.is_(False),
+                        )
+                        .values(applied=True)
                     )
-                    .values(applied=True)
-                )
 
             await self._maybe_save_index()
 
@@ -460,14 +464,15 @@ class SQLiteVectorStorePartition(VectorStorePartition):
         row_id_to_score: Mapping[int, float],
         score_threshold: float | None,
     ) -> list[QueryMatch]:
-        fetch_records = select(
-            self._records_table.c.uuid, self._records_table.c.row_id
-        ).where(
-            self._records_table.c.row_id.in_(list(row_id_to_score)),
-        )
-
         async with self._create_session() as session:
-            matched_rows = (await session.execute(fetch_records)).all()
+            matched_rows = []
+            for batch in batched(row_id_to_score, _SQL_ID_BATCH_SIZE):
+                fetch_records = select(
+                    self._records_table.c.uuid, self._records_table.c.row_id
+                ).where(
+                    self._records_table.c.row_id.in_(batch),
+                )
+                matched_rows.extend((await session.execute(fetch_records)).all())
 
         higher_is_better = self._store_schema.similarity_metric.higher_is_better
         matches: list[QueryMatch] = []
@@ -491,18 +496,22 @@ class SQLiteVectorStorePartition(VectorStorePartition):
 
     @override
     async def delete(self, *, record_uuids: Iterable[UUID]) -> None:
-        record_uuids = list(record_uuids)
+        record_uuids = list(dict.fromkeys(record_uuids))
         if not record_uuids:
             return
 
         async with write_session(self._create_session) as session:
-            rows = (
-                await session.execute(
-                    select(self._records_table.c.row_id).where(
-                        self._records_table.c.uuid.in_(record_uuids),
-                    )
+            rows = []
+            for batch in batched(record_uuids, _SQL_ID_BATCH_SIZE):
+                rows.extend(
+                    (
+                        await session.execute(
+                            select(self._records_table.c.row_id).where(
+                                self._records_table.c.uuid.in_(batch),
+                            )
+                        )
+                    ).all()
                 )
-            ).all()
             if not rows:
                 return
 
@@ -533,24 +542,27 @@ class SQLiteVectorStorePartition(VectorStorePartition):
                 ],
             )
 
-            await session.execute(
-                delete(self._records_table).where(
-                    self._records_table.c.uuid.in_(record_uuids),
+            for batch in batched(record_uuids, _SQL_ID_BATCH_SIZE):
+                await session.execute(
+                    delete(self._records_table).where(
+                        self._records_table.c.uuid.in_(batch),
+                    )
                 )
-            )
 
         await self._search_engine.remove(record_row_ids)
         async with write_session(self._create_session) as session:
-            await session.execute(
-                update(_PendingOperationRow)
-                .where(
-                    _PendingOperationRow.vector_store_name == self._vector_store_name,
-                    _PendingOperationRow.partition_uuid == self._partition_uuid,
-                    _PendingOperationRow.record_row_id.in_(record_row_ids),
-                    _PendingOperationRow.applied.is_(False),
+            for batch in batched(record_row_ids, _SQL_ID_BATCH_SIZE):
+                await session.execute(
+                    update(_PendingOperationRow)
+                    .where(
+                        _PendingOperationRow.vector_store_name
+                        == self._vector_store_name,
+                        _PendingOperationRow.partition_uuid == self._partition_uuid,
+                        _PendingOperationRow.record_row_id.in_(batch),
+                        _PendingOperationRow.applied.is_(False),
+                    )
+                    .values(applied=True)
                 )
-                .values(applied=True)
-            )
         await self._maybe_save_index()
 
 
@@ -745,15 +757,17 @@ class SQLiteVectorStore(VectorStore):
             await search_engine.add(upserted_vectors)
 
         async with write_session(self._create_session) as session:
-            await session.execute(
-                update(_PendingOperationRow)
-                .where(
-                    _PendingOperationRow.vector_store_name == self._vector_store_name,
-                    _PendingOperationRow.partition_uuid == partition_uuid,
-                    _PendingOperationRow.record_row_id.in_(all_row_ids),
+            for batch in batched(all_row_ids, _SQL_ID_BATCH_SIZE):
+                await session.execute(
+                    update(_PendingOperationRow)
+                    .where(
+                        _PendingOperationRow.vector_store_name
+                        == self._vector_store_name,
+                        _PendingOperationRow.partition_uuid == partition_uuid,
+                        _PendingOperationRow.record_row_id.in_(batch),
+                    )
+                    .values(applied=True)
                 )
-                .values(applied=True)
-            )
 
     @override
     async def shutdown(self) -> None:
