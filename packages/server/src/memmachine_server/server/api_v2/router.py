@@ -80,6 +80,7 @@ from memmachine_server.common.errors import (
     SessionAlreadyExistsError,
     SessionNotFoundError,
 )
+from memmachine_server.common.partition_registry import PartitionPendingError
 from memmachine_server.main.memmachine import ALL_MEMORY_TYPES
 from memmachine_server.server.api_v2.config_router import config_router
 from memmachine_server.server.api_v2.exceptions import RestError
@@ -171,6 +172,8 @@ async def create_project(
         raise RestError(code=500, message="configuration error: " + str(e), ex=e) from e
     except SessionAlreadyExistsError as e:
         raise RestError(code=409, message="Project already exists", ex=e) from e
+    except PartitionPendingError as e:
+        raise RestError(code=409, message="Project is being created", ex=e) from e
     except ValueError as e:
         raise RestError(
             code=500, message="server internal error: " + str(e), ex=e
@@ -236,18 +239,17 @@ async def get_episode_count(
 async def list_projects(
     spec: ListProjectsSpec,
     memmachine: Annotated[MemMachine, Depends(get_memmachine)],
-) -> list[dict[str, str]]:
+) -> list[dict[str, str | bool]]:
     """List projects in one organization."""
-    sessions = await memmachine.search_sessions()
+    prefix = f"{spec.org_id}/"
+    sessions = await memmachine.search_sessions(prefix)
     return [
         {
-            "org_id": org_id,
-            "project_id": project_id,
+            "org_id": spec.org_id,
+            "project_id": session.partition_name.removeprefix(prefix),
+            "live": session.live,
         }
-        for org_id, project_id in (
-            session.split("/", 1) for session in sessions if "/" in session
-        )
-        if org_id == spec.org_id
+        for session in sessions
     ]
 
 
@@ -288,6 +290,8 @@ async def add_memories(
         )
     except ValueError as e:
         raise RestError(code=422, message="invalid argument", ex=e) from e
+    except SessionNotFoundError as e:
+        raise RestError(code=404, message="Project does not exist", ex=e) from e
     return AddMemoriesResponse(results=results)
 
 

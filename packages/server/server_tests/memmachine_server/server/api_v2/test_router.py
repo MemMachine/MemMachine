@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
@@ -18,6 +18,10 @@ from memmachine_server.common.errors import (
     ResourceNotFoundError,
     SessionAlreadyExistsError,
     SessionNotFoundError,
+)
+from memmachine_server.common.partition_registry import (
+    ListedPartition,
+    PartitionPendingError,
 )
 from memmachine_server.main.memmachine import ALL_MEMORY_TYPES, MemoryType
 from memmachine_server.server.api_v2.router import RestError, get_memmachine
@@ -103,6 +107,25 @@ def test_create_project(client, mock_memmachine):
     assert response.status_code == 409
     response_detail = response.json()["detail"]
     assert "already exists" in response_detail["message"]
+    assert response_detail["trace"] == ""
+
+
+def test_create_project_another_creation_holds_pending_answers_409(
+    client, mock_memmachine
+):
+    mock_memmachine.create_session.side_effect = PartitionPendingError(
+        "memmachine", "test_org/test_proj", datetime(2026, 1, 2, tzinfo=UTC)
+    )
+
+    response = client.post(
+        "/api/v2/projects", json={"org_id": "test_org", "project_id": "test_proj"}
+    )
+
+    assert response.status_code == 409
+    response_detail = response.json()["detail"]
+    assert response_detail["message"] == "Project is being created"
+    assert response_detail["exception"] == "PartitionPendingError"
+    assert "pending since 2026-01-02" in response_detail["internal_error"]
     assert response_detail["trace"] == ""
 
 
@@ -290,23 +313,30 @@ def test_get_episode_count(client, mock_memmachine):
 
 
 def test_list_projects(client, mock_memmachine):
+    reserved_at = datetime(2026, 1, 1, tzinfo=UTC)
     mock_memmachine.search_sessions.return_value = [
-        "org1/proj1",
-        "org1/proj2",
-        "org2/proj2",
-        "org10/proj3",
-        "not-project-session",
+        ListedPartition(
+            partition_name="org1/proj1",
+            partition_uuid=uuid4(),
+            live=True,
+            reserved_at=reserved_at,
+        ),
+        ListedPartition(
+            partition_name="org1/proj2",
+            partition_uuid=uuid4(),
+            live=False,
+            reserved_at=reserved_at,
+        ),
     ]
 
     response = client.post("/api/v2/projects/list", json={"org_id": "org1"})
 
     assert response.status_code == 200
-    data = response.json()
-    assert len(data) == 2
-    assert data[0] == {"org_id": "org1", "project_id": "proj1"}
-    assert data[1] == {"org_id": "org1", "project_id": "proj2"}
-
-    mock_memmachine.search_sessions.assert_awaited_once()
+    assert response.json() == [
+        {"org_id": "org1", "project_id": "proj1", "live": True},
+        {"org_id": "org1", "project_id": "proj2", "live": False},
+    ]
+    mock_memmachine.search_sessions.assert_awaited_once_with("org1/")
 
 
 def test_list_projects_requires_org_id(client, mock_memmachine):
@@ -397,6 +427,24 @@ def test_add_memories_refuses_an_invalid_argument_with_422(client, mock_memmachi
     assert response.status_code == 422
     assert "invalid argument" in response.json()["detail"]["message"]
     assert "userId" in response.json()["detail"]["internal_error"]
+
+
+def test_add_memories_to_a_project_deleted_meanwhile_answers_404(
+    client, mock_memmachine
+):
+    payload = {
+        "org_id": "test_org",
+        "project_id": "test_proj",
+        "messages": [{"role": "user", "content": "hello"}],
+    }
+    mock_memmachine.add_episodes.side_effect = SessionNotFoundError(
+        "test_org/test_proj"
+    )
+
+    response = client.post("/api/v2/memories", json=payload)
+
+    assert response.status_code == 404
+    assert response.json()["detail"]["message"] == "Project does not exist"
 
 
 def test_add_memories_episode_type_forwarded(client, mock_memmachine):

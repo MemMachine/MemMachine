@@ -986,7 +986,7 @@
           "Projects"
         ],
         "summary": "List Projects",
-        "description": "List projects in the specified organization.\n\n    Requires `org_id` in the request body. Returns only projects belonging to\n    that organization. Each entry contains the project's organization ID and\n    project ID. Identifiers follow the standard rules: no slashes; only letters,\n    numbers, underscores, hyphens, colon, and Unicode characters.\n\n    Projects are isolated memory namespaces. Memories (episodes) belong\n    exclusively to their project. All project operations, including queries and\n    any background processes (e.g., memory summarization or knowledge\n    extraction), only operate within the project's own data. No cross-project\n    access is allowed.",
+        "description": "List projects in the specified organization.\n\n    Requires `org_id` in the request body. Returns only projects belonging to\n    that organization. Each entry contains the project's organization ID, its\n    project ID, and `live`, which is false while the project's creation has\n    not completed. Identifiers follow the standard rules: no slashes; only\n    letters, numbers, underscores, hyphens, colon, and Unicode characters.\n\n    Projects are isolated memory namespaces. Memories (episodes) belong\n    exclusively to their project. All project operations, including queries and\n    any background processes (e.g., memory summarization or knowledge\n    extraction), only operate within the project's own data. No cross-project\n    access is allowed.",
         "operationId": "list_projects",
         "requestBody": {
           "content": {
@@ -1006,7 +1006,14 @@
                 "schema": {
                   "items": {
                     "additionalProperties": {
-                      "type": "string"
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "boolean"
+                        }
+                      ]
                     },
                     "type": "object"
                   },

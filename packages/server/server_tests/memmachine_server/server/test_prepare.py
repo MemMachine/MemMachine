@@ -29,7 +29,7 @@ episodic_memory:
     segment_store: local_sql
     partition_registry: local_sql
 session_manager:
-  database: local_sql
+  database: session_sql
 semantic_memory:
   llm_model: openai_model
   embedding_model: openai_embedder
@@ -47,6 +47,10 @@ resources:
       provider: sqlite
       config:
         path: {directory}/memmachine.db
+    session_sql:
+      provider: sqlite
+      config:
+        path: {directory}/sessions.db
     local_vectors:
       provider: sqlite_vector_store
       config:
@@ -95,10 +99,11 @@ def test_prepare_command_creates_every_selectable_store(
     app.main()
 
     directory = configuration_path.parent
+    assert {"sessions", "lease_lock", "partition_registry_pt"} <= _tables(
+        directory / "sessions.db"
+    )
     relational = _tables(directory / "memmachine.db")
     assert {
-        "sessions",
-        "lease_lock",
         "episodestore",
         "segment_store_sg",
         "partition_registry_pt",

@@ -1,6 +1,7 @@
 """Partition registries, partitioned stores, and the partition manager."""
 
 from .data_types import (
+    ListedPartition,
     PartitionAlreadyExistsError,
     PartitionCreateAttemptsExhaustedError,
     PartitionDeletedError,
@@ -12,6 +13,7 @@ from .partition_registry import PartitionRegistry, Registration
 from .partitioned_store import PartitionedStore
 
 __all__ = [
+    "ListedPartition",
     "PartitionAlreadyExistsError",
     "PartitionCreateAttemptsExhaustedError",
     "PartitionDeletedError",

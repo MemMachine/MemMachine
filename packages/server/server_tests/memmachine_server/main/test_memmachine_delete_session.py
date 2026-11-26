@@ -1,18 +1,17 @@
-"""Unit and integration tests for delete_session batched episode deletion."""
+"""Integration tests of deleting a session and purging its partition."""
 
 from __future__ import annotations
 
 import asyncio
-from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID, uuid4
 
 import numpy as np
 import pytest
 
 from memmachine_server.common.episode_store import EpisodeEntry
-from memmachine_server.main.memmachine import EPISODE_DELETE_BATCH_SIZE, MemMachine
+from memmachine_server.main.memmachine import MemMachine
+from memmachine_server.main.partitioned_stores import EpisodePartitionedStore
 from memmachine_server.semantic_memory.semantic_session_manager import (
     SemanticSessionManager,
 )
@@ -109,10 +108,24 @@ async def test_delete_session_clears_semantic_history_and_citations(
         before_citations = before_feature.metadata.citations or []
         assert episode_id in before_citations
 
+        partition_manager = await memmachine._partition_manager()
+        registration = await partition_manager.resolve_partition(session_key)
+        assert registration is not None
+
         memmachine._conf.semantic_memory.enabled = semantic_enabled
         await memmachine.delete_session(session_data)
-        await memmachine._deletion_queue.join()
         deleted = True
+
+        # The session is unreachable and its project's features are deleted
+        # when the deletion returns.
+        assert await memmachine.get_session(session_key) is None
+        assert await semantic_storage.get_feature(project_feature_id) is None
+
+        # The partition's purge deletes its episodes with their history and
+        # citations; the purge rounds start it once the retention has passed.
+        episode_store = EpisodePartitionedStore(memmachine._resources)
+        while await episode_store.purge_partition(registration.partition_uuid):
+            pass
 
         remaining_history = [
             h async for h in semantic_storage.get_history_messages(set_ids=None)
@@ -126,86 +139,9 @@ async def test_delete_session_clears_semantic_history_and_citations(
         assert after_feature is not None
         after_citations = after_feature.metadata.citations or []
         assert episode_id not in after_citations
-        assert await semantic_storage.get_feature(project_feature_id) is None
     finally:
         memmachine._conf.semantic_memory.enabled = True
         if not deleted:
             remaining = await memmachine.get_session(session_key)
             if remaining is not None:
                 await memmachine.delete_session(session_data)
-
-
-@pytest.mark.asyncio
-async def test_delete_episode_store_processes_in_batches() -> None:
-    """_delete_episode_store fetches and deletes episodes in batches until empty."""
-
-    @dataclass
-    class _SD:
-        session_key: str = "test-session"
-        org_id: str = "org-1"
-        project_id: str = "proj-1"
-
-    batch_size = EPISODE_DELETE_BATCH_SIZE
-    total = batch_size * 2 + 1
-
-    # IDs are plain strings now — no Episode objects needed
-    all_ids = [str(i) for i in range(total)]
-    batches = [
-        all_ids[:batch_size],
-        all_ids[batch_size : batch_size * 2],
-        all_ids[batch_size * 2 :],
-        [],  # signals end of loop
-    ]
-    get_episode_ids_mock = AsyncMock(side_effect=batches)
-    delete_episodes_mock = AsyncMock()
-
-    episode_store = MagicMock()
-    episode_store.get_episode_ids = get_episode_ids_mock
-    episode_store.delete_episodes = delete_episodes_mock
-
-    conf = MagicMock()
-    conf.episodic_memory.enabled = False
-    conf.semantic_memory.enabled = False
-    conf.semantic_memory.storage_configured.return_value = False
-
-    resources = MagicMock()
-    resources.close = AsyncMock()
-    session_manager = MagicMock()
-    current_status = ["active"]
-
-    async def update_session_status(*, session_key: str, status: str) -> None:
-        current_status[0] = status
-
-    session_manager.get_session_info = AsyncMock(
-        side_effect=lambda _key: MagicMock(status=current_status[0])
-    )
-    session_manager.update_session_status = AsyncMock(side_effect=update_session_status)
-    session_manager.delete_session = AsyncMock()
-    resources.get_episode_storage = AsyncMock(return_value=episode_store)
-    resources.get_session_data_manager = AsyncMock(return_value=session_manager)
-    resources.get_semantic_storage = AsyncMock(
-        side_effect=AssertionError("semantic storage must stay unused")
-    )
-
-    @asynccontextmanager
-    async def lock(*args, **kwargs):
-        yield
-
-    resources.get_sql_lock_service = AsyncMock(return_value=MagicMock(lock=lock))
-
-    mm = MemMachine(conf=conf, resources=resources)
-
-    await mm.start()
-    await mm.delete_session(_SD())
-    await mm._deletion_queue.join()
-    await mm.stop()
-
-    # get_episode_ids called 4 times (3 non-empty + 1 empty sentinel)
-    assert get_episode_ids_mock.call_count == 4
-    for call in get_episode_ids_mock.call_args_list:
-        assert call.kwargs["page_size"] == batch_size
-
-    # delete_episodes called once per non-empty batch
-    assert delete_episodes_mock.call_count == 3
-    session_manager.delete_session.assert_awaited_once_with(session_key="test-session")
-    resources.get_semantic_storage.assert_not_awaited()

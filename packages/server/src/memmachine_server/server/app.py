@@ -32,6 +32,7 @@ from memmachine_server.common.api.version import get_version
 from memmachine_server.common.resource_manager.resource_manager import (
     ResourceManagerImpl,
 )
+from memmachine_server.main.memmachine import prepare_memmachine_partition_registry
 from memmachine_server.server.api_v2.mcp import (
     initialize_resource,
     load_configuration,
@@ -236,6 +237,7 @@ async def prepare() -> None:
     resource_manager = ResourceManagerImpl(load_configuration())
     try:
         await resource_manager.prepare()
+        await prepare_memmachine_partition_registry(resource_manager)
     finally:
         await resource_manager.close()
     logger.info("Every configured store is prepared.")

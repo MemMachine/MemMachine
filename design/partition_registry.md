@@ -147,16 +147,25 @@ class PartitionRegistry(ABC):
     async def startup(self) -> None: ...
     async def reserve(self, partition_name: str) -> Reservation: ...
     async def resolve(self, partition_name: str) -> Registration | None: ...
+
+    max_list_limit: int
+
+    async def list_partitions(
+        self, *, prefix: str = "", after: str | None = None, limit: int
+    ) -> list[ListedPartition]: ...
     async def unregister(self, partition_name: str) -> None: ...
     async def claim_tombstone(self) -> TombstoneClaim | None: ...
 
-    # Supplied by an implementation, with prepare, startup, and
-    # claim_tombstone.
+    # Supplied by an implementation, with prepare, startup, max_list_limit,
+    # and claim_tombstone.
     async def _reserve(self, partition_name: str) -> Reservation: ...
     async def _resolve(self, partition_name: str) -> UUID | None: ...
     def _registration(
         self, partition_name: str, partition_uuid: UUID
     ) -> Registration: ...
+    async def _list_partitions(
+        self, prefix: str, after: str | None, limit: int
+    ) -> list[ListedPartition]: ...
     async def _unregister(self, partition_name: str) -> None: ...
 
 
@@ -167,6 +176,10 @@ class Reservation:  # partition_name, partition_uuid
 
 class Registration:  # partition_name, partition_uuid
     async def require_current(self) -> None: ...
+
+
+class ListedPartition:  # partition_name, partition_uuid, live, reserved_at
+    ...
 
 
 class TombstoneClaim:  # partition_uuid
@@ -189,6 +202,12 @@ class PartitionManager:
     ) -> None: ...
     async def create_partition(self, partition_name: str) -> None: ...
     async def resolve_partition(self, partition_name: str) -> Registration | None: ...
+
+    max_list_limit: int
+
+    async def list_partitions(
+        self, *, prefix: str = "", after: str | None = None, limit: int
+    ) -> list[ListedPartition]: ...
     async def delete_partition(self, partition_name: str) -> None: ...
     async def run_purge_round(self) -> bool: ...
 ```
@@ -221,7 +240,7 @@ or the claim a purge round holds.
 
 | Object | Operations | Answered by |
 |---|---|---|
-| `PartitionRegistry` | `reserve`, `resolve`, `unregister` (by name), `claim_tombstone` | |
+| `PartitionRegistry` | `reserve`, `resolve`, `unregister` (by name), `list_partitions` (by name prefix), `claim_tombstone` | |
 | `Reservation` | `confirm`, `cancel` | `reserve` |
 | `Registration` | `require_current` | `resolve` |
 | `TombstoneClaim` | `complete`, `progress`, `fail` | `claim_tombstone` |
@@ -292,6 +311,11 @@ lifecycle, so a caller that must delete one particular partition names each
 of its partitions with an id it mints, such as a server's session id, and
 never reuses a name.
 
+Names are compared and ordered by their UTF-8 bytes. An owner that groups
+its partitions puts the group at the start of each name, ended by a
+delimiter no group contains, and lists a group by that prefix (see
+[`list_partitions`](#operations)).
+
 A setting that belongs to one partition is kept by the store that reads it,
 and the registry stores none: the segment store records its payload codec
 with each partition it creates.
@@ -307,10 +331,10 @@ namespace, keeps the schema static.
 
 | Column | Type | Role |
 |---|---|---|
-| `partition_namespace`, `partition_name` | string, primary key | The name's place. The primary key arbitrates creation. |
+| `partition_namespace`, `partition_name` | string, primary key | The name's place. The primary key arbitrates creation, and a listing reads one range of it: `partition_name` is ordered by bytes, which on PostgreSQL takes the `C` collation. |
 | `partition_uuid` | UUID, unique | The partition registered under the name. Its records carry it. |
 | `live` | boolean | Whether the partition's reservation is confirmed. A pending partition holds its name; only a live one is answered. |
-| `registered_at` | timestamp | When the partition was registered, on the database clock. An operator finds a partition stuck pending by it, and getting a pending partition reports it. |
+| `registered_at` | timestamp | When the partition was registered, on the database clock. An operator finds a partition stuck pending by it, and getting or listing a pending partition reports it. |
 
 `partition_registry_gc`, the purge queue, one row per deleted partition (its
 *tombstone*; see [purge](vector_store_purge.md)):
@@ -390,6 +414,34 @@ the first:
 
 When the conditional write matches nothing, a read in the same transaction
 tells a live partition from a gone one.
+
+**`list_partitions(*, prefix, after, limit) -> list[ListedPartition]`**
+(`_list_partitions`). Answers the namespace's registered partitions, pending
+and live, whose names start with `prefix`, in the byte order of their names,
+from the first name after `after`, at most `limit` of them. It is one read:
+the names with a prefix are one run of the primary key that begins at the
+prefix itself, so the read starts there, or after `after`, takes `limit`
+rows in order, and stops at the first name without the prefix. Each
+`ListedPartition` holds the partition's name, its UUID, whether it was live
+at that read, and when its name was reserved (the `registered_at` column,
+which confirming a reservation leaves as it is).
+
+A prefix is the empty string, which every name starts with, or a string
+valid as a partition name: every non-empty start of a name is itself a valid
+name, so the registry checks a prefix as one and has no further rule for
+prefixes. How long a group's prefix may be depends on the names under it,
+which is its owner's to decide. The limit is required and at most
+`max_list_limit`, which whoever builds the registry sets. A call with a
+larger limit, a prefix that is neither, or an `after` that is not valid as a
+partition name raises `ValueError` before it reads.
+
+`after` is a name and nothing more: the last name the previous call
+returned. The registry keeps no state for a listing, so a cursor never
+expires and need not name a partition that is still registered. A listing
+has ended once a call returns fewer partitions than its limit. Each call is
+a consistent read of its own. Across calls, a partition registered
+throughout is listed once, and one registered or deleted in between may or
+may not be listed.
 
 **`claim_tombstone()`** and the claim's `complete`, `progress`, and `fail` are
 described in [Deletion and purge](#deletion-and-purge) and
@@ -646,6 +698,46 @@ differs where a store is remote:
   caller that gets or creates waits for it. A creation that stopped part way
   stays pending until its caller deletes the name: the registry offers the
   deletion and holds no policy on when to give up.
+- **The registry lists partitions by name prefix, and by nothing else.** It
+  is the one place that knows every registered partition, so a listing
+  there misses nothing. An index an owner keeps of its partitions cannot be
+  written in the registry's transaction: a partition whose name is reserved,
+  and whose owner stops before the index has its entry, is pending in the
+  registry and absent from the index, so the owner's listing never shows it
+  while it goes on holding its name. A prefix is a string the owner chooses,
+  so the registry learns nothing of what a name means, and one listing
+  serves every owner and every depth of grouping. Listing by anything else,
+  such as an attribute or a creation time, needs data the registry does not
+  hold: an owner with such a query keeps its own index of that data and
+  resolves what it finds.
+- **A listing answers pending partitions with live ones.** A pending
+  partition holds its name until it is deleted, and whether its creation was
+  abandoned is its caller's decision, so whoever clears it has to find it:
+  the listing shows it, with when it was reserved.
+- **The listing is what a hierarchy of partitions takes of the registry.** A
+  group with a lifecycle of its own is a partition of a namespace above its
+  members', and its members' names begin with the group's UUID. A member is
+  reached only through that UUID, so deleting the group makes every member
+  unreachable in the one transaction that unregisters the group's name. The
+  group's purge lists the members by that prefix and deletes each, a page at
+  a time, until a listing finds none, which also finds a member created
+  late. A group created again under the name has another UUID, so the purge
+  of the old one reaches none of its members. Every level of a hierarchy
+  uses the same listing, and the registry holds no notion of a level.
+- **A listing is bounded and keeps no state.** Every call names its limit,
+  the registry caps it, and a call reads at most that many rows of the
+  primary key, so no call's cost grows with the namespace. A limit above the
+  cap is refused, so a call that returns fewer partitions than it asked for
+  has always reached the end. The cursor is the last name returned.
+- **A listed partition is data, not a handle.** It reports whether the
+  partition was live as one read found it, which a listing is for, and it
+  offers no operation: acting on a partition takes resolving its name.
+- **Whether a partition is live is a boolean**, in the table and in a
+  listing. It is one fact, whether the partition's reservation was
+  confirmed, and reserving and then confirming gives it two values. A
+  deletion has no stage a reader can see. How available a live partition
+  is, such as suspended or moved to colder storage, is another fact, with a
+  column and a field of its own.
 - **`prepare` creates the registry's tables when missing**, as every store's
   `prepare` creates its own durable resources idempotently; `startup`
   creates nothing.
@@ -747,6 +839,46 @@ differs where a store is remote:
   address partitions by name, so the name lookup has to be arbitrated
   somewhere; the primary key on `(partition_namespace, partition_name)` is that
   place.
+- **A listing of the whole namespace, with no prefix, cursor, or limit.**
+  Every call reads every name of the namespace, however few its caller
+  wants, and its result has no bound a caller can set.
+- **Each owner keeps an index of its partitions' names and lists from it.**
+  It can be made to work. The index shows a pending partition only when its
+  entry is written before the name is reserved, and it is right only when
+  every entry is checked against the registry on each read and removed
+  after the partition is deleted. Every owner that lists builds all three,
+  beside a table for the index, and a rename rewrites the index as well as
+  the registry. In a hierarchy each level builds them again: a group's
+  index of its members is what its purge reads to delete them, so a member
+  the index missed outlives its group. A lookup of many names in one call
+  would cut such a listing's reads of the registry and none of the rest.
+- **A group column beside the namespace**, listed by equality. It needs no
+  prefix matching, and it gives one level of grouping, fixed for every
+  owner, where a prefix gives any depth with no column.
+- **A cursor that pins a snapshot**, so a listing's calls read one state of
+  the registry. The registry would keep a version of every row for as long
+  as a listing may continue, and the cursor would expire with it.
+- **Matching the prefix with a pattern** (`LIKE`). A pattern needs its
+  wildcards escaped in every name, matches without regard to case on
+  SQLite, and uses the primary key on PostgreSQL only under the same byte
+  order a range needs.
+- **An opaque continuation token in place of `after`.** A token can hold
+  more than a name, such as a place after a whole group or a snapshot to
+  read, and its encoding can change behind it. The listing has one order
+  and no snapshot, so a name is all a token would hold, and a name never
+  expires and lets a caller start a listing anywhere.
+- **A limit above the cap answered with the cap's worth.** A caller that
+  asked for more would get fewer with partitions left to list, and could no
+  longer take a short answer for the end.
+- **A delimiter that rolls names up into their groups**, answering each
+  group once in place of its members. No owner lists its groups. In byte
+  order a group's members end just before the group's prefix with its
+  delimiter replaced by the next byte, so the next group is one read of the
+  primary key from there, and such a listing takes no change to the tables.
+- **A state of several values in place of the boolean**, as a string in a
+  listing or a column in the table. One field for whether a partition is
+  live and for how available it is would give "live" several values, which
+  every reader of the field would have to tell apart from "pending".
 
 ## Consequences
 
@@ -759,3 +891,8 @@ differs where a store is remote:
   partition manager, and read and written through the handles its owner gets
   from the store.
 - Stores address partitions by UUID, not by name.
+- A listing call is one read of at most its limit of rows, in the primary
+  key's order, whatever the size of the namespace. A listing of many
+  partitions is as many calls as it has pages, each a read of its own.
+- An owner's grouping is the start of its partitions' names, so a partition
+  moves to another group only by a new name.

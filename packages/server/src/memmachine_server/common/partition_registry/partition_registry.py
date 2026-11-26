@@ -24,6 +24,7 @@ from dataclasses import dataclass
 from uuid import UUID
 
 from .data_types import (
+    ListedPartition,
     PartitionAlreadyConfirmedError,
     PartitionDeletedError,
     validate_partition_name,
@@ -363,6 +364,94 @@ class PartitionRegistry(ABC):
 
         Returns:
             Registration: The partition's registration.
+        """
+        raise NotImplementedError
+
+    @property
+    @abstractmethod
+    def max_list_limit(self) -> int:
+        """The most partitions one `list_partitions` call may ask for."""
+        raise NotImplementedError
+
+    async def list_partitions(
+        self,
+        *,
+        prefix: str = "",
+        after: str | None = None,
+        limit: int,
+    ) -> list[ListedPartition]:
+        """
+        List the registered partitions, pending and live, whose names start with a prefix.
+
+        Partitions are listed in ascending order of their names' UTF-8 bytes,
+        from the first name after `after`. One read of the registry decides
+        the outcome.
+
+        A listing continues from the last name a call returned, and has ended
+        once a call returns fewer partitions than its limit. A partition
+        registered throughout a listing is listed once; one registered or
+        deleted between two of its calls may or may not be listed.
+
+        Args:
+            prefix (str):
+                What a listed partition's name starts with: a string valid
+                as a partition name, or the empty string, which lists every
+                partition (default: "").
+            after (str | None):
+                The name to list after, which need not be registered. None
+                lists from the first name with the prefix (default: None).
+            limit (int):
+                The most partitions to return, at most `max_list_limit`.
+
+        Returns:
+            list[ListedPartition]:
+                The partitions, in ascending order of their names' bytes.
+
+        Raises:
+            ValueError:
+                If the prefix is neither empty nor valid as a partition
+                name, `after` is invalid as a partition name, or the limit
+                is not between 1 and `max_list_limit`.
+        """
+        # Every non-empty start of a partition name is a valid partition name.
+        if prefix:
+            validate_partition_name(prefix)
+        if after is not None:
+            validate_partition_name(after)
+        if not 1 <= limit <= self.max_list_limit:
+            raise ValueError(
+                f"Limit {limit} must be between 1 and {self.max_list_limit}"
+            )
+        return await self._list_partitions(prefix, after, limit)
+
+    @abstractmethod
+    async def _list_partitions(
+        self, prefix: str, after: str | None, limit: int
+    ) -> list[ListedPartition]:
+        """
+        List the registered partitions, pending and live, whose names start with a prefix.
+
+        Called by `list_partitions` with a prefix that is empty or valid as
+        a partition name, an `after` that is None or valid as a partition
+        name, and a limit between 1 and `max_list_limit`, concurrently with
+        any other call on any process. One read of the registry decides the outcome,
+        reflecting every reservation, confirmation, and deletion committed
+        before the read. Names are compared and ordered by their UTF-8
+        bytes. It only reads, so a call that raises changes nothing.
+
+        Args:
+            prefix (str):
+                What a listed partition's name starts with.
+            after (str | None):
+                The name to list after, or None to list from the first name
+                with the prefix.
+            limit (int):
+                The most partitions to return.
+
+        Returns:
+            list[ListedPartition]:
+                The first `limit` partitions after `after` whose names start
+                with the prefix, in ascending order of their names' bytes.
         """
         raise NotImplementedError
 

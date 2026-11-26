@@ -24,6 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlalchemy.pool import NullPool, StaticPool
 
 from memmachine_server.common.partition_registry import (
+    ListedPartition,
     PartitionAlreadyExistsError,
     PartitionCreateAttemptsExhaustedError,
     PartitionDeletedError,
@@ -52,6 +53,26 @@ PURGE_LEASE = timedelta(minutes=5)
 # A partition name of the maximum length in bytes, with characters no
 # identifier allows.
 ANY_CHARACTERS_NAME = "Session/ID-1 ü".ljust(254, "x")
+# Names whose byte order is not a locale's order, with the characters a
+# pattern match treats specially.
+LISTED_NAMES = [
+    "ORG/a",
+    "or",
+    "org",
+    "org a",
+    "org%/a",
+    "org-a",
+    "org/",
+    "org/B",
+    "org/a",
+    "org/b",
+    "org0/a",
+    "org_/a",
+    "orgé",
+    "orh/a",
+    "z",
+    "órg/a",
+]
 
 
 @pytest.fixture
@@ -66,6 +87,7 @@ async def _registry(
     tombstone_retention_seconds: int = RETENTION_SECONDS,
     purge_lease_seconds: int = int(PURGE_LEASE.total_seconds()),
     base_purge_retry_backoff_seconds: int = 30,
+    max_list_limit: int = 1000,
 ) -> SQLAlchemyPartitionRegistry:
     registry = SQLAlchemyPartitionRegistry(
         SQLAlchemyPartitionRegistryParams(
@@ -74,11 +96,26 @@ async def _registry(
             tombstone_retention_seconds=tombstone_retention_seconds,
             purge_lease_seconds=purge_lease_seconds,
             base_purge_retry_backoff_seconds=base_purge_retry_backoff_seconds,
+            max_list_limit=max_list_limit,
         ),
     )
     await registry.prepare()
     await registry.startup()
     return registry
+
+
+async def _listed(
+    registry: SQLAlchemyPartitionRegistry, *, prefix: str = "", limit: int = 3
+) -> list[ListedPartition]:
+    """Every partition a listing by a prefix answers, read `limit` at a time."""
+    listed: list[ListedPartition] = []
+    after: str | None = None
+    while True:
+        page = await registry.list_partitions(prefix=prefix, after=after, limit=limit)
+        listed.extend(page)
+        if len(page) < limit:
+            return listed
+        after = page[-1].partition_name
 
 
 async def _queued(registry: SQLAlchemyPartitionRegistry) -> list[UUID]:
@@ -1975,6 +2012,20 @@ class _ModelCheckedRegistry:
         elif outcome == "raise":
             self.backing_off[claimed[0]] = True
 
+    async def list_partitions(self, name: str) -> None:
+        prefix = self.rng.choice(["", name])
+        listed = await _listed(
+            self.registry, prefix=prefix, limit=self.rng.randint(1, 3)
+        )
+        assert [
+            (partition.partition_name, partition.partition_uuid, partition.live)
+            for partition in listed
+        ] == sorted(
+            (held_name, partition_uuid, live)
+            for held_name, (partition_uuid, live) in self.partitions.items()
+            if held_name.startswith(prefix)
+        )
+
     async def check_state(self) -> None:
         async with self.registry._engine.connect() as connection:
             rows = await connection.execute(
@@ -2015,9 +2066,134 @@ async def test_random_operation_sequences_agree_with_a_model(
         model.delete_partition,
         model.get_partition,
         model.require_current,
+        model.list_partitions,
         model.purge,
     ]
     for _ in range(80):
         step = rng.choice(steps)
         await step(rng.choice(["a", "b", "c"]))
         await model.check_state()
+
+
+@pytest.mark.asyncio
+async def test_a_listing_answers_the_namespaces_pending_and_live_partitions(
+    sqlalchemy_engine, partition_namespace
+):
+    registry = await _registry(sqlalchemy_engine, partition_namespace)
+    other_registry = await _registry(sqlalchemy_engine, f"{partition_namespace}_o")
+    live = await registry._reserve("live")
+    await live.confirm()
+    pending = await registry._reserve("pending")
+    await (await registry._reserve("deleted")).confirm()
+    await registry.unregister("deleted")
+    await (await other_registry._reserve("elsewhere")).confirm()
+
+    listed = await registry.list_partitions(limit=registry.max_list_limit)
+
+    assert [
+        (partition.partition_name, partition.partition_uuid, partition.live)
+        for partition in listed
+    ] == [
+        ("live", live.partition_uuid, True),
+        ("pending", pending.partition_uuid, False),
+    ]
+    assert all(partition.reserved_at.tzinfo is not None for partition in listed)
+
+
+@pytest.mark.asyncio
+async def test_a_listed_partition_keeps_its_reservation_time_once_live(
+    sqlalchemy_engine, partition_namespace
+):
+    registry = await _registry(sqlalchemy_engine, partition_namespace)
+    reservation = await registry._reserve("a")
+    [pending] = await registry.list_partitions(limit=1)
+    await reservation.confirm()
+
+    [live] = await registry.list_partitions(limit=1)
+
+    assert (pending.live, live.live) == (False, True)
+    assert live.reserved_at == pending.reserved_at
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "prefix", ["", "org", "org/", "org_", "org%", "ORG", "ó", "orgs", "org/a"]
+)
+async def test_a_listing_answers_the_names_with_its_prefix_in_byte_order(
+    sqlalchemy_engine, partition_namespace, prefix
+):
+    registry = await _registry(sqlalchemy_engine, partition_namespace)
+    for name in LISTED_NAMES:
+        await registry._reserve(name)
+
+    listed = await _listed(registry, prefix=prefix)
+
+    assert [partition.partition_name for partition in listed] == sorted(
+        (name for name in LISTED_NAMES if name.startswith(prefix)), key=str.encode
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("after", "expected"),
+    [
+        ("a", ["p/1", "p/2", "p/3"]),
+        ("p/", ["p/1", "p/2", "p/3"]),
+        ("p/1", ["p/2", "p/3"]),
+        ("p/1x", ["p/2", "p/3"]),
+        ("p/3", []),
+        ("q", []),
+    ],
+)
+async def test_a_listing_after_a_name_answers_the_names_with_its_prefix_past_it(
+    sqlalchemy_engine, partition_namespace, after, expected
+):
+    registry = await _registry(sqlalchemy_engine, partition_namespace)
+    for name in ("o/1", "p/1", "p/2", "p/3", "q/1"):
+        await registry._reserve(name)
+
+    listed = await registry.list_partitions(prefix="p/", after=after, limit=5)
+
+    assert [partition.partition_name for partition in listed] == expected
+
+
+@pytest.mark.asyncio
+async def test_a_listing_continues_after_a_name_deleted_since(
+    sqlalchemy_engine, partition_namespace
+):
+    registry = await _registry(sqlalchemy_engine, partition_namespace)
+    for name in ("p/1", "p/2", "p/3", "p/4"):
+        await registry._reserve(name)
+    first = await registry.list_partitions(prefix="p/", limit=2)
+
+    await registry.unregister(first[-1].partition_name)
+    rest = await registry.list_partitions(
+        prefix="p/", after=first[-1].partition_name, limit=2
+    )
+
+    assert [partition.partition_name for partition in first] == ["p/1", "p/2"]
+    assert [partition.partition_name for partition in rest] == ["p/3", "p/4"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        {"limit": 0},
+        {"limit": 6},
+        {"prefix": "a\x00", "limit": 1},
+        {"prefix": "x" * 256, "limit": 1},
+        {"after": "", "limit": 1},
+        {"after": "x" * 256, "limit": 1},
+    ],
+)
+async def test_a_listing_refuses_arguments_outside_its_bounds(
+    sqlalchemy_engine, partition_namespace, arguments
+):
+    registry = await _registry(sqlalchemy_engine, partition_namespace, max_list_limit=5)
+    await registry._reserve("a")
+
+    with pytest.raises(ValueError, match=r"Limit|Partition name"):
+        await registry.list_partitions(**arguments)
+
+    assert len(await registry.list_partitions(limit=registry.max_list_limit)) == 1

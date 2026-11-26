@@ -816,3 +816,20 @@ async def test_racing_creations_and_deletions_leave_each_created_partition_live_
     dropped = {call.args[0] for call in store.drop_partition.await_args_list}
     assert dropped == queued
     assert await _queued(registry) == 0
+
+
+@pytest.mark.asyncio
+async def test_a_partition_is_listed_from_its_creation_to_its_deletion(manager):
+    await manager.create_partition(NAME)
+    await manager.create_partition("q")
+
+    listed = await manager.list_partitions(limit=manager.max_list_limit)
+    assert [(partition.partition_name, partition.live) for partition in listed] == [
+        (NAME, True),
+        ("q", True),
+    ]
+
+    await manager.delete_partition(NAME)
+
+    listed = await manager.list_partitions(limit=manager.max_list_limit)
+    assert [partition.partition_name for partition in listed] == ["q"]

@@ -26,6 +26,7 @@ from memmachine_server.common.configuration.episodic_config import (
     ShortTermMemoryConfPartial,
 )
 from memmachine_server.common.configuration.reranker_conf import RerankersConf
+from memmachine_server.main.memmachine import prepare_memmachine_partition_registry
 from memmachine_server.semantic_memory.semantic_session_manager import (
     SemanticSessionManager,
 )
@@ -289,6 +290,7 @@ def session_setup():
 @pytest_asyncio.fixture
 async def memmachine(memmachine_top: MemMachine):
     await memmachine_top.resource_manager.prepare()
+    await prepare_memmachine_partition_registry(memmachine_top.resource_manager)
     await memmachine_top.delete_all()
     await memmachine_top.start()
     yield memmachine_top

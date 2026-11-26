@@ -247,6 +247,7 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
       | Parameter | Description                                                                 | Default    |
       |-----------|-----------------------------------------------------------------------------|------------|
       | `database`| The ID of a database defined in `resources.databases` for session data storage. | *Required* |
+      | `tombstone_retention_seconds` | Seconds a deleted project's data is kept before its purge starts. The project is unreachable from its deletion. | `86400` |
     </Accordion>
 
   <Accordion title="Server">

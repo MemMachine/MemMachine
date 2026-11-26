@@ -84,6 +84,15 @@ class SessionManagerConf(YamlSerializableMixin):
         ge=0,
         description="Maximum number of episodic memory instances to cache; 0 disables idle caching",
     )
+    tombstone_retention_seconds: int = Field(
+        default=86400,
+        gt=0,
+        description=(
+            "Seconds a deleted session's data is kept before its purge starts, "
+            "so every write in flight at the deletion has landed and is "
+            "reclaimed"
+        ),
+    )
 
 
 class EpisodeStoreConf(YamlSerializableMixin):

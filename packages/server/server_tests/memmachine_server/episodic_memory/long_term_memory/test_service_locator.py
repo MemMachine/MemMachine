@@ -47,6 +47,8 @@ from memmachine_server.episodic_memory.event_memory.segment_store import (
 )
 from memmachine_server.episodic_memory.long_term_memory import service_locator
 from memmachine_server.episodic_memory.long_term_memory.service_locator import (
+    create_event_memory_storage,
+    delete_event_memory_storage,
     delete_long_term_memory_storage,
     event_backend_indexed_properties,
     event_backend_vector_store,
@@ -255,6 +257,53 @@ async def test_deleting_an_event_sessions_storage_deletes_its_partition_without_
     # Purge rounds reclaim the records; the delete path purges nothing.
     vector_store.purge_partition.assert_not_awaited()
     segment_store.purge_partition.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_creating_a_sessions_event_memory_storage_creates_its_partition_in_both_stores():
+    resource_manager = _deployment_resource_manager(_DEPLOYMENT)
+    partition_registry = resource_manager.get_partition_registry.return_value
+    reservation = partition_registry.reserve.return_value
+    reservation.partition_uuid = uuid4()
+
+    await create_event_memory_storage("s", resource_manager)
+
+    partition_registry.reserve.assert_awaited_once_with("s")
+    resource_manager.get_vector_store.return_value.create_partition.assert_awaited_once_with(
+        reservation.partition_uuid
+    )
+    resource_manager.get_segment_store.return_value.create_partition.assert_awaited_once()
+    reservation.confirm.assert_awaited_once_with()
+
+
+@pytest.mark.asyncio
+async def test_deleting_a_sessions_event_memory_storage_deletes_its_partition_by_name():
+    resource_manager = _deployment_resource_manager(_DEPLOYMENT)
+
+    await delete_event_memory_storage("s", resource_manager)
+
+    partition_registry = resource_manager.get_partition_registry.return_value
+    partition_registry.unregister.assert_awaited_once_with("s")
+    partition_registry.reserve.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "deployment",
+    [None, _DEPLOYMENT.model_copy(update={"partition_registry": None})],
+    ids=["no_long_term_memory", "no_partition_registry"],
+)
+async def test_a_deployment_without_event_memory_has_no_event_memory_storage(
+    deployment,
+):
+    resource_manager = _deployment_resource_manager(deployment)
+
+    await create_event_memory_storage("s", resource_manager)
+    await delete_event_memory_storage("s", resource_manager)
+
+    resource_manager.get_partition_registry.assert_not_awaited()
+    resource_manager.get_segment_store.assert_not_awaited()
+    resource_manager.get_vector_store.assert_not_awaited()
 
 
 @pytest.mark.asyncio

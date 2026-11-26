@@ -10,6 +10,7 @@ transaction, and a purge claim is a lease on a tombstone, taken by one short
 write and ended by another.
 """
 
+import itertools
 import logging
 import sqlite3
 from dataclasses import dataclass, field
@@ -51,6 +52,7 @@ from memmachine_server.common.utils import ensure_tz_aware
 from .data_types import (
     _PARTITION_NAME_MAX_BYTES,
     _PARTITION_NAMESPACE_MAX_BYTES,
+    ListedPartition,
     PartitionAlreadyConfirmedError,
     PartitionAlreadyExistsError,
     PartitionCreateAttemptsExhaustedError,
@@ -86,8 +88,13 @@ class PartitionRow(BasePartitionRegistry):
     partition_namespace: MappedColumn[str] = mapped_column(
         String(_PARTITION_NAMESPACE_MAX_BYTES), primary_key=True
     )
+    # Ordered by bytes on PostgreSQL, as SQLite orders it, so a listing by
+    # name prefix reads one range of the primary key.
     partition_name: MappedColumn[str] = mapped_column(
-        String(_PARTITION_NAME_MAX_BYTES), primary_key=True
+        String(_PARTITION_NAME_MAX_BYTES).with_variant(
+            String(_PARTITION_NAME_MAX_BYTES, collation="C"), "postgresql"
+        ),
+        primary_key=True,
     )
     partition_uuid: MappedColumn[UUID] = mapped_column(
         Uuid, nullable=False, unique=True
@@ -168,6 +175,8 @@ class SQLAlchemyPartitionRegistryParams(BaseModel):
             further attempt without progress (default: 30).
         max_purge_retry_backoff_seconds (int):
             The longest the purge retry backoff grows to (default: 86400).
+        max_list_limit (int):
+            The most partitions one listing call may ask for (default: 1000).
     """
 
     engine: InstanceOf[AsyncEngine] = Field(
@@ -214,6 +223,9 @@ class SQLAlchemyPartitionRegistryParams(BaseModel):
     )
     max_purge_retry_backoff_seconds: int = Field(
         86400, gt=0, description="The longest the purge retry backoff grows to"
+    )
+    max_list_limit: int = Field(
+        1000, gt=0, description="The most partitions one listing call may ask for"
     )
 
     @field_validator("engine")
@@ -264,6 +276,7 @@ class SQLAlchemyPartitionRegistry(PartitionRegistry):
         self._purge_lease_seconds = params.purge_lease_seconds
         self._base_purge_retry_backoff_seconds = params.base_purge_retry_backoff_seconds
         self._max_purge_retry_backoff_seconds = params.max_purge_retry_backoff_seconds
+        self._max_list_limit = params.max_list_limit
 
     @override
     async def prepare(self) -> None:
@@ -385,6 +398,53 @@ class SQLAlchemyPartitionRegistry(PartitionRegistry):
             engine=self._engine,
             partition_namespace=self._partition_namespace,
         )
+
+    @property
+    @override
+    def max_list_limit(self) -> int:
+        return self._max_list_limit
+
+    @override
+    async def _list_partitions(
+        self, prefix: str, after: str | None, limit: int
+    ) -> list[ListedPartition]:
+        # In byte order, the names that start with the prefix are one run
+        # that begins at the prefix itself. The read starts there, or after
+        # `after` when that is further on, and the listing stops at the
+        # first name without the prefix.
+        partition_name = _in_byte_order(
+            self._engine.dialect.name, PartitionRow.partition_name
+        )
+        async with self._engine.connect() as connection:
+            rows = (
+                await connection.execute(
+                    select(
+                        PartitionRow.partition_name,
+                        PartitionRow.partition_uuid,
+                        PartitionRow.live,
+                        PartitionRow.registered_at,
+                    )
+                    .where(
+                        PartitionRow.partition_namespace == self._partition_namespace,
+                        partition_name > after
+                        if after is not None and after >= prefix
+                        else partition_name >= prefix,
+                    )
+                    .order_by(partition_name)
+                    .limit(limit)
+                )
+            ).all()
+        return [
+            ListedPartition(
+                partition_name=row.partition_name,
+                partition_uuid=row.partition_uuid,
+                live=row.live,
+                reserved_at=ensure_tz_aware(row.registered_at),
+            )
+            for row in itertools.takewhile(
+                lambda row: row.partition_name.startswith(prefix), rows
+            )
+        ]
 
     @override
     async def _unregister(self, partition_name: str) -> None:
@@ -659,6 +719,13 @@ async def _unregister_where(
         )
     )
     return True
+
+
+def _in_byte_order(
+    dialect_name: str, partition_name: InstrumentedAttribute[str]
+) -> ColumnElement[str]:
+    """A partition name compared and ordered by its UTF-8 bytes, whatever collation its column was created with."""
+    return partition_name.collate("BINARY" if dialect_name == "sqlite" else "C")
 
 
 def _has_elapsed(
