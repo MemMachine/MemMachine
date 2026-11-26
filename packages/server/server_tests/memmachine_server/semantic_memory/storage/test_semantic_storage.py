@@ -1,12 +1,15 @@
 from __future__ import annotations
 
-import asyncio
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta, tzinfo
+from typing import Self
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 import numpy as np
 import pytest
 import pytest_asyncio
+from neo4j import AsyncDriver
+from sqlalchemy import select, update
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 from memmachine_server.common.episode_store import (
     EpisodeEntry,
@@ -18,7 +21,96 @@ from memmachine_server.semantic_memory.semantic_model import FeatureIdT, Semanti
 from memmachine_server.semantic_memory.storage.neo4j_semantic_storage import (
     Neo4jSemanticStorage,
 )
+from memmachine_server.semantic_memory.storage.sqlalchemy_pgvector_semantic import (
+    Feature,
+    SqlAlchemyPgVectorSemanticStorage,
+)
 from memmachine_server.semantic_memory.storage.storage_base import SemanticStorage
+from server_tests.memmachine_server.semantic_memory.storage.in_memory_semantic_storage import (
+    InMemorySemanticStorage,
+)
+
+_OLD_TIME = datetime(2024, 1, 1, tzinfo=UTC)
+_CUTOFF = datetime(2024, 1, 2, tzinfo=UTC)
+_NEW_TIME = datetime(2024, 1, 3, tzinfo=UTC)
+
+
+@pytest.fixture(params=[-1, 1], ids=["host-clock-behind", "host-clock-ahead"])
+def offset_host_clock(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Offset this test module's clock without changing storage or asyncio clocks."""
+    original_datetime = datetime
+    offset = timedelta(days=request.param)
+
+    class OffsetDatetime(original_datetime):
+        @classmethod
+        def now(cls, tz: tzinfo | None = None) -> Self:
+            return super().now(tz) + offset
+
+    monkeypatch.setattr(request.module, "datetime", OffsetDatetime)
+
+
+async def _set_feature_created_at(
+    storage: SemanticStorage,
+    request: pytest.FixtureRequest,
+    feature_id: FeatureIdT,
+    created_at: datetime,
+) -> None:
+    """Set a deterministic timestamp only on the feature returned by add_feature."""
+    assert created_at.utcoffset() is not None
+    if isinstance(storage, SqlAlchemyPgVectorSemanticStorage):
+        engine: AsyncEngine = request.getfixturevalue("sqlalchemy_pg_engine")
+        async with engine.begin() as connection:
+            result = await connection.execute(
+                update(Feature)
+                .where(Feature.id == int(feature_id))
+                .values(created_at=created_at)
+                .returning(Feature.id)
+            )
+            assert result.scalar_one() == int(feature_id)
+    elif isinstance(storage, Neo4jSemanticStorage):
+        driver: AsyncDriver = request.getfixturevalue("neo4j_driver")
+        records, _, _ = await driver.execute_query(
+            "MATCH (f:Feature) WHERE elementId(f) = $feature_id "
+            "SET f.created_at_ts = $created_at_ts "
+            "RETURN elementId(f) AS feature_id",
+            feature_id=feature_id,
+            created_at_ts=created_at.timestamp(),
+        )
+        assert [record["feature_id"] for record in records] == [feature_id]
+    elif isinstance(storage, InMemorySemanticStorage):
+        storage._features_by_id[feature_id].created_at = created_at
+    else:
+        pytest.fail(f"Unsupported semantic storage: {type(storage).__name__}")
+
+
+async def _get_feature_created_at(
+    storage: SemanticStorage,
+    request: pytest.FixtureRequest,
+    feature_id: FeatureIdT,
+) -> datetime:
+    """Read the persisted timestamp without replacing its default generation."""
+    if isinstance(storage, SqlAlchemyPgVectorSemanticStorage):
+        engine: AsyncEngine = request.getfixturevalue("sqlalchemy_pg_engine")
+        async with engine.connect() as connection:
+            result = await connection.execute(
+                select(Feature.created_at).where(Feature.id == int(feature_id))
+            )
+            return result.scalar_one()
+    if isinstance(storage, Neo4jSemanticStorage):
+        driver: AsyncDriver = request.getfixturevalue("neo4j_driver")
+        records, _, _ = await driver.execute_query(
+            "MATCH (f:Feature) WHERE elementId(f) = $feature_id "
+            "RETURN f.created_at_ts AS created_at_ts",
+            feature_id=feature_id,
+        )
+        assert len(records) == 1
+        assert records[0]["created_at_ts"] is not None
+        return datetime.fromtimestamp(records[0]["created_at_ts"], tz=UTC)
+    if isinstance(storage, InMemorySemanticStorage):
+        return storage._features_by_id[feature_id].created_at
+    pytest.fail(f"Unsupported semantic storage: {type(storage).__name__}")
 
 
 def _uid(label: str) -> UUID:
@@ -1127,28 +1219,33 @@ async def test_get_set_ids_with_min_uningested(
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("offset_host_clock")
+@pytest.mark.parametrize(
+    "registered_at", [_OLD_TIME, _CUTOFF], ids=["before-cutoff", "at-cutoff"]
+)
 async def test_get_set_ids_with_older_than(
     semantic_storage: SemanticStorage,
-    episode_storage,
+    registered_at: datetime,
 ):
-    early_history_id = await _add_episode(episode_storage, content="early")
+    early_history_id = _uid("older-than-early")
     await semantic_storage.add_history_to_set(
         set_id="old_user",
         history_id=early_history_id,
+        registered_at=registered_at,
+        created_at=_NEW_TIME,
     )
 
-    await asyncio.sleep(0.01)
-    cutoff = datetime.now(UTC)
-    await asyncio.sleep(0.01)
-
-    recent_history_id = await _add_episode(episode_storage, content="recent")
+    recent_history_id = _uid("older-than-recent")
     await semantic_storage.add_history_to_set(
         set_id="recent_user",
         history_id=recent_history_id,
+        registered_at=_NEW_TIME,
+        created_at=_OLD_TIME,
     )
 
+    # Registration time controls the inclusive cutoff, not episode event time.
     set_ids = {
-        sid async for sid in semantic_storage.get_history_set_ids(older_than=cutoff)
+        sid async for sid in semantic_storage.get_history_set_ids(older_than=_CUTOFF)
     }
 
     assert set_ids == {"old_user"}
@@ -1159,47 +1256,44 @@ async def test_get_set_ids_with_older_than(
     )
 
     set_ids_after_ingest = {
-        sid async for sid in semantic_storage.get_history_set_ids(older_than=cutoff)
+        sid async for sid in semantic_storage.get_history_set_ids(older_than=_CUTOFF)
     }
 
     assert set_ids_after_ingest == set()
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("offset_host_clock")
 async def test_get_set_ids_with_older_than_and_min_uningested(
     semantic_storage: SemanticStorage,
-    episode_storage,
 ):
-    early_history_id = await _add_episode(episode_storage, content="early")
+    early_history_id = _uid("older-than-min-count-early")
     await semantic_storage.add_history_to_set(
         set_id="old_user",
         history_id=early_history_id,
+        registered_at=_OLD_TIME,
     )
 
-    await asyncio.sleep(0.01)
-    cutoff = datetime.now(UTC)
-    await asyncio.sleep(0.01)
-
-    busy_history_ids = [
-        await _add_episode(episode_storage, content=f"busy-{idx}") for idx in range(2)
-    ]
+    busy_history_ids = [_uid(f"older-than-min-count-busy-{idx}") for idx in range(2)]
     for history_id in busy_history_ids:
         await semantic_storage.add_history_to_set(
             set_id="busy_user",
             history_id=history_id,
+            registered_at=_NEW_TIME,
         )
 
-    fresh_history_id = await _add_episode(episode_storage, content="fresh")
+    fresh_history_id = _uid("older-than-min-count-fresh")
     await semantic_storage.add_history_to_set(
         set_id="fresh_user",
         history_id=fresh_history_id,
+        registered_at=_NEW_TIME,
     )
 
     set_ids = {
         sid
         async for sid in semantic_storage.get_history_set_ids(
             min_uningested_messages=2,
-            older_than=cutoff,
+            older_than=_CUTOFF,
         )
     }
 
@@ -1214,7 +1308,7 @@ async def test_get_set_ids_with_older_than_and_min_uningested(
         sid
         async for sid in semantic_storage.get_history_set_ids(
             min_uningested_messages=2,
-            older_than=cutoff,
+            older_than=_CUTOFF,
         )
     ]
 
@@ -1314,13 +1408,35 @@ async def test_purge_ingested_rows_empty_list(
 
 
 @pytest.mark.asyncio
+async def test_add_feature_generates_timezone_aware_created_at(
+    semantic_storage: SemanticStorage,
+    request: pytest.FixtureRequest,
+) -> None:
+    feature_id = await semantic_storage.add_feature(
+        set_id="user",
+        category_name="default",
+        feature="note",
+        value="default_timestamp",
+        tag="misc",
+        embedding=np.array([1.0], dtype=float),
+    )
+
+    created_at = await _get_feature_created_at(semantic_storage, request, feature_id)
+
+    assert created_at is not None
+    assert created_at.utcoffset() is not None
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("offset_host_clock")
 async def test_filter_features_by_created_at_date(
     semantic_storage: SemanticStorage,
+    request: pytest.FixtureRequest,
 ):
     embed = np.array([1.0], dtype=float)
 
     # Add features at different times
-    await semantic_storage.add_feature(
+    old_id = await semantic_storage.add_feature(
         set_id="user",
         category_name="default",
         feature="note",
@@ -1329,11 +1445,7 @@ async def test_filter_features_by_created_at_date(
         embedding=embed,
     )
 
-    await asyncio.sleep(0.01)
-    cutoff = datetime.now(UTC)
-    await asyncio.sleep(0.01)
-
-    await semantic_storage.add_feature(
+    new_id = await semantic_storage.add_feature(
         set_id="user",
         category_name="default",
         feature="note",
@@ -1341,32 +1453,36 @@ async def test_filter_features_by_created_at_date(
         tag="misc",
         embedding=embed,
     )
+    await _set_feature_created_at(semantic_storage, request, old_id, _OLD_TIME)
+    await _set_feature_created_at(semantic_storage, request, new_id, _CUTOFF)
 
     # Filter for features created before cutoff
     old_features = await _collect_feature_set(
         semantic_storage,
-        filter_expr=_expr(f"created_at<date('{cutoff.isoformat()}')"),
+        filter_expr=_expr(f"created_at<date('{_CUTOFF.isoformat()}')"),
     )
     assert len(old_features) == 1
     assert old_features[0].value == "old_note"
 
-    # Filter for features created after cutoff
+    # A feature exactly at the cutoff belongs to the inclusive >= side.
     new_features = await _collect_feature_set(
         semantic_storage,
-        filter_expr=_expr(f"created_at>=date('{cutoff.isoformat()}')"),
+        filter_expr=_expr(f"created_at>=date('{_CUTOFF.isoformat()}')"),
     )
     assert len(new_features) == 1
     assert new_features[0].value == "new_note"
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("offset_host_clock")
 async def test_filter_features_by_created_at_with_other_filters(
     semantic_storage: SemanticStorage,
+    request: pytest.FixtureRequest,
 ):
     embed = np.array([1.0], dtype=float)
 
     # Add features with different tags at different times
-    await semantic_storage.add_feature(
+    old_user1_id = await semantic_storage.add_feature(
         set_id="user1",
         category_name="default",
         feature="note",
@@ -1375,7 +1491,7 @@ async def test_filter_features_by_created_at_with_other_filters(
         embedding=embed,
     )
 
-    await semantic_storage.add_feature(
+    old_user2_id = await semantic_storage.add_feature(
         set_id="user2",
         category_name="default",
         feature="note",
@@ -1384,11 +1500,7 @@ async def test_filter_features_by_created_at_with_other_filters(
         embedding=embed,
     )
 
-    await asyncio.sleep(0.01)
-    cutoff = datetime.now(UTC)
-    await asyncio.sleep(0.01)
-
-    await semantic_storage.add_feature(
+    new_user1_id = await semantic_storage.add_feature(
         set_id="user1",
         category_name="default",
         feature="note",
@@ -1397,7 +1509,7 @@ async def test_filter_features_by_created_at_with_other_filters(
         embedding=embed,
     )
 
-    await semantic_storage.add_feature(
+    new_user2_id = await semantic_storage.add_feature(
         set_id="user2",
         category_name="default",
         feature="note",
@@ -1405,12 +1517,16 @@ async def test_filter_features_by_created_at_with_other_filters(
         tag="misc",
         embedding=embed,
     )
+    await _set_feature_created_at(semantic_storage, request, old_user1_id, _OLD_TIME)
+    await _set_feature_created_at(semantic_storage, request, old_user2_id, _OLD_TIME)
+    await _set_feature_created_at(semantic_storage, request, new_user1_id, _CUTOFF)
+    await _set_feature_created_at(semantic_storage, request, new_user2_id, _NEW_TIME)
 
     # Filter for user1's important features created before cutoff
     results = await _collect_feature_set(
         semantic_storage,
         filter_expr=_expr(
-            f"set_id='user1' AND tag='important' AND created_at<date('{cutoff.isoformat()}')"
+            f"set_id='user1' AND tag='important' AND created_at<date('{_CUTOFF.isoformat()}')"
         ),
     )
     assert len(results) == 1
@@ -1419,20 +1535,22 @@ async def test_filter_features_by_created_at_with_other_filters(
     # Filter for features created after cutoff
     new_results = await _collect_feature_set(
         semantic_storage,
-        filter_expr=_expr(f"created_at>=date('{cutoff.isoformat()}')"),
+        filter_expr=_expr(f"created_at>=date('{_CUTOFF.isoformat()}')"),
     )
     assert len(new_results) == 2
     assert {f.value for f in new_results} == {"user1_new", "user2_new"}
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("offset_host_clock")
 async def test_filter_features_by_created_at_range(
     semantic_storage: SemanticStorage,
+    request: pytest.FixtureRequest,
 ):
     embed = np.array([1.0], dtype=float)
 
     # Add features at three different times
-    await semantic_storage.add_feature(
+    old_id = await semantic_storage.add_feature(
         set_id="user",
         category_name="default",
         feature="note",
@@ -1441,11 +1559,7 @@ async def test_filter_features_by_created_at_range(
         embedding=embed,
     )
 
-    await asyncio.sleep(0.01)
-    start_time = datetime.now(UTC)
-    await asyncio.sleep(0.01)
-
-    await semantic_storage.add_feature(
+    start_id = await semantic_storage.add_feature(
         set_id="user",
         category_name="default",
         feature="note",
@@ -1454,11 +1568,7 @@ async def test_filter_features_by_created_at_range(
         embedding=embed,
     )
 
-    await asyncio.sleep(0.01)
-    end_time = datetime.now(UTC)
-    await asyncio.sleep(0.01)
-
-    await semantic_storage.add_feature(
+    end_id = await semantic_storage.add_feature(
         set_id="user",
         category_name="default",
         feature="note",
@@ -1466,12 +1576,15 @@ async def test_filter_features_by_created_at_range(
         tag="misc",
         embedding=embed,
     )
+    await _set_feature_created_at(semantic_storage, request, old_id, _OLD_TIME)
+    await _set_feature_created_at(semantic_storage, request, start_id, _CUTOFF)
+    await _set_feature_created_at(semantic_storage, request, end_id, _NEW_TIME)
 
-    # Filter for features in the middle time range
+    # Include the exact lower bound and exclude the exact upper bound.
     results = await _collect_feature_set(
         semantic_storage,
         filter_expr=_expr(
-            f"created_at>=date('{start_time.isoformat()}') AND created_at<date('{end_time.isoformat()}')"
+            f"created_at>=date('{_CUTOFF.isoformat()}') AND created_at<date('{_NEW_TIME.isoformat()}')"
         ),
     )
     assert len(results) == 1
