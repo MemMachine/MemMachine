@@ -49,11 +49,3 @@ jobs:
           format: spdx-json
           # Explicitly set the output file path within the runner's workspace.
           output-file: ./sbom/MemMachine-SBOM.spdx.json
-
-      - name: Upload SBOM as a workflow artifact
-        # This step uploads the generated SBOM file so it can be downloaded later.
-        uses: actions/upload-artifact@v4
-        with:
-          name: MemMachine-SBOM
-          path: ./sbom/MemMachine-SBOM.spdx.json
-          overwrite: true
