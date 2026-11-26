@@ -1,5 +1,6 @@
 import logging
 from pathlib import Path
+from unittest.mock import Mock
 
 import pytest
 import yaml
@@ -19,6 +20,7 @@ from memmachine_server.common.configuration.episodic_config import (
     WholeTextDeriverConf,
 )
 from memmachine_server.common.configuration.log_conf import LogLevel
+from memmachine_server.main.memmachine import MemMachine
 
 logger = logging.getLogger(__name__)
 
@@ -142,6 +144,70 @@ def test_load_sample_gpu_config():
     config_path = find_config_file("episodic_memory_config.gpu.sample")
     conf = Configuration.load_yml_file(str(config_path))
     assert conf.logging.level == LogLevel.INFO
+
+
+@pytest.mark.parametrize(
+    "filename",
+    [
+        "configuration.event.yml",
+        "episodic_memory_config.cpu.sample",
+        "episodic_memory_config.gpu.sample",
+        "episodic_memory_config.nebula.sample",
+    ],
+)
+def test_sample_config_resolves_default_stm_capacity(
+    filename: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "test-api-key")
+    monkeypatch.setenv("POSTGRES_PASSWORD", "test-password")
+    sample = yaml.safe_load(find_config_file(filename).read_text(encoding="utf-8"))
+    # Container-mounted log directories need not exist on the test host.
+    sample["logging"]["path"] = str(tmp_path / "memmachine.log")
+    config_path = tmp_path / filename
+    config_path.write_text(yaml.safe_dump(sample), encoding="utf-8")
+    config = Configuration.load_yml_file(str(config_path))
+
+    memmachine = MemMachine(config, resources=Mock())
+    resolved = memmachine._with_default_episodic_memory_conf(session_key="session1")
+
+    assert resolved.short_term_memory_enabled is True
+    assert resolved.short_term_memory is not None
+    assert resolved.short_term_memory.message_capacity == 64000
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+def test_explicit_stm_capacity_and_enablement_round_trip(enabled: bool) -> None:
+    config_path = find_config_file("episodic_memory_config.cpu.sample")
+    config = Configuration.load_yml_file(str(config_path))
+    assert config.episodic_memory.short_term_memory is not None
+    config.episodic_memory.short_term_memory.message_capacity = 500
+    config.episodic_memory.short_term_memory_enabled = enabled
+    restored = Configuration(**yaml.safe_load(config.to_yaml()))
+
+    memmachine = MemMachine(restored, resources=Mock())
+    resolved = memmachine._with_default_episodic_memory_conf(session_key="session1")
+
+    assert resolved.short_term_memory_enabled is enabled
+    assert resolved.short_term_memory is not None
+    assert resolved.short_term_memory.message_capacity == 500
+
+
+def test_session_stm_override_takes_precedence_over_sample_default() -> None:
+    config_path = find_config_file("episodic_memory_config.cpu.sample")
+    config = Configuration.load_yml_file(str(config_path))
+    memmachine = MemMachine(config, resources=Mock())
+    override = EpisodicMemoryConfPartial(
+        short_term_memory=ShortTermMemoryConfPartial(message_capacity=500),
+        short_term_memory_enabled=False,
+    )
+
+    resolved = memmachine._with_default_episodic_memory_conf(
+        session_key="session1", user_conf=override
+    )
+
+    assert resolved.short_term_memory_enabled is False
+    assert resolved.short_term_memory is not None
+    assert resolved.short_term_memory.message_capacity == 500
 
 
 def test_serialize_and_deserialize_configuration():

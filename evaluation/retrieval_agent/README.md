@@ -72,7 +72,7 @@ episodic_memory:
   long_term_memory_enabled: true
   short_term_memory:
     llm_model: openai_model
-    message_capacity: 500
+    message_capacity: 64000 # Characters, including the saved summary
     summary_prompt_system: "You are an AI agent that can make summary for a list of episodes."
     summary_prompt_user: "Summarize: {summary}\n{episodes}\nYour summary (under {max_length} words):"
   short_term_memory_enabled: true
@@ -158,7 +158,7 @@ episodic_memory:
   long_term_memory_enabled: true
   short_term_memory:
     llm_model: ollama_model
-    message_capacity: 500
+    message_capacity: 64000 # Characters, including the saved summary
     summary_prompt_system: "You are an AI agent that summarizes episodes."
     summary_prompt_user: "Summarize: {summary}\n{episodes}\nYour summary (under {max_length} words):"
   short_term_memory_enabled: true
@@ -239,7 +239,7 @@ episodic_memory:
   long_term_memory_enabled: true
   short_term_memory:
     llm_model: aws_model
-    message_capacity: 500
+    message_capacity: 64000 # Characters, including the saved summary
     summary_prompt_system: "You are an AI agent that summarizes episodes."
     summary_prompt_user: "Summarize: {summary}\n{episodes}\nYour summary (under {max_length} words):"
   short_term_memory_enabled: true
@@ -326,7 +326,7 @@ episodic_memory:
   long_term_memory_enabled: true
   short_term_memory:
     llm_model: custom_model
-    message_capacity: 500
+    message_capacity: 64000 # Characters, including the saved summary
     summary_prompt_system: "You are an AI agent that summarizes episodes."
     summary_prompt_user: "Summarize: {summary}\n{episodes}\nYour summary (under {max_length} words):"
   short_term_memory_enabled: true
@@ -409,7 +409,7 @@ episodic_memory:
   long_term_memory_enabled: true
   short_term_memory:
     llm_model: custom_model
-    message_capacity: 500
+    message_capacity: 64000 # Characters, including the saved summary
     summary_prompt_system: "You are an AI agent that summarizes episodes."
     summary_prompt_user: "Summarize: {summary}\n{episodes}\nYour summary (under {max_length} words):"
   short_term_memory_enabled: true
