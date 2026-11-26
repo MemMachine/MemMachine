@@ -709,10 +709,9 @@ class RouterDoc:
 
     Requires `org_id` in the request body. Returns only projects belonging to
     that organization. Each entry contains the project's organization ID, its
-    project ID, and its state: `active`, or `pending` while the project's
-    creation has not completed. Identifiers follow the standard rules: no
-    slashes; only letters, numbers, underscores, hyphens, colon, and Unicode
-    characters.
+    project ID, and `live`, which is false while the project's creation has
+    not completed. Identifiers follow the standard rules: no slashes; only
+    letters, numbers, underscores, hyphens, colon, and Unicode characters.
 
     Projects are isolated memory namespaces. Memories (episodes) belong
     exclusively to their project. All project operations, including queries and

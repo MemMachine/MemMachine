@@ -239,7 +239,7 @@ async def get_episode_count(
 async def list_projects(
     spec: ListProjectsSpec,
     memmachine: Annotated[MemMachine, Depends(get_memmachine)],
-) -> list[dict[str, str]]:
+) -> list[dict[str, str | bool]]:
     """List projects in one organization."""
     prefix = f"{spec.org_id}/"
     sessions = await memmachine.search_sessions(prefix)
@@ -247,7 +247,7 @@ async def list_projects(
         {
             "org_id": spec.org_id,
             "project_id": session.partition_name.removeprefix(prefix),
-            "state": "active" if session.live else "pending",
+            "live": session.live,
         }
         for session in sessions
     ]

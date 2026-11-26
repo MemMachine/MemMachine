@@ -313,19 +313,19 @@ def test_get_episode_count(client, mock_memmachine):
 
 
 def test_list_projects(client, mock_memmachine):
-    registered_at = datetime(2026, 1, 1, tzinfo=UTC)
+    reserved_at = datetime(2026, 1, 1, tzinfo=UTC)
     mock_memmachine.search_sessions.return_value = [
         ListedPartition(
             partition_name="org1/proj1",
             partition_uuid=uuid4(),
             live=True,
-            registered_at=registered_at,
+            reserved_at=reserved_at,
         ),
         ListedPartition(
             partition_name="org1/proj2",
             partition_uuid=uuid4(),
             live=False,
-            registered_at=registered_at,
+            reserved_at=reserved_at,
         ),
     ]
 
@@ -333,8 +333,8 @@ def test_list_projects(client, mock_memmachine):
 
     assert response.status_code == 200
     assert response.json() == [
-        {"org_id": "org1", "project_id": "proj1", "state": "active"},
-        {"org_id": "org1", "project_id": "proj2", "state": "pending"},
+        {"org_id": "org1", "project_id": "proj1", "live": True},
+        {"org_id": "org1", "project_id": "proj2", "live": False},
     ]
     mock_memmachine.search_sessions.assert_awaited_once_with("org1/")
 
