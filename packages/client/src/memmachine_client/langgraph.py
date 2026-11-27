@@ -301,8 +301,14 @@ class MemMachineTools:
         episodic_memories = results.get("episodic_memory")
         if episodic_memories:
             if isinstance(episodic_memories, dict):
-                # EpisodicSearchResult dumped as dict
-                episodes = episodic_memories.get("episodes", [])
+                # Current responses nest episodes; retain legacy flat inputs.
+                episodes = episodic_memories.get(
+                    "episodes",
+                    episodic_memories.get("long_term_memory", {}).get("episodes", [])
+                    + episodic_memories.get("short_term_memory", {}).get(
+                        "episodes", []
+                    ),
+                )
                 if episodes:
                     summary_parts.append(f"Found {len(episodes)} episodic memories:")
                     for i, mem in enumerate(episodes[:3], 1):
